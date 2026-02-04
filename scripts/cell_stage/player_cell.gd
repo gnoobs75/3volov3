@@ -1,0 +1,1449 @@
+extends CharacterBody2D
+## Player cell with comical expressive face, biomolecule collection, parasite system.
+
+@onready var camera: Camera2D = $Camera2D
+
+signal reproduced
+signal organelle_collected
+signal died
+signal parasites_changed(count: int)
+signal damaged(amount: float)
+signal damage_dealt(amount: float)
+signal prey_killed
+signal food_consumed
+signal reproduction_complete
+
+var max_energy: float = 100.0
+var energy: float = 100.0
+var max_health: float = 100.0
+var health: float = 100.0
+var move_speed: float = 200.0
+var toxin_damage: float = 20.0
+var toxin_cost: float = 15.0
+var repro_cost: float = 60.0
+
+const ENERGY_DRAIN_RATE: float = 5.0
+const ENERGY_REGEN_RATE: float = 2.0
+const TOXIN_COOLDOWN: float = 1.0
+const LOW_ENERGY_THRESHOLD: float = 0.15  # Below this = depleted state
+const DEPLETED_SPEED_MULT: float = 0.5
+const SPRINT_SPEED_MULT: float = 1.8
+const SPRINT_ENERGY_MULT: float = 3.0  # Energy drains 3x faster while sprinting
+const METABOLIZE_COOLDOWN: float = 1.0
+const METABOLIZE_ENERGY_GAIN: float = 20.0  # Energy restored per metabolize
+const EAT_RANGE: float = 25.0  # Distance to eat prey
+
+var is_sprinting: bool = false
+var metabolize_timer: float = 0.0
+
+var toxin_timer: float = 0.0
+
+# Tractor beam system
+const BEAM_RANGE: float = 250.0  # Max distance to lock on
+const BEAM_COLLECT_DIST: float = 18.0  # Distance at which item is consumed
+const BEAM_ENERGY_COST: float = 2.0  # Energy per second while beaming
+var _beam_target: Node2D = null  # Currently beamed node
+var _beam_active: bool = false
+var _beam_particles: Array = []  # [{pos, vel, life, color}]
+
+# Jet stream system
+const JET_RANGE: float = 150.0
+const JET_CONE_ANGLE: float = 0.4  # Radians half-angle (~23 degrees)
+const JET_PUSH_FORCE: float = 400.0
+const JET_CONSUME_INTERVAL: float = 0.5
+const JET_CONFUSE_DURATION: float = 2.0
+var _jet_active: bool = false
+var _jet_consume_timer: float = 0.0
+var _jet_particles: Array = []  # [{pos, vel, life, color, size}]
+var _jet_colors: Array = [Color(0.3, 0.7, 1.0)]  # Current spray colors
+
+# Targeting reticle
+var _target_candidate: Node2D = null  # What cursor is hovering near
+var _target_type: String = ""  # "food" or "prey"
+var _target_scan_timer: float = 0.0
+
+# Inertial movement (ice/space feel)
+const ACCEL_TIME: float = 1.0  # Seconds to reach max speed
+const DECEL_TIME: float = 0.8  # Seconds to stop after releasing input
+var _current_velocity: Vector2 = Vector2.ZERO  # Smoothed velocity
+
+# Wake trail
+var _wake_particles: Array = []  # [{pos, life, size, color}]
+const MAX_WAKE: int = 25  # Reduced for performance
+
+# Sound state
+var _was_sprinting: bool = false
+var _was_beaming: bool = false
+var collected_components: Array = []
+var is_energy_depleted: bool = false  # True when energy critically low
+
+# Parasite system
+var attached_parasites: Array = []  # Array of parasite node refs
+const MAX_PARASITES: int = 5  # This many = takeover
+
+# Procedural graphics
+var _time: float = 0.0
+var _cell_radius: float = 18.0
+var _membrane_points: Array[Vector2] = []
+var _organelle_positions: Array[Vector2] = []
+var _cilia_angles: Array[float] = []
+var _toxin_flash: float = 0.0
+var _feed_flash: float = 0.0
+var _damage_flash: float = 0.0
+const NUM_MEMBRANE_PTS: int = 32
+const NUM_CILIA: int = 12
+const NUM_ORGANELLES: int = 5
+
+# Camera zoom (sensory-based)
+const ZOOM_LEVELS: Array = [1.6, 1.4, 1.23, 1.07, 0.93, 0.8]  # Sensory 0-5 (zoomed out 50% more)
+var _target_zoom: float = 2.0
+var _current_zoom: float = 2.0
+
+# Directional combat system
+var _has_directional_front: bool = false
+var _has_directional_rear: bool = false
+var _has_directional_sides: bool = false
+var _directional_front_damage: float = 0.0
+var _directional_rear_damage: float = 0.0
+var _directional_sides_damage: float = 0.0
+var _directional_contact_timer: float = 0.0
+const DIRECTIONAL_CONTACT_COOLDOWN: float = 0.5
+
+# Face / mood system
+enum Mood { IDLE, HAPPY, EXCITED, STRESSED, SCARED, ANGRY, EATING, HURT, DEPLETED }
+var mood: Mood = Mood.IDLE
+var _mood_timer: float = 0.0
+var _blink_timer: float = 0.0
+var _is_blinking: bool = false
+var _mouth_open: float = 0.0
+var _eye_spacing: float = 0.0
+var _eye_size: float = 0.0
+var _pupil_size: float = 0.0
+var _has_eyebrows: bool = true
+
+func _ready() -> void:
+	_apply_gene_traits()
+	_apply_mutation_stats()
+	_init_procedural_shape()
+	_randomize_face()
+	add_to_group("player")
+	GameManager.evolution_applied.connect(_on_evolution_applied)
+	_update_sensory_zoom(false)  # Set initial zoom instantly
+
+func _randomize_face() -> void:
+	_eye_spacing = randf_range(4.5, 7.0)
+	_eye_size = randf_range(3.0, 4.5)
+	_pupil_size = randf_range(1.2, 2.2)
+	_has_eyebrows = randf() > 0.3
+
+func _init_procedural_shape() -> void:
+	_membrane_points.clear()
+	for i in range(NUM_MEMBRANE_PTS):
+		var angle: float = TAU * i / NUM_MEMBRANE_PTS
+		var r: float = _cell_radius + randf_range(-2.0, 2.0)
+		_membrane_points.append(Vector2(cos(angle) * r, sin(angle) * r))
+	_organelle_positions.clear()
+	for i in range(NUM_ORGANELLES):
+		var a: float = randf() * TAU
+		var d: float = randf_range(3.0, _cell_radius * 0.6)
+		_organelle_positions.append(Vector2(cos(a) * d, sin(a) * d))
+	_cilia_angles.clear()
+	for i in range(NUM_CILIA):
+		_cilia_angles.append(TAU * i / NUM_CILIA + randf_range(-0.1, 0.1))
+
+func _apply_gene_traits() -> void:
+	for gene_id in GameManager.player_stats.genes:
+		var gene: Dictionary = BiologyLoader.get_gene(gene_id)
+		var impact: Dictionary = gene.get("trait_impact", {})
+		if "energy_efficiency" in impact:
+			max_energy *= (1.0 + impact.energy_efficiency)
+			energy = max_energy
+		if "speed" in impact:
+			move_speed *= (1.0 + impact.speed)
+		if "hostility_damage" in impact:
+			toxin_damage *= (1.0 + impact.hostility_damage)
+		if "armor" in impact:
+			max_health *= (1.0 + impact.armor)
+			health = max_health
+		if "offspring_survival" in impact:
+			repro_cost *= (1.0 - impact.offspring_survival)
+	for key in GameManager.player_stats.spliced_traits:
+		var val: float = GameManager.player_stats.spliced_traits[key]
+		match key:
+			"speed": move_speed *= (1.0 + val)
+			"armor": max_health *= (1.0 + val)
+			"energy_efficiency": max_energy *= (1.0 + val)
+
+func _physics_process(delta: float) -> void:
+	# Smooth camera zoom transition for sensory upgrades
+	if camera and abs(_current_zoom - _target_zoom) > 0.01:
+		_current_zoom = lerpf(_current_zoom, _target_zoom, delta * 2.0)
+		camera.zoom = Vector2(_current_zoom, _current_zoom)
+
+	var input_dir := Input.get_vector("move_left", "move_right", "move_up", "move_down")
+
+	# Sprint
+	is_sprinting = Input.is_action_pressed("sprint") and not is_energy_depleted and energy > 5.0
+
+	# Energy depletion mechanic
+	var energy_ratio: float = energy / max_energy
+	is_energy_depleted = energy_ratio < LOW_ENERGY_THRESHOLD
+	var speed_mult: float = DEPLETED_SPEED_MULT if is_energy_depleted else 1.0
+	if is_sprinting:
+		speed_mult *= SPRINT_SPEED_MULT
+	# Extra slowdown from parasites
+	var parasite_slow: float = 1.0 - attached_parasites.size() * 0.1
+	speed_mult *= maxf(parasite_slow, 0.3)
+
+	# Inertial movement — accelerate toward desired velocity, decelerate when no input
+	var target_vel: Vector2 = input_dir * move_speed * speed_mult
+	if input_dir.length() > 0.1:
+		# Accelerate toward target
+		var accel_rate: float = move_speed * speed_mult / ACCEL_TIME
+		_current_velocity = _current_velocity.move_toward(target_vel, accel_rate * delta)
+		var drain: float = ENERGY_DRAIN_RATE
+		if is_sprinting:
+			drain *= SPRINT_ENERGY_MULT
+		energy -= drain * delta
+	else:
+		# Decelerate (glide to stop)
+		var decel_rate: float = _current_velocity.length() / DECEL_TIME
+		_current_velocity = _current_velocity.move_toward(Vector2.ZERO, decel_rate * delta)
+		if _current_velocity.length() < 5.0:
+			energy = minf(energy + ENERGY_REGEN_RATE * delta, max_energy)
+	energy = maxf(energy, 0.0)
+
+	velocity = _current_velocity
+	look_at(get_global_mouse_position())
+	move_and_slide()
+
+	# Wake trail particles when moving
+	if velocity.length() > 20.0:
+		_spawn_wake_particle()
+
+	# Try to eat nearby prey after moving
+	_try_eat_prey()
+
+	# Directional contact damage
+	_directional_contact_timer -= delta
+	_check_directional_contact_damage()
+
+	# Tractor beam + jet stream (throttle targeting scan)
+	_target_scan_timer -= delta
+	if _target_scan_timer <= 0:
+		_target_scan_timer = 0.1
+		_update_targeting()
+	_update_beam(delta)
+	_update_jet(delta)
+	_update_beam_particles(delta)
+	_update_jet_particles(delta)
+
+	if toxin_timer > 0:
+		toxin_timer -= delta
+	if metabolize_timer > 0:
+		metabolize_timer -= delta
+	if Input.is_action_just_pressed("combat_toxin") and toxin_timer <= 0 and energy >= toxin_cost:
+		_fire_toxin()
+	if Input.is_action_just_pressed("reproduce") and energy >= repro_cost:
+		_reproduce()
+	if Input.is_action_just_pressed("metabolize") and metabolize_timer <= 0:
+		_metabolize()
+	if health <= 0:
+		died.emit()
+
+	# Clean up dead parasite refs
+	attached_parasites = attached_parasites.filter(func(p): return is_instance_valid(p))
+	# Check parasite takeover
+	if attached_parasites.size() >= MAX_PARASITES:
+		died.emit()  # Takeover = death
+
+	# Mutation: health regen
+	if _health_regen_rate > 0:
+		health = minf(health + _health_regen_rate * delta, max_health)
+
+	_time += delta
+	_toxin_flash = maxf(_toxin_flash - delta * 3.0, 0.0)
+	_feed_flash = maxf(_feed_flash - delta * 2.5, 0.0)
+	_damage_flash = maxf(_damage_flash - delta * 4.0, 0.0)
+	_update_mood(delta)
+	_update_wake_particles(delta)
+
+	# Sound triggers
+	if is_sprinting and not _was_sprinting:
+		AudioManager.play_sprint()
+	_was_sprinting = is_sprinting
+	if _beam_active and not _was_beaming:
+		AudioManager.start_beam()
+	elif not _beam_active and _was_beaming:
+		AudioManager.stop_beam()
+	_was_beaming = _beam_active
+
+	queue_redraw()
+
+func _update_mood(delta: float) -> void:
+	_mood_timer -= delta
+	_blink_timer -= delta
+	if _blink_timer <= 0:
+		if _is_blinking:
+			_is_blinking = false
+			_blink_timer = randf_range(2.0, 5.0)
+		else:
+			_is_blinking = true
+			_blink_timer = 0.12
+
+	_mouth_open = maxf(_mouth_open - delta * 3.0, 0.0)
+
+	if _mood_timer <= 0:
+		var energy_ratio: float = energy / max_energy
+		var health_ratio: float = health / max_health
+		if attached_parasites.size() >= 3:
+			mood = Mood.SCARED
+		elif is_energy_depleted:
+			mood = Mood.DEPLETED
+		elif health_ratio < 0.3:
+			mood = Mood.SCARED
+		elif energy_ratio < 0.25:
+			mood = Mood.STRESSED
+		elif velocity.length() > move_speed * 0.8:
+			mood = Mood.EXCITED
+		else:
+			mood = Mood.IDLE
+
+func _set_mood(new_mood: Mood, duration: float = 0.8) -> void:
+	mood = new_mood
+	_mood_timer = duration
+
+func _draw() -> void:
+	var energy_ratio: float = energy / max_energy
+	var health_ratio: float = health / max_health
+
+	# Outer glow (dims when depleted)
+	var glow_base: float = 0.08 if not is_energy_depleted else 0.03
+	var glow_alpha: float = glow_base + 0.06 * sin(_time * 2.0)
+	var glow_color := Color(0.3, 0.7, 1.0) if not is_energy_depleted else Color(0.3, 0.3, 0.4)
+	draw_circle(Vector2.ZERO, _cell_radius * 2.2, Color(glow_color.r, glow_color.g, glow_color.b, glow_alpha))
+	draw_circle(Vector2.ZERO, _cell_radius * 1.6, Color(glow_color.r, glow_color.g, glow_color.b, glow_alpha * 1.5))
+
+	# Cilia (sluggish when depleted)
+	var is_moving: bool = velocity.length() > 10.0
+	var cilia_speed: float = 8.0 if not is_energy_depleted else 2.0
+	var cilia_amp: float = (0.3 if is_moving else 0.12) if not is_energy_depleted else 0.05
+	for i in range(NUM_CILIA):
+		var base_angle: float = _cilia_angles[i]
+		var wave: float = sin(_time * cilia_speed + i * 1.3) * cilia_amp
+		var angle: float = base_angle + wave
+		var base_pt := Vector2(cos(base_angle) * _cell_radius, sin(base_angle) * _cell_radius)
+		var tip_len: float = 8.0 + 3.0 * sin(_time * 5.0 + i)
+		if is_energy_depleted:
+			tip_len *= 0.6
+		var tip_pt := base_pt + Vector2(cos(angle) * tip_len, sin(angle) * tip_len)
+		var cilia_col := Color(0.5, 0.85, 1.0, 0.7) if not is_energy_depleted else Color(0.35, 0.4, 0.5, 0.4)
+		draw_line(base_pt, tip_pt, cilia_col, 1.2, true)
+
+	# Membrane
+	var membrane_color := Color(0.3, 0.6, 1.0, 0.9)
+	if is_energy_depleted:
+		membrane_color = Color(0.3, 0.35, 0.5, 0.7)
+	if _damage_flash > 0:
+		membrane_color = membrane_color.lerp(Color(1.0, 0.2, 0.2), _damage_flash)
+	if _feed_flash > 0:
+		membrane_color = membrane_color.lerp(Color(0.3, 1.0, 0.5), _feed_flash)
+	var pts: PackedVector2Array = PackedVector2Array()
+	for i in range(NUM_MEMBRANE_PTS):
+		var wobble := sin(_time * 3.0 + i * 0.7) * 1.5
+		pts.append(_membrane_points[i] + _membrane_points[i].normalized() * wobble)
+	var fill_color := Color(0.12, 0.25, 0.5, 0.7)
+	if is_energy_depleted:
+		fill_color = Color(0.15, 0.18, 0.25, 0.6)
+	if _toxin_flash > 0:
+		fill_color = fill_color.lerp(Color(0.6, 0.1, 0.6, 0.8), _toxin_flash)
+	draw_colored_polygon(pts, fill_color)
+	for i in range(pts.size()):
+		draw_line(pts[i], pts[(i + 1) % pts.size()], membrane_color, 1.5, true)
+
+	# Internal organelles
+	var org_colors: Array[Color] = [
+		Color(0.2, 0.9, 0.3, 0.7), Color(0.9, 0.6, 0.1, 0.7),
+		Color(0.7, 0.2, 0.8, 0.6), Color(0.1, 0.8, 0.8, 0.6), Color(0.9, 0.9, 0.2, 0.5),
+	]
+	for i in range(_organelle_positions.size()):
+		var wobble_v := Vector2(sin(_time * 2.0 + i), cos(_time * 1.8 + i * 0.7)) * 1.5
+		draw_circle(_organelle_positions[i] + wobble_v, 2.5, org_colors[i % org_colors.size()])
+
+	# --- MUTATION VISUALS ---
+	_draw_mutations()
+
+	# --- COMICAL FACE ---
+	_draw_face()
+
+	# Energy/health arcs
+	var energy_arc_color := Color(0.3, 0.8, 1.0, 0.15 + energy_ratio * 0.25)
+	if is_energy_depleted:
+		energy_arc_color = Color(0.8, 0.3, 0.2, 0.15 + 0.2 * sin(_time * 4.0))  # Flashing red
+	draw_arc(Vector2.ZERO, _cell_radius + 3.0, 0, TAU * energy_ratio, 48, energy_arc_color, 2.0, true)
+	if health_ratio < 1.0:
+		draw_arc(Vector2.ZERO, _cell_radius + 5.0, 0, TAU * health_ratio, 48, Color(1.0, 0.3, 0.3, 0.4), 1.5, true)
+
+	# Parasite count warning
+	if attached_parasites.size() > 0:
+		var warn_a: float = 0.1 + 0.1 * sin(_time * 6.0)
+		var warn_color := Color(0.6, 0.1, 0.4, warn_a * attached_parasites.size() / MAX_PARASITES)
+		draw_arc(Vector2.ZERO, _cell_radius + 7.0, 0, TAU, 32, warn_color, 2.0, true)
+
+	# --- WAKE TRAIL ---
+	for wp in _wake_particles:
+		var wp_local: Vector2 = (wp.pos - global_position).rotated(-rotation)
+		var wa: float = wp.life * wp.color.a
+		draw_circle(wp_local, wp.size * wp.life, Color(wp.color.r, wp.color.g, wp.color.b, wa))
+		draw_circle(wp_local, wp.size * wp.life * 2.0, Color(wp.color.r, wp.color.g, wp.color.b, wa * 0.2))
+
+	# --- TRACTOR BEAM VISUALS ---
+	if _beam_active and is_instance_valid(_beam_target):
+		var target_local: Vector2 = (_beam_target.global_position - global_position).rotated(-rotation)
+		# Main beam line (pulsing)
+		var beam_alpha: float = 0.25 + 0.15 * sin(_time * 12.0)
+		var beam_col := Color(0.3, 0.8, 1.0, beam_alpha)
+		draw_line(Vector2.ZERO, target_local, beam_col, 2.0, true)
+		# Thinner bright core
+		draw_line(Vector2.ZERO, target_local, Color(0.6, 0.9, 1.0, beam_alpha * 1.5), 0.8, true)
+		# Suction rings along beam (moving toward player)
+		var beam_len: float = target_local.length()
+		for r_i in range(3):
+			var t_offset: float = fmod(_time * 3.0 + r_i * 0.33, 1.0)
+			var ring_pos: Vector2 = target_local * (1.0 - t_offset)
+			var ring_r: float = 4.0 * (1.0 - t_offset) + 1.0
+			draw_arc(ring_pos, ring_r, 0, TAU, 12, Color(0.4, 0.85, 1.0, (1.0 - t_offset) * 0.4), 1.0, true)
+
+	# Beam particles (drawn in world-local space)
+	for p in _beam_particles:
+		var p_local: Vector2 = (p.pos - global_position).rotated(-rotation)
+		var alpha: float = p.life * 0.8
+		draw_circle(p_local, p.size, Color(p.color.r, p.color.g, p.color.b, alpha))
+
+	# --- JET STREAM VISUALS ---
+	if _jet_active:
+		var jet_dir_local := (get_global_mouse_position() - global_position).normalized().rotated(-rotation)
+		# Cone glow
+		var cone_a: float = 0.06 + 0.04 * sin(_time * 8.0)
+		var cone_left: Vector2 = jet_dir_local.rotated(-JET_CONE_ANGLE) * JET_RANGE
+		var cone_right: Vector2 = jet_dir_local.rotated(JET_CONE_ANGLE) * JET_RANGE
+		var cone_pts: PackedVector2Array = PackedVector2Array([Vector2.ZERO, cone_left, cone_right])
+		draw_colored_polygon(cone_pts, Color(0.4, 0.7, 1.0, cone_a))
+
+	# Jet particles
+	for p in _jet_particles:
+		var p_local: Vector2 = (p.pos - global_position).rotated(-rotation)
+		var alpha: float = p.life * 0.7
+		draw_circle(p_local, p.size, Color(p.color.r, p.color.g, p.color.b, alpha))
+		# Trail
+		if p.life > 0.3:
+			var trail_dir: Vector2 = p.vel.normalized().rotated(-rotation) * p.size * 2.0
+			draw_line(p_local, p_local - trail_dir, Color(p.color.r, p.color.g, p.color.b, alpha * 0.4), p.size * 0.5, true)
+
+	# --- TARGETING RETICLE ---
+	if _target_candidate and is_instance_valid(_target_candidate) and not _beam_active:
+		var reticle_pos: Vector2 = (_target_candidate.global_position - global_position).rotated(-rotation)
+		var reticle_col := Color(0.3, 1.0, 0.4, 0.7) if _target_type == "food" else Color(1.0, 0.7, 0.2, 0.7)
+		var reticle_r: float = 10.0 + 2.0 * sin(_time * 6.0)
+		# Animated targeting ring
+		draw_arc(reticle_pos, reticle_r, _time * 3.0, _time * 3.0 + TAU * 0.75, 16, reticle_col, 1.5, true)
+		draw_arc(reticle_pos, reticle_r, _time * 3.0 + PI, _time * 3.0 + PI + TAU * 0.75, 16, reticle_col, 1.5, true)
+		# Crosshair lines
+		for c_i in range(4):
+			var ca: float = TAU * c_i / 4.0 + _time * 2.0
+			var inner: Vector2 = reticle_pos + Vector2(cos(ca), sin(ca)) * (reticle_r - 3.0)
+			var outer: Vector2 = reticle_pos + Vector2(cos(ca), sin(ca)) * (reticle_r + 4.0)
+			draw_line(inner, outer, reticle_col, 1.2, true)
+
+func _draw_face() -> void:
+	var eye_y_offset: float = -1.0
+	var left_eye := Vector2(_eye_spacing * 0.6, -_eye_spacing * 0.5 + eye_y_offset)
+	var right_eye := Vector2(_eye_spacing * 0.6, _eye_spacing * 0.5 + eye_y_offset)
+	var mouth_pos := Vector2(_cell_radius * 0.45, 0)
+
+	var eye_white_color := Color(0.95, 0.95, 1.0, 0.95)
+	var pupil_color := Color(0.05, 0.05, 0.15, 1.0)
+	var eye_r: float = _eye_size
+	var pupil_r: float = _pupil_size
+	var eye_squash_y: float = 1.0
+	var pupil_offset := Vector2.ZERO
+	var eyebrow_angle_l: float = 0.0
+	var eyebrow_angle_r: float = 0.0
+
+	match mood:
+		Mood.HAPPY:
+			eye_squash_y = 0.65
+			eyebrow_angle_l = 0.2
+			eyebrow_angle_r = 0.2
+		Mood.EXCITED:
+			eye_r *= 1.3
+			pupil_r *= 1.4
+			pupil_offset = Vector2(1.0, 0)
+			eyebrow_angle_l = 0.35
+			eyebrow_angle_r = 0.35
+		Mood.STRESSED:
+			eye_squash_y = 0.8
+			eyebrow_angle_l = -0.3
+			eyebrow_angle_r = 0.3
+			pupil_r *= 0.8
+		Mood.SCARED:
+			eye_r *= 1.4
+			pupil_r *= 0.6
+			eyebrow_angle_l = 0.4
+			eyebrow_angle_r = 0.4
+		Mood.ANGRY:
+			eye_squash_y = 0.7
+			eyebrow_angle_l = -0.45
+			eyebrow_angle_r = 0.45
+			pupil_r *= 0.9
+		Mood.EATING:
+			eye_squash_y = 0.5
+			eyebrow_angle_l = 0.15
+			eyebrow_angle_r = 0.15
+		Mood.HURT:
+			eye_squash_y = 0.4
+			eyebrow_angle_l = -0.4
+			eyebrow_angle_r = -0.4
+		Mood.DEPLETED:
+			# Droopy sad exhausted face
+			eye_squash_y = 0.55
+			eye_r *= 0.85
+			eyebrow_angle_l = -0.35
+			eyebrow_angle_r = -0.35
+			pupil_r *= 0.7
+			# Pupils droop down
+			pupil_offset = Vector2(-0.5, 0)
+
+	if _is_blinking:
+		eye_squash_y = 0.08
+
+	# Draw eye whites
+	for eye_pos in [left_eye, right_eye]:
+		var ew: float = eye_r
+		var eh: float = eye_r * eye_squash_y
+		var eye_pts: PackedVector2Array = PackedVector2Array()
+		for i in range(12):
+			var a: float = TAU * i / 12.0
+			eye_pts.append(eye_pos + Vector2(cos(a) * ew, sin(a) * eh))
+		# Dull eyes when depleted
+		var white_col := eye_white_color
+		if mood == Mood.DEPLETED:
+			white_col = Color(0.8, 0.8, 0.82, 0.85)
+		draw_colored_polygon(eye_pts, white_col)
+		var mouse_local := (get_global_mouse_position() - global_position).rotated(-rotation)
+		var look_dir := mouse_local.normalized() * minf(eye_r * 0.3, mouse_local.length() * 0.02)
+		var p_pos: Vector2 = eye_pos + look_dir + pupil_offset
+		draw_circle(p_pos, pupil_r, pupil_color)
+		draw_circle(p_pos + Vector2(-0.5, -0.5), pupil_r * 0.35, Color(1, 1, 1, 0.7))
+
+	# Eyebrows
+	if _has_eyebrows:
+		var brow_len: float = eye_r * 1.4
+		var brow_y: float = eye_y_offset - eye_r - 2.0
+		var lb_start := Vector2(left_eye.x - brow_len * 0.5, left_eye.y + brow_y)
+		var lb_end := lb_start + Vector2(brow_len, 0).rotated(eyebrow_angle_l)
+		draw_line(lb_start, lb_end, Color(0.15, 0.3, 0.6, 0.9), 1.8, true)
+		var rb_start := Vector2(right_eye.x - brow_len * 0.5, right_eye.y + brow_y)
+		var rb_end := rb_start + Vector2(brow_len, 0).rotated(eyebrow_angle_r)
+		draw_line(rb_start, rb_end, Color(0.15, 0.3, 0.6, 0.9), 1.8, true)
+
+	# Mouth
+	var mouth_width: float = 5.0
+	var mouth_curve: float = 0.0
+	var mouth_open_amt: float = _mouth_open
+
+	match mood:
+		Mood.HAPPY: mouth_curve = 3.0
+		Mood.EXCITED: mouth_curve = 4.0; mouth_open_amt = maxf(mouth_open_amt, 0.6)
+		Mood.STRESSED: mouth_curve = -2.0; mouth_width = 3.5
+		Mood.SCARED: mouth_curve = -1.0; mouth_open_amt = maxf(mouth_open_amt, 0.8); mouth_width = 3.0
+		Mood.ANGRY: mouth_curve = -3.0; mouth_width = 6.0
+		Mood.EATING: mouth_curve = 2.0; mouth_open_amt = maxf(mouth_open_amt, 1.0)
+		Mood.HURT: mouth_curve = -2.5; mouth_open_amt = maxf(mouth_open_amt, 0.5)
+		Mood.DEPLETED:
+			# Sad wobbly frown
+			mouth_curve = -3.5
+			mouth_width = 4.0
+
+	if mouth_open_amt > 0.1:
+		var mo_w: float = mouth_width * (0.5 + mouth_open_amt * 0.5)
+		var mo_h: float = 2.0 + mouth_open_amt * 3.0
+		var mo_pts: PackedVector2Array = PackedVector2Array()
+		for i in range(10):
+			var a: float = TAU * i / 10.0
+			mo_pts.append(mouth_pos + Vector2(cos(a) * mo_w * 0.4, sin(a) * mo_h))
+		draw_colored_polygon(mo_pts, Color(0.15, 0.05, 0.2, 0.9))
+		if mood == Mood.EATING:
+			draw_circle(mouth_pos + Vector2(0, mo_h * 0.3), mo_w * 0.25, Color(0.8, 0.3, 0.4, 0.8))
+	else:
+		var m_left := mouth_pos + Vector2(0, -mouth_width * 0.5)
+		var m_right := mouth_pos + Vector2(0, mouth_width * 0.5)
+		var m_mid := mouth_pos + Vector2(mouth_curve, 0)
+		var mouth_col := Color(0.15, 0.2, 0.4, 0.85)
+		if mood == Mood.DEPLETED:
+			# Wobbly sad line
+			m_mid.y += sin(_time * 2.0) * 0.5
+			mouth_col = Color(0.2, 0.2, 0.35, 0.8)
+		draw_line(m_left, m_mid, mouth_col, 1.5, true)
+		draw_line(m_mid, m_right, mouth_col, 1.5, true)
+
+	# Depleted: sweat drop
+	if mood == Mood.DEPLETED:
+		var sweat_y: float = left_eye.y - eye_r - 4.0 + sin(_time * 3.0) * 1.0
+		draw_circle(Vector2(left_eye.x + 3, sweat_y), 1.2, Color(0.5, 0.7, 1.0, 0.6))
+
+func _fire_toxin() -> void:
+	energy -= toxin_cost
+	toxin_timer = TOXIN_COOLDOWN
+	_toxin_flash = 1.0
+	_set_mood(Mood.ANGRY, 0.8)
+	_mouth_open = 0.9
+	AudioManager.play_toxin()
+	for body in $ToxinArea.get_overlapping_bodies():
+		if body.has_method("take_damage"):
+			body.take_damage(toxin_damage)
+			damage_dealt.emit(toxin_damage)
+	# Toxin also detaches one parasite
+	if attached_parasites.size() > 0:
+		var p = attached_parasites.pop_back()
+		if is_instance_valid(p) and p.has_method("force_detach"):
+			p.force_detach()
+		parasites_changed.emit(attached_parasites.size())
+
+func _reproduce() -> void:
+	energy -= repro_cost
+	_set_mood(Mood.EXCITED, 1.2)
+	reproduced.emit()
+	reproduction_complete.emit()
+	GameManager.add_reproduction()
+
+func take_damage(amount: float) -> void:
+	health -= amount
+	_damage_flash = 1.0
+	_set_mood(Mood.HURT, 0.6)
+	_mouth_open = 0.7
+	AudioManager.play_hurt()
+	damaged.emit(amount)
+	if health <= 0:
+		AudioManager.play_death()
+		died.emit()
+
+func heal(amount: float) -> void:
+	health = minf(health + amount, max_health)
+
+func attach_parasite(parasite: Node2D) -> void:
+	attached_parasites.append(parasite)
+	_set_mood(Mood.SCARED, 1.0)
+	_mouth_open = 0.8
+	parasites_changed.emit(attached_parasites.size())
+
+func feed(component: Dictionary) -> void:
+	var energy_value: float = component.get("energy_value", 15.0)
+	energy = minf(energy + energy_value, max_energy)
+	_feed_flash = 1.0
+	_set_mood(Mood.EATING, 0.6)
+	_mouth_open = 1.0
+	var is_rare: bool = component.get("rarity", "common") in ["rare", "legendary"]
+	AudioManager.play_collect(is_rare)
+	food_consumed.emit()
+
+	var comp_id: String = component.get("id", "")
+
+	# Spawn collection VFX
+	_spawn_collection_vfx(component)
+
+	# Track in inventory by type
+	if component.has("category"):
+		GameManager.collect_biomolecule(component)
+	elif comp_id in ["Mitochondrion", "Chloroplast", "Ribosome", "Nucleus", "ER", "Flagellum", "Vacuole"]:
+		GameManager.collect_organelle_item(component)
+		organelle_collected.emit()
+
+	collected_components.append(comp_id)
+
+func _try_eat_prey() -> void:
+	var prey_nodes := get_tree().get_nodes_in_group("prey")
+	for prey in prey_nodes:
+		if not is_instance_valid(prey):
+			continue
+		if global_position.distance_to(prey.global_position) < EAT_RANGE:
+			# Must be facing the prey to eat it (mouth is at front)
+			if not _is_target_in_front(prey.global_position, 0.7):  # ~80 degree cone
+				continue
+			if prey.has_method("get_eaten"):
+				var nutrition: Dictionary = prey.get_eaten()
+				heal(nutrition.get("health_restore", 10.0))
+				energy = minf(energy + nutrition.get("energy_restore", 5.0), max_energy)
+				_feed_flash = 1.0
+				_set_mood(Mood.EATING, 0.8)
+				_mouth_open = 1.0
+				_spawn_collection_vfx(nutrition)
+				AudioManager.play_eat()
+				prey_killed.emit()
+				prey.queue_free()
+				break  # One per frame
+
+## --- DIRECTIONAL COMBAT HELPERS ---
+
+func _is_target_in_front(target_pos: Vector2, arc: float = 0.5) -> bool:
+	## Check if target is within the front arc (arc is in radians, 0.5 = ~60 degrees)
+	var to_target: Vector2 = (target_pos - global_position).normalized()
+	var facing: Vector2 = Vector2.RIGHT.rotated(rotation)
+	var dot: float = to_target.dot(facing)
+	return dot > cos(arc)
+
+func _is_target_in_rear(target_pos: Vector2, arc: float = 0.5) -> bool:
+	## Check if target is behind us
+	var to_target: Vector2 = (target_pos - global_position).normalized()
+	var facing: Vector2 = Vector2.RIGHT.rotated(rotation)
+	var dot: float = to_target.dot(facing)
+	return dot < -cos(arc)
+
+func _is_target_on_sides(target_pos: Vector2, arc: float = 0.4) -> bool:
+	## Check if target is on either side (perpendicular)
+	var to_target: Vector2 = (target_pos - global_position).normalized()
+	var facing: Vector2 = Vector2.RIGHT.rotated(rotation)
+	var dot: float = abs(to_target.dot(facing))
+	return dot < sin(arc)  # Near perpendicular
+
+func _check_directional_contact_damage() -> void:
+	## Check for directional damage against nearby enemies
+	if _directional_contact_timer > 0:
+		return
+
+	var enemies := get_tree().get_nodes_in_group("enemies")
+	var competitors := get_tree().get_nodes_in_group("competitors")
+	var all_targets: Array = []
+	all_targets.append_array(enemies)
+	all_targets.append_array(competitors)
+
+	for target in all_targets:
+		if not is_instance_valid(target):
+			continue
+		var dist: float = global_position.distance_to(target.global_position)
+		if dist > _cell_radius + 30.0:
+			continue
+
+		var damage: float = 0.0
+		var hit: bool = false
+
+		# Front spike/horn damage
+		if _has_directional_front and _is_target_in_front(target.global_position, 0.5):
+			damage += _directional_front_damage
+			hit = true
+
+		# Rear stinger damage
+		if _has_directional_rear and _is_target_in_rear(target.global_position, 0.5):
+			damage += _directional_rear_damage
+			hit = true
+
+		# Side barb damage
+		if _has_directional_sides and _is_target_on_sides(target.global_position, 0.5):
+			damage += _directional_sides_damage
+			hit = true
+
+		if hit and damage > 0 and target.has_method("take_damage"):
+			target.take_damage(damage)
+			damage_dealt.emit(damage)
+			_directional_contact_timer = DIRECTIONAL_CONTACT_COOLDOWN
+			_toxin_flash = 0.5  # Visual feedback
+			break  # One target per check
+
+func _metabolize() -> void:
+	# Convert some collected nutrients into energy
+	var consumed: int = GameManager.metabolize_nutrients(3)  # Try to consume 3 items
+	if consumed > 0:
+		var gain: float = METABOLIZE_ENERGY_GAIN * consumed
+		energy = minf(energy + gain, max_energy)
+		metabolize_timer = METABOLIZE_COOLDOWN
+		_feed_flash = 0.6
+		_set_mood(Mood.HAPPY, 0.5)
+
+## --- WAKE TRAIL ---
+
+func _spawn_wake_particle() -> void:
+	if _wake_particles.size() >= MAX_WAKE:
+		return
+	var behind: Vector2 = -velocity.normalized() * (_cell_radius + 2.0)
+	var perp := Vector2(-behind.y, behind.x).normalized()
+	_wake_particles.append({
+		"pos": global_position + behind + perp * randf_range(-5.0, 5.0),
+		"life": 1.0,
+		"size": randf_range(1.5, 3.5),
+		"color": Color(0.4, 0.7, 1.0, 0.3) if not is_sprinting else Color(0.6, 0.9, 1.0, 0.5),
+	})
+
+func _update_wake_particles(delta: float) -> void:
+	var alive: Array = []
+	for p in _wake_particles:
+		p.life -= delta * 1.5
+		if p.life > 0:
+			alive.append(p)
+	_wake_particles = alive
+
+## --- TRACTOR BEAM + JET STREAM ---
+
+func _update_targeting() -> void:
+	## Find nearest beamable target near the mouse cursor
+	var mouse_pos := get_global_mouse_position()
+	_target_candidate = null
+	_target_type = ""
+	var best_dist: float = 60.0  # Cursor must be within 60px of a target
+
+	# Check food particles
+	for food in get_tree().get_nodes_in_group("food"):
+		if not is_instance_valid(food):
+			continue
+		var d_to_cursor: float = mouse_pos.distance_to(food.global_position)
+		var d_to_player: float = global_position.distance_to(food.global_position)
+		if d_to_cursor < best_dist and d_to_player < BEAM_RANGE:
+			best_dist = d_to_cursor
+			_target_candidate = food
+			_target_type = "food"
+
+	# Check prey
+	for prey in get_tree().get_nodes_in_group("prey"):
+		if not is_instance_valid(prey):
+			continue
+		var d_to_cursor: float = mouse_pos.distance_to(prey.global_position)
+		var d_to_player: float = global_position.distance_to(prey.global_position)
+		if d_to_cursor < best_dist and d_to_player < BEAM_RANGE:
+			best_dist = d_to_cursor
+			_target_candidate = prey
+			_target_type = "prey"
+
+func _update_beam(delta: float) -> void:
+	var wants_beam: bool = Input.is_action_pressed("beam_collect")
+
+	if wants_beam and _target_candidate and energy > 1.0:
+		if not _beam_active or _beam_target != _target_candidate:
+			# Start beaming new target
+			if _beam_target and is_instance_valid(_beam_target) and _beam_target.has_method("beam_release"):
+				_beam_target.beam_release()
+			_beam_target = _target_candidate
+			_beam_active = true
+			_set_mood(Mood.EXCITED, 0.3)
+			_mouth_open = 0.5
+
+		# Pull target toward us
+		if is_instance_valid(_beam_target) and _beam_target.has_method("beam_pull_toward"):
+			_beam_target.beam_pull_toward(global_position, delta)
+			energy -= BEAM_ENERGY_COST * delta
+			energy = maxf(energy, 0.0)
+
+			# Spawn beam particles (fluid stream from target to player)
+			var target_pos: Vector2 = _beam_target.global_position
+			var beam_color: Color = _beam_target.get_beam_color() if _beam_target.has_method("get_beam_color") else Color(0.5, 0.8, 1.0)
+			_spawn_beam_particles(target_pos, beam_color)
+
+			# Check if close enough to consume
+			var dist: float = global_position.distance_to(target_pos)
+			if dist < BEAM_COLLECT_DIST:
+				_consume_beam_target()
+	else:
+		if _beam_active:
+			if is_instance_valid(_beam_target) and _beam_target.has_method("beam_release"):
+				_beam_target.beam_release()
+			_beam_active = false
+			_beam_target = null
+
+func _consume_beam_target() -> void:
+	if not is_instance_valid(_beam_target):
+		_beam_active = false
+		_beam_target = null
+		return
+
+	if _beam_target.has_method("feed") or _beam_target.is_in_group("food"):
+		# It's a food particle — use feed()
+		if _beam_target.has_method("setup"):
+			feed(_beam_target.component_data)
+		_beam_target.queue_free()
+	elif _beam_target.has_method("get_eaten"):
+		# It's prey
+		var nutrition: Dictionary = _beam_target.get_eaten()
+		heal(nutrition.get("health_restore", 10.0))
+		energy = minf(energy + nutrition.get("energy_restore", 5.0), max_energy)
+		_feed_flash = 1.0
+		_set_mood(Mood.EATING, 0.8)
+		_mouth_open = 1.0
+		_spawn_collection_vfx(nutrition)
+		_beam_target.queue_free()
+
+	_beam_active = false
+	_beam_target = null
+
+func _spawn_beam_particles(target_pos: Vector2, color: Color) -> void:
+	# Spawn 2-3 particles per frame along the beam path
+	for i in range(randi_range(2, 3)):
+		var t: float = randf()
+		var pos: Vector2 = target_pos.lerp(global_position, t)
+		# Add perpendicular wobble for fluid look
+		var beam_dir: Vector2 = (global_position - target_pos).normalized()
+		var perp := Vector2(-beam_dir.y, beam_dir.x)
+		pos += perp * randf_range(-6.0, 6.0) * (1.0 - t)  # More wobble near target
+		_beam_particles.append({
+			"pos": pos,
+			"vel": beam_dir * randf_range(80.0, 160.0) + perp * randf_range(-20.0, 20.0),
+			"life": 1.0,
+			"color": color.lerp(Color(0.6, 0.9, 1.0), randf_range(0.0, 0.3)),
+			"size": randf_range(1.0, 2.5),
+		})
+
+func _update_beam_particles(delta: float) -> void:
+	var alive: Array = []
+	for p in _beam_particles:
+		p.life -= delta * 2.5
+		p.pos += p.vel * delta
+		p.vel *= 0.92
+		if p.life > 0:
+			alive.append(p)
+	_beam_particles = alive
+
+func _update_jet(delta: float) -> void:
+	_jet_active = Input.is_action_pressed("jet_stream") and GameManager.get_total_collected() > GameManager.inventory.organelles.size()
+
+	if _jet_active:
+		# Consume nutrients periodically
+		_jet_consume_timer -= delta
+		if _jet_consume_timer <= 0:
+			_jet_consume_timer = JET_CONSUME_INTERVAL
+			var colors: Array = GameManager.consume_for_jet(1)
+			if colors.size() > 0:
+				_jet_colors = colors
+				AudioManager.play_jet()
+			else:
+				_jet_active = false
+				return
+
+		# Spray direction = toward cursor
+		var jet_dir := (get_global_mouse_position() - global_position).normalized()
+		var jet_origin := global_position + jet_dir * (_cell_radius + 2.0)
+
+		# Spawn jet particles (reduced for performance)
+		for i in range(2):
+			var spread: float = randf_range(-JET_CONE_ANGLE, JET_CONE_ANGLE)
+			var p_dir: Vector2 = jet_dir.rotated(spread)
+			var col: Color = _jet_colors[randi() % _jet_colors.size()] if _jet_colors.size() > 0 else Color(0.5, 0.8, 1.0)
+			_jet_particles.append({
+				"pos": jet_origin + p_dir * randf_range(0, 5),
+				"vel": p_dir * randf_range(200.0, 350.0),
+				"life": 1.0,
+				"color": col.lerp(Color.WHITE, randf_range(0.0, 0.2)),
+				"size": randf_range(1.5, 3.5),
+			})
+
+		# Push enemies in cone
+		for enemy in get_tree().get_nodes_in_group("enemies"):
+			if not is_instance_valid(enemy):
+				continue
+			var to_enemy: Vector2 = enemy.global_position - global_position
+			var dist: float = to_enemy.length()
+			if dist > JET_RANGE or dist < 1.0:
+				continue
+			var angle_to: float = absf(jet_dir.angle_to(to_enemy.normalized()))
+			if angle_to < JET_CONE_ANGLE * 1.5:
+				# Push and confuse
+				if enemy is CharacterBody2D:
+					enemy.velocity += jet_dir * JET_PUSH_FORCE * delta
+				if enemy.has_method("confuse"):
+					enemy.confuse(JET_CONFUSE_DURATION)
+
+		# Small energy cost on top of nutrient consumption
+		energy -= 1.0 * delta
+		energy = maxf(energy, 0.0)
+
+func _update_jet_particles(delta: float) -> void:
+	var alive: Array = []
+	for p in _jet_particles:
+		p.life -= delta * 2.0
+		p.pos += p.vel * delta
+		p.vel *= 0.95
+		p.size *= 0.98
+		if p.life > 0:
+			alive.append(p)
+	_jet_particles = alive
+
+func _spawn_collection_vfx(component: Dictionary) -> void:
+	var vfx_scene := preload("res://scenes/collection_vfx.tscn")
+	var vfx := vfx_scene.instantiate()
+	var display_name: String = component.get("short_name", component.get("display_name", component.get("id", "")))
+	var c: Array = component.get("color", [1.0, 1.0, 1.0])
+	var color := Color(c[0], c[1], c[2]) if c.size() >= 3 else Color.WHITE
+	var is_rare: bool = component.get("rarity", "common") in ["rare", "legendary"]
+	vfx.setup(display_name, color, is_rare)
+	vfx.global_position = global_position
+	get_parent().add_child(vfx)
+
+# --- MUTATION SYSTEM ---
+
+var _health_regen_rate: float = 0.0
+
+func _apply_mutation_stats() -> void:
+	for m in GameManager.active_mutations:
+		_apply_single_mutation_stats(m)
+
+func _apply_single_mutation_stats(m: Dictionary) -> void:
+	var stat: Dictionary = m.get("stat", {})
+	if "speed" in stat:
+		move_speed *= (1.0 + stat.speed)
+	if "attack" in stat:
+		toxin_damage *= (1.0 + stat.attack)
+	if "max_health" in stat:
+		max_health *= (1.0 + stat.max_health)
+		health = minf(health + max_health * stat.max_health, max_health)
+	if "armor" in stat:
+		max_health *= (1.0 + stat.armor * 0.5)
+	if "energy_efficiency" in stat:
+		max_energy *= (1.0 + stat.energy_efficiency)
+		energy = minf(energy + max_energy * stat.energy_efficiency, max_energy)
+	if "beam_range" in stat:
+		# Can't modify const but we track it
+		pass
+	if "health_regen" in stat:
+		_health_regen_rate += stat.health_regen * 2.0
+	if "detection" in stat:
+		pass  # Handled by sensory system
+	if "stealth" in stat:
+		pass  # Future use
+
+	# Directional damage mutations
+	var directional: String = m.get("directional", "")
+	if directional != "":
+		var attack_bonus: float = stat.get("attack", 0.2) * toxin_damage
+		match directional:
+			"front":
+				_has_directional_front = true
+				_directional_front_damage += attack_bonus
+			"rear":
+				_has_directional_rear = true
+				_directional_rear_damage += attack_bonus
+			"sides":
+				_has_directional_sides = true
+				_directional_sides_damage += attack_bonus
+
+func _on_evolution_applied(mutation: Dictionary) -> void:
+	_apply_single_mutation_stats(mutation)
+	# Visual feedback: flash and grow briefly
+	_feed_flash = 1.0
+	_set_mood(Mood.EXCITED, 2.0)
+	_mouth_open = 0.8
+	# Grow cell slightly for larger_membrane
+	if mutation.get("visual", "") == "larger_membrane":
+		_cell_radius += 3.0
+		_init_procedural_shape()
+	# Update camera zoom for sensory upgrades
+	if mutation.get("sensory_upgrade", false):
+		_update_sensory_zoom(true)
+
+func _update_sensory_zoom(animate: bool) -> void:
+	var sens_level: int = clampi(GameManager.sensory_level, 0, ZOOM_LEVELS.size() - 1)
+	_target_zoom = ZOOM_LEVELS[sens_level]
+	if not animate and camera:
+		_current_zoom = _target_zoom
+		camera.zoom = Vector2(_current_zoom, _current_zoom)
+
+func _draw_mutations() -> void:
+	for m in GameManager.active_mutations:
+		var vis: String = m.get("visual", "")
+		match vis:
+			"extra_cilia": _draw_mut_extra_cilia()
+			"spikes": _draw_mut_spikes()
+			"armor_plates": _draw_mut_armor_plates()
+			"color_shift": _draw_mut_color_shift()
+			"bioluminescence": _draw_mut_bioluminescence()
+			"flagellum": _draw_mut_flagellum()
+			"third_eye": _draw_mut_third_eye()
+			"eye_stalks": _draw_mut_eye_stalks()
+			"tentacles": _draw_mut_tentacles()
+			"larger_membrane": pass
+			"toxin_glands": _draw_mut_toxin_glands()
+			"photoreceptor": _draw_mut_photoreceptor()
+			"thick_membrane": _draw_mut_thick_membrane()
+			"enzyme_boost": _draw_mut_enzyme_boost()
+			"regeneration": _draw_mut_regeneration()
+			"sprint_boost": _draw_mut_sprint_boost()
+			"compound_eye": _draw_mut_compound_eye()
+			"absorption_villi": _draw_mut_absorption_villi()
+			"dorsal_fin": _draw_mut_dorsal_fin()
+			"ink_sac": _draw_mut_ink_sac()
+			"electric_organ": _draw_mut_electric_organ()
+			"symbiont_pouch": _draw_mut_symbiont_pouch()
+			"hardened_nucleus": _draw_mut_hardened_nucleus()
+			"pili_network": _draw_mut_pili_network()
+			"chrono_enzyme": _draw_mut_chrono_enzyme()
+			"thermal_vent_organ": _draw_mut_thermal_vent_organ()
+			"lateral_line": _draw_mut_lateral_line()
+			"beak": _draw_mut_beak()
+			"gas_vacuole": _draw_mut_gas_vacuole()
+			# Directional mutations
+			"front_spike": _draw_mut_front_spike()
+			"mandibles": _draw_mut_mandibles()
+			"side_barbs": _draw_mut_side_barbs()
+			"rear_stinger": _draw_mut_rear_stinger()
+			"ramming_crest": _draw_mut_ramming_crest()
+			"proboscis": _draw_mut_proboscis()
+			"tail_club": _draw_mut_tail_club()
+			"electroreceptors": _draw_mut_electroreceptors()
+			"antenna": _draw_mut_antenna()
+
+func _draw_mut_extra_cilia() -> void:
+	for i in range(8):
+		var a: float = TAU * i / 8.0 + 0.2
+		var wave: float = sin(_time * 10.0 + i * 1.5) * 0.3
+		var base := Vector2(cos(a) * _cell_radius, sin(a) * _cell_radius)
+		var tip := base + Vector2(cos(a + wave) * 14.0, sin(a + wave) * 14.0)
+		draw_line(base, tip, Color(0.4, 0.9, 1.0, 0.6), 1.0, true)
+
+func _draw_mut_spikes() -> void:
+	for i in range(8):
+		var a: float = TAU * i / 8.0
+		var base := Vector2(cos(a) * _cell_radius, sin(a) * _cell_radius)
+		var tip := base + Vector2(cos(a), sin(a)) * (10.0 + sin(_time * 2.0 + i) * 2.0)
+		draw_line(base, tip, Color(0.9, 0.3, 0.2, 0.8), 2.0, true)
+		# Barb
+		var mid := (base + tip) * 0.5
+		var perp := Vector2(-sin(a), cos(a))
+		draw_line(mid, mid + perp * 3.0, Color(0.9, 0.3, 0.2, 0.5), 1.0, true)
+
+func _draw_mut_armor_plates() -> void:
+	for i in range(5):
+		var a: float = TAU * i / 5.0 + PI * 0.3
+		var p := Vector2(cos(a), sin(a)) * (_cell_radius - 2.0)
+		var perp := Vector2(-sin(a), cos(a))
+		var pts: PackedVector2Array = PackedVector2Array([
+			p + perp * 5.0, p - perp * 5.0,
+			p - perp * 4.0 + Vector2(cos(a), sin(a)) * 4.0,
+			p + perp * 4.0 + Vector2(cos(a), sin(a)) * 4.0,
+		])
+		draw_colored_polygon(pts, Color(0.4, 0.5, 0.6, 0.5))
+
+func _draw_mut_color_shift() -> void:
+	var hue: float = fmod(_time * 0.15, 1.0)
+	var col := Color.from_hsv(hue, 0.4, 0.8, 0.15)
+	draw_circle(Vector2.ZERO, _cell_radius * 0.9, col)
+
+func _draw_mut_bioluminescence() -> void:
+	var pulse: float = 0.3 + 0.2 * sin(_time * 3.0)
+	draw_circle(Vector2.ZERO, _cell_radius * 1.8, Color(0.2, 0.8, 1.0, pulse * 0.1))
+	draw_circle(Vector2.ZERO, _cell_radius * 1.2, Color(0.3, 0.9, 0.6, pulse * 0.15))
+
+func _draw_mut_flagellum() -> void:
+	var base := Vector2(-_cell_radius - 2.0, 0)
+	for i in range(14):
+		var t: float = float(i) / 13.0
+		var px: float = base.x - t * 28.0
+		var py: float = sin(_time * 8.0 + t * 5.0) * 8.0 * t
+		if i > 0:
+			var pt: float = float(i - 1) / 13.0
+			var ppx: float = base.x - pt * 28.0
+			var ppy: float = sin(_time * 8.0 + pt * 5.0) * 8.0 * pt
+			draw_line(Vector2(ppx, ppy), Vector2(px, py), Color(0.5, 0.8, 0.4, 0.7), 2.0 - t * 1.2, true)
+
+func _draw_mut_third_eye() -> void:
+	var pos := Vector2(_cell_radius * 0.2, 0)
+	draw_circle(pos, 3.5, Color(0.95, 0.95, 1.0, 0.9))
+	var look := (get_global_mouse_position() - global_position).normalized().rotated(-rotation)
+	draw_circle(pos + look * 1.0, 1.8, Color(0.6, 0.1, 0.8, 1.0))
+	draw_circle(pos + look * 1.0 + Vector2(-0.3, -0.3), 0.6, Color(1, 1, 1, 0.6))
+
+func _draw_mut_eye_stalks() -> void:
+	for side in [-1.0, 1.0]:
+		var base := Vector2(2.0, side * _cell_radius * 0.7)
+		var tip := base + Vector2(10.0, side * 12.0 + sin(_time * 2.5 + side) * 2.0)
+		draw_line(base, tip, Color(0.4, 0.6, 0.3, 0.7), 1.5, true)
+		draw_circle(tip, 3.0, Color(0.95, 0.95, 1.0, 0.9))
+		var look := (get_global_mouse_position() - global_position).normalized().rotated(-rotation)
+		draw_circle(tip + look * 0.8, 1.5, Color(0.1, 0.3, 0.1, 1.0))
+
+func _draw_mut_tentacles() -> void:
+	for i in range(3):
+		var base_a: float = PI + (i - 1) * 0.4
+		var base := Vector2(cos(base_a), sin(base_a)) * _cell_radius
+		for s in range(10):
+			var t: float = float(s) / 9.0
+			var px: float = base.x + cos(base_a) * t * 25.0 + sin(_time * 3.0 + i + t * 3.0) * 5.0 * t
+			var py: float = base.y + sin(base_a) * t * 25.0 + cos(_time * 2.5 + i * 2.0 + t * 2.0) * 4.0 * t
+			if s > 0:
+				var pt: float = float(s - 1) / 9.0
+				var ppx: float = base.x + cos(base_a) * pt * 25.0 + sin(_time * 3.0 + i + pt * 3.0) * 5.0 * pt
+				var ppy: float = base.y + sin(base_a) * pt * 25.0 + cos(_time * 2.5 + i * 2.0 + pt * 2.0) * 4.0 * pt
+				draw_line(Vector2(ppx, ppy), Vector2(px, py), Color(0.6, 0.4, 0.8, 0.6 - t * 0.3), 2.0 - t * 1.5, true)
+
+func _draw_mut_toxin_glands() -> void:
+	for i in range(3):
+		var a: float = TAU * i / 3.0 + PI * 0.5
+		var p := Vector2(cos(a), sin(a)) * (_cell_radius * 0.75)
+		var pulse: float = 0.6 + 0.3 * sin(_time * 4.0 + i * 2.0)
+		draw_circle(p, 3.0 * pulse, Color(0.5, 0.9, 0.1, 0.5))
+
+func _draw_mut_photoreceptor() -> void:
+	for i in range(3):
+		var a: float = -0.4 + i * 0.4
+		var p := Vector2(cos(a), sin(a)) * (_cell_radius * 0.6)
+		var glow: float = 0.4 + 0.3 * sin(_time * 3.0 + i)
+		draw_circle(p, 2.5, Color(0.8, 0.9, 1.0, glow))
+
+func _draw_mut_thick_membrane() -> void:
+	var pts: PackedVector2Array = PackedVector2Array()
+	for i in range(NUM_MEMBRANE_PTS):
+		var wobble := sin(_time * 3.0 + i * 0.7) * 1.0
+		pts.append(_membrane_points[i].normalized() * (_cell_radius + 3.0 + wobble))
+	for i in range(pts.size()):
+		draw_line(pts[i], pts[(i + 1) % pts.size()], Color(0.4, 0.6, 0.9, 0.35), 2.5, true)
+
+func _draw_mut_enzyme_boost() -> void:
+	for i in range(4):
+		var a: float = TAU * i / 4.0 + _time * 1.5
+		var r: float = _cell_radius * 0.4 + sin(_time * 4.0 + i) * 3.0
+		var p := Vector2(cos(a), sin(a)) * r
+		draw_circle(p, 1.8, Color(1.0, 0.8, 0.2, 0.4 + 0.2 * sin(_time * 5.0 + i)))
+
+func _draw_mut_regeneration() -> void:
+	var pulse: float = 0.15 + 0.1 * sin(_time * 2.0)
+	draw_circle(Vector2.ZERO, _cell_radius * 1.3, Color(0.2, 0.9, 0.3, pulse))
+
+func _draw_mut_sprint_boost() -> void:
+	if velocity.length() > move_speed * 0.5:
+		for i in range(3):
+			var trail_pos := Vector2(-_cell_radius - 4.0 - i * 6.0, (i - 1) * 3.0)
+			draw_line(trail_pos, trail_pos + Vector2(-8.0, 0), Color(0.4, 0.8, 1.0, 0.3 - i * 0.08), 1.5, true)
+
+func _draw_mut_compound_eye() -> void:
+	for row in range(2):
+		for col in range(2):
+			var p := Vector2(_cell_radius * 0.3 + col * 4.0, (row - 0.5) * 5.0)
+			draw_circle(p, 2.0, Color(0.85, 0.85, 1.0, 0.6))
+			draw_circle(p, 1.0, Color(0.1, 0.1, 0.3, 0.8))
+
+func _draw_mut_absorption_villi() -> void:
+	for i in range(10):
+		var a: float = TAU * i / 10.0 + 0.15
+		var base := Vector2(cos(a), sin(a)) * _cell_radius
+		var tip := base + Vector2(cos(a), sin(a)) * (6.0 + sin(_time * 3.0 + i) * 2.0)
+		draw_line(base, tip, Color(0.8, 0.6, 0.3, 0.5), 1.0, true)
+		draw_circle(tip, 1.2, Color(0.9, 0.7, 0.4, 0.6))
+
+func _draw_mut_dorsal_fin() -> void:
+	# Triangular fin on top
+	var wave: float = sin(_time * 3.0) * 2.0
+	var pts: PackedVector2Array = PackedVector2Array([
+		Vector2(4.0, -_cell_radius),
+		Vector2(-6.0, -_cell_radius - 10.0 + wave),
+		Vector2(-8.0, -_cell_radius),
+	])
+	draw_colored_polygon(pts, Color(0.3, 0.6, 0.9, 0.5))
+	draw_line(pts[0], pts[1], Color(0.4, 0.7, 1.0, 0.7), 1.0, true)
+	draw_line(pts[1], pts[2], Color(0.4, 0.7, 1.0, 0.7), 1.0, true)
+
+func _draw_mut_ink_sac() -> void:
+	# Dark sac visible inside body
+	var p := Vector2(-_cell_radius * 0.4, 0)
+	var pulse: float = 0.5 + 0.2 * sin(_time * 2.0)
+	draw_circle(p, 4.0, Color(0.1, 0.05, 0.15, pulse))
+	draw_circle(p, 2.5, Color(0.2, 0.1, 0.3, pulse * 0.8))
+
+func _draw_mut_electric_organ() -> void:
+	# Crackling arcs around body
+	for i in range(3):
+		var a: float = TAU * i / 3.0 + _time * 5.0
+		var p1 := Vector2(cos(a), sin(a)) * _cell_radius
+		var jitter := Vector2(sin(_time * 20.0 + i * 7.0) * 4.0, cos(_time * 18.0 + i * 5.0) * 4.0)
+		var p2 := p1 + Vector2(cos(a), sin(a)) * 8.0 + jitter
+		draw_line(p1, p2, Color(0.5, 0.8, 1.0, 0.6), 1.0, true)
+
+func _draw_mut_symbiont_pouch() -> void:
+	# Tiny orbiting dots (symbiotic bacteria)
+	for i in range(4):
+		var a: float = _time * 1.5 + TAU * i / 4.0
+		var p := Vector2(cos(a), sin(a)) * (_cell_radius * 0.5)
+		draw_circle(p, 1.5, Color(0.3, 0.9, 0.5, 0.5))
+
+func _draw_mut_hardened_nucleus() -> void:
+	# Bright core with hexagonal outline
+	draw_circle(Vector2.ZERO, 5.0, Color(0.4, 0.3, 0.6, 0.3))
+	for i in range(6):
+		var a1: float = TAU * i / 6.0
+		var a2: float = TAU * (i + 1) / 6.0
+		draw_line(Vector2(cos(a1), sin(a1)) * 5.0, Vector2(cos(a2), sin(a2)) * 5.0, Color(0.6, 0.5, 0.9, 0.5), 1.0, true)
+
+func _draw_mut_pili_network() -> void:
+	# Fine hair-like projections
+	for i in range(16):
+		var a: float = TAU * i / 16.0
+		var base := Vector2(cos(a), sin(a)) * _cell_radius
+		var tip := base + Vector2(cos(a), sin(a)) * (4.0 + sin(_time * 2.0 + i) * 1.5)
+		draw_line(base, tip, Color(0.6, 0.7, 0.5, 0.3), 0.5, true)
+
+func _draw_mut_chrono_enzyme() -> void:
+	# Swirling internal particles (fast orbiting)
+	for i in range(5):
+		var a: float = _time * 4.0 + TAU * i / 5.0
+		var r: float = _cell_radius * 0.35 + sin(_time * 6.0 + i) * 2.0
+		var p := Vector2(cos(a), sin(a)) * r
+		draw_circle(p, 1.2, Color(1.0, 0.6, 0.2, 0.5))
+
+func _draw_mut_thermal_vent_organ() -> void:
+	# Warm glow patches
+	for i in range(3):
+		var a: float = TAU * i / 3.0 + 0.5
+		var p := Vector2(cos(a), sin(a)) * (_cell_radius * 0.6)
+		var pulse: float = 0.3 + 0.15 * sin(_time * 2.5 + i)
+		draw_circle(p, 3.0, Color(0.9, 0.4, 0.1, pulse))
+
+func _draw_mut_lateral_line() -> void:
+	# Dotted line along the equator
+	for i in range(8):
+		var t: float = float(i) / 7.0
+		var px: float = lerpf(-_cell_radius, _cell_radius, t)
+		var pulse: float = 0.3 + 0.2 * sin(_time * 3.0 + i)
+		draw_circle(Vector2(px, 0), 1.0, Color(0.5, 0.7, 1.0, pulse))
+
+func _draw_mut_beak() -> void:
+	# Pointed beak at front
+	var pts: PackedVector2Array = PackedVector2Array([
+		Vector2(_cell_radius + 1.0, -3.0),
+		Vector2(_cell_radius + 9.0, 0),
+		Vector2(_cell_radius + 1.0, 3.0),
+	])
+	draw_colored_polygon(pts, Color(0.7, 0.5, 0.2, 0.8))
+	draw_line(pts[0], pts[1], Color(0.5, 0.35, 0.1, 0.9), 1.0, true)
+	draw_line(pts[1], pts[2], Color(0.5, 0.35, 0.1, 0.9), 1.0, true)
+
+func _draw_mut_gas_vacuole() -> void:
+	# Translucent internal bubble
+	var bob: float = sin(_time * 1.5) * 2.0
+	draw_circle(Vector2(0, bob), 5.0, Color(0.7, 0.85, 1.0, 0.12))
+	draw_arc(Vector2(0, bob), 5.0, 0, TAU, 12, Color(0.7, 0.9, 1.0, 0.2), 0.8, true)
+
+## --- DIRECTIONAL MUTATION VISUALS ---
+
+func _draw_mut_front_spike() -> void:
+	# Big horn at front of cell
+	var base1 := Vector2(_cell_radius - 2.0, -4.0)
+	var base2 := Vector2(_cell_radius - 2.0, 4.0)
+	var tip := Vector2(_cell_radius + 18.0 + sin(_time * 3.0) * 2.0, 0)
+	var pts: PackedVector2Array = PackedVector2Array([base1, tip, base2])
+	draw_colored_polygon(pts, Color(0.85, 0.75, 0.5, 0.9))
+	draw_line(base1, tip, Color(0.7, 0.5, 0.2, 1.0), 1.5, true)
+	draw_line(base2, tip, Color(0.7, 0.5, 0.2, 1.0), 1.5, true)
+	# Danger glow when moving fast
+	if velocity.length() > 100:
+		draw_circle(tip, 4.0, Color(1.0, 0.3, 0.1, 0.3))
+
+func _draw_mut_mandibles() -> void:
+	# Two pincer jaws at front
+	var open: float = 0.2 + abs(sin(_time * 4.0)) * 0.3
+	for side in [-1.0, 1.0]:
+		var base := Vector2(_cell_radius - 1.0, side * 5.0)
+		var mid := Vector2(_cell_radius + 8.0, side * (4.0 + open * 6.0))
+		var tip := Vector2(_cell_radius + 14.0, side * (2.0 + open * 3.0))
+		draw_line(base, mid, Color(0.6, 0.4, 0.2, 0.9), 2.5, true)
+		draw_line(mid, tip, Color(0.5, 0.3, 0.15, 0.9), 2.0, true)
+		# Serrated edge
+		for i in range(3):
+			var t: float = 0.3 + i * 0.25
+			var sp := base.lerp(mid, t)
+			draw_circle(sp, 1.0, Color(0.7, 0.5, 0.25, 0.7))
+
+func _draw_mut_side_barbs() -> void:
+	# Barbs along both sides
+	for side in [-1.0, 1.0]:
+		for i in range(4):
+			var x: float = -_cell_radius * 0.5 + i * (_cell_radius * 0.4)
+			var base := Vector2(x, side * _cell_radius)
+			var tip := base + Vector2(0, side * (8.0 + sin(_time * 5.0 + i) * 2.0))
+			draw_line(base, tip, Color(0.9, 0.4, 0.3, 0.8), 1.5, true)
+			# Small hook
+			var hook := tip + Vector2(side * 2.0, side * -2.0)
+			draw_line(tip, hook, Color(0.9, 0.4, 0.3, 0.6), 1.0, true)
+
+func _draw_mut_rear_stinger() -> void:
+	# Scorpion-like stinger at back
+	var segments: int = 5
+	var prev := Vector2(-_cell_radius, 0)
+	for i in range(segments):
+		var t: float = float(i + 1) / segments
+		var wave: float = sin(_time * 3.0 + t * 2.0) * 4.0
+		var cur := Vector2(-_cell_radius - t * 16.0, wave * t)
+		var width: float = 3.0 * (1.0 - t * 0.6)
+		draw_line(prev, cur, Color(0.3, 0.7, 0.2, 0.9), width, true)
+		prev = cur
+	# Stinger tip
+	var stinger_tip := prev + Vector2(-6.0, 0)
+	draw_line(prev, stinger_tip, Color(0.2, 0.8, 0.1, 1.0), 1.5, true)
+	draw_circle(stinger_tip, 2.0, Color(0.1, 0.9, 0.2, 0.6 + sin(_time * 6.0) * 0.3))
+
+func _draw_mut_ramming_crest() -> void:
+	# Armored head plate
+	var pts: PackedVector2Array = PackedVector2Array()
+	for i in range(7):
+		var t: float = float(i) / 6.0
+		var a: float = lerpf(-0.6, 0.6, t)
+		var r: float = _cell_radius + 4.0 + sin(t * PI) * 6.0
+		pts.append(Vector2(cos(a) * r, sin(a) * r))
+	pts.append(Vector2(_cell_radius - 2.0, sin(0.6) * _cell_radius))
+	pts.append(Vector2(_cell_radius - 2.0, sin(-0.6) * _cell_radius))
+	draw_colored_polygon(pts, Color(0.5, 0.55, 0.6, 0.7))
+	# Ridge lines
+	for i in range(3):
+		var a: float = -0.3 + i * 0.3
+		var p1 := Vector2(cos(a) * _cell_radius, sin(a) * _cell_radius)
+		var p2 := Vector2(cos(a) * (_cell_radius + 8.0), sin(a) * (_cell_radius + 8.0) * 0.7)
+		draw_line(p1, p2, Color(0.4, 0.45, 0.5, 0.8), 1.5, true)
+
+func _draw_mut_proboscis() -> void:
+	# Long feeding needle at front
+	var wave: float = sin(_time * 8.0) * 1.5
+	var base := Vector2(_cell_radius, 0)
+	var segments: int = 6
+	var prev := base
+	for i in range(segments):
+		var t: float = float(i + 1) / segments
+		var cur := Vector2(_cell_radius + t * 20.0, sin(_time * 4.0 + t * 3.0) * 2.0 * t)
+		var width: float = 2.0 * (1.0 - t * 0.7)
+		draw_line(prev, cur, Color(0.8, 0.5, 0.6, 0.8), width, true)
+		prev = cur
+	# Needle tip
+	draw_line(prev, prev + Vector2(5.0, 0), Color(0.9, 0.3, 0.4, 0.9), 1.0, true)
+
+func _draw_mut_tail_club() -> void:
+	# Heavy club at back
+	var base := Vector2(-_cell_radius, 0)
+	var stem := base + Vector2(-10.0, sin(_time * 2.0) * 3.0)
+	draw_line(base, stem, Color(0.6, 0.5, 0.4, 0.9), 3.0, true)
+	# Club head
+	var club_pts: PackedVector2Array = PackedVector2Array()
+	for i in range(8):
+		var a: float = TAU * i / 8.0
+		var r: float = 5.0 + sin(a * 2.0 + _time * 3.0) * 1.5
+		club_pts.append(stem + Vector2(cos(a) * r - 3.0, sin(a) * r))
+	draw_colored_polygon(club_pts, Color(0.55, 0.45, 0.35, 0.85))
+	draw_arc(stem + Vector2(-3.0, 0), 5.5, 0, TAU, 12, Color(0.4, 0.35, 0.3, 0.9), 1.0, true)
+
+func _draw_mut_electroreceptors() -> void:
+	# Sensory pits around the body
+	for i in range(6):
+		var a: float = TAU * i / 6.0 + _time * 0.2
+		var pos := Vector2(cos(a) * (_cell_radius - 3.0), sin(a) * (_cell_radius - 3.0))
+		var pulse: float = 0.3 + 0.4 * sin(_time * 5.0 + i * 1.2)
+		draw_circle(pos, 2.5, Color(0.4, 0.7, 1.0, pulse))
+		# Electric arc effect
+		if randf() < 0.1:
+			var arc_end := pos + Vector2(randf_range(-8, 8), randf_range(-8, 8))
+			draw_line(pos, arc_end, Color(0.5, 0.8, 1.0, 0.4), 0.8, true)
+
+func _draw_mut_antenna() -> void:
+	# Two long antennae at front
+	for side in [-1.0, 1.0]:
+		var base := Vector2(_cell_radius - 2.0, side * 4.0)
+		var segments: int = 8
+		var prev := base
+		for i in range(segments):
+			var t: float = float(i + 1) / segments
+			var wave: float = sin(_time * 6.0 + t * 4.0 + side) * 3.0 * t
+			var cur := Vector2(_cell_radius + t * 25.0, side * 4.0 + wave)
+			var width: float = 1.5 * (1.0 - t * 0.8)
+			draw_line(prev, cur, Color(0.6, 0.7, 0.5, 0.7), width, true)
+			prev = cur
+		# Sensor tip
+		draw_circle(prev, 1.5, Color(0.5, 0.9, 0.6, 0.5 + sin(_time * 4.0) * 0.3))

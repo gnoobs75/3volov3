@@ -1,0 +1,14 @@
+[gd_scene load_steps=2 format=3 uid="uid://repeller_organism"]
+
+[ext_resource type="Script" path="res://scripts/cell_stage/repeller_organism.gd" id="1"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_repel"]
+radius = 80.0
+
+[node name="RepellerOrganism" type="Area2D"]
+collision_layer = 2
+collision_mask = 1
+script = ExtResource("1")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_repel")

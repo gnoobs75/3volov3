@@ -1,0 +1,88 @@
+{
+  "dna_genes": [
+    {"id": "Gene_1", "function": "Base metabolism", "trait_impact": {"energy_efficiency": 0.05}, "evolution_trigger": "nutrient_scarcity", "sequence": "GAGCACTTTGGACGGTGAGC"},
+    {"id": "Gene_2", "function": "Sensory adaptation", "trait_impact": {"detection_range": 0.15}, "evolution_trigger": "low_light", "sequence": "GGAAGCCGATGGCCAAATAA"},
+    {"id": "Gene_3", "function": "Reproduction booster", "trait_impact": {"offspring_survival": 0.10}, "evolution_trigger": "population_boom", "sequence": "CGGTGTGGCACAACGACTTG"},
+    {"id": "Gene_4", "function": "Defense mechanism", "trait_impact": {"armor": 0.20}, "evolution_trigger": "predation_pressure", "sequence": "CTTGAAGCGTTTAAATGCGG"},
+    {"id": "Gene_5", "function": "Mobility enhancer", "trait_impact": {"speed": 0.12}, "evolution_trigger": "resource_competition", "sequence": "TTTGAATAAGATTGACAAGT"},
+    {"id": "Gene_6", "function": "Symbiosis enabler", "trait_impact": {"alliance_formation": 0.08}, "evolution_trigger": "mutual_benefit", "sequence": "CAAATTGTATCAGAGTGCGA"},
+    {"id": "Gene_7", "function": "Toxin production", "trait_impact": {"hostility_damage": 0.15}, "evolution_trigger": "hostile_encounters", "sequence": "TCTGTATGGAATACCTTCTT"},
+    {"id": "Gene_8", "function": "Repair system", "trait_impact": {"mutation_resistance": 0.10}, "evolution_trigger": "radiation_events", "sequence": "GGACGTAGTTAACTCATTCG"},
+    {"id": "Gene_9", "function": "Growth accelerator", "trait_impact": {"size_increase": 0.18}, "evolution_trigger": "abundant_nutrients", "sequence": "AGGTTATCGAGAGGGATATG"},
+    {"id": "Gene_10", "function": "Camouflage gene", "trait_impact": {"stealth": 0.14}, "evolution_trigger": "predator_heavy", "sequence": "TTGTTTGTCGAGTAGCCCCC"},
+    {"id": "Gene_11", "function": "Group coordination", "trait_impact": {"herd_efficiency": 0.09}, "evolution_trigger": "social_stage", "sequence": "CAGTCTCAACCTATATAGCT"},
+    {"id": "Gene_12", "function": "Nutrient storage", "trait_impact": {"famine_resistance": 0.11}, "evolution_trigger": "seasonal_changes", "sequence": "ACATACTAAAGTTGGCTCTA"},
+    {"id": "Gene_13", "function": "Signal receiver", "trait_impact": {"environmental_response": 0.13}, "evolution_trigger": "ph_shifts", "sequence": "CGCAGCCAATTTTGTGTTAG"},
+    {"id": "Gene_14", "function": "Energy converter", "trait_impact": {"photosynthesis": 0.16}, "evolution_trigger": "light_cycles", "sequence": "GATCAATGACATGACGTACC"},
+    {"id": "Gene_15", "function": "Multi-cellular trigger", "trait_impact": {"complexity": 0.20}, "evolution_trigger": "milestone_evolution", "sequence": "GTCGCTGCCATTGAAGCTAC"},
+    {"id": "Gene_16", "function": "Adaptation wildcard", "trait_impact": {"random_boost": 0.10}, "evolution_trigger": "crisis_events", "sequence": "ATCACGTCTCCCGGAGCGAG"},
+    {"id": "Gene_17", "function": "Predatory instinct", "trait_impact": {"hunt_success": 0.17}, "evolution_trigger": "food_scarcity", "sequence": "TCGACATTGAATAGATTGAT"},
+    {"id": "Gene_18", "function": "Resilience builder", "trait_impact": {"extreme_survival": 0.12}, "evolution_trigger": "temperature_swings", "sequence": "TCAGAAGGGCAGGTTCCCGC"},
+    {"id": "Gene_19", "function": "Replication fidelity", "trait_impact": {"mutation_rate": -0.05}, "evolution_trigger": "stable_environments", "sequence": "CGGTAGGTGGTCGACCCTGG"},
+    {"id": "Gene_20", "function": "Innovation gene", "trait_impact": {"novel_trait_chance": 0.10}, "evolution_trigger": "random_mutations", "sequence": "GTTACGGCGCTGAGGTGCAC"}
+  ],
+  "proteins": [
+    {"id": "Protein_1", "function": "Metabolic enzyme", "trait_impact": {"energy_processing": 0.05}, "evolution_trigger": "low_resources", "sequence": "EHFGR"},
+    {"id": "Protein_2", "function": "Sensor protein", "trait_impact": {"perception": 0.10}, "evolution_trigger": "dim_environments", "sequence": "GSRWPNK"},
+    {"id": "Protein_3", "function": "Fertility factor", "trait_impact": {"reproduction": 0.10}, "evolution_trigger": "high_density", "sequence": "RCGTTTWG"},
+    {"id": "Protein_4", "function": "Armor protein", "trait_impact": {"damage_reduction": 0.15}, "evolution_trigger": "attacks", "sequence": "LEAFKCGA"},
+    {"id": "Protein_5", "function": "Motor protein", "trait_impact": {"movement": 0.08}, "evolution_trigger": "migration", "sequence": "FE"},
+    {"id": "Protein_6", "function": "Bonding protein", "trait_impact": {"symbiotic_links": 0.10}, "evolution_trigger": "partnerships", "sequence": "QIVSECE"},
+    {"id": "Protein_7", "function": "Toxin synthesizer", "trait_impact": {"offensive_capability": 0.20}, "evolution_trigger": "conflicts", "sequence": "SVWNTFFLCRAGERIVFLIQPNF"},
+    {"id": "Protein_8", "function": "Repair enzyme", "trait_impact": {"self_healing": 0.08}, "evolution_trigger": "injuries", "sequence": "GRS"},
+    {"id": "Protein_9", "function": "Growth hormone", "trait_impact": {"scaling": 0.15}, "evolution_trigger": "growth_phases", "sequence": "RLSRGILRPNCPRVITAPRYGVLACMNFCKGRCTTRGEPCLRY"},
+    {"id": "Protein_10", "function": "Camo pigment", "trait_impact": {"invisibility": 0.12}, "evolution_trigger": "predators", "sequence": "LFVE"},
+    {"id": "Protein_15", "function": "Builder protein", "trait_impact": {"cell_complexity": 0.18}, "evolution_trigger": "advancements", "sequence": "VAAIEATISCHHPLWST"}
+  ],
+  "helices": [
+    {"id": "Helix_1", "function": "Stable scaffold", "trait_impact": {"structure_integrity": 0.05}, "evolution_trigger": "physical_stress", "sequence": "AELAKAAAELAKAA"},
+    {"id": "Helix_2", "function": "Coiled-coil binder", "trait_impact": {"symbiosis_strength": 0.10}, "evolution_trigger": "alliances", "sequence": "LEELKKLLEELKKL"},
+    {"id": "Helix_4", "function": "Rigid enforcer", "trait_impact": {"defense": 0.12}, "evolution_trigger": "threats", "sequence": "KRTCLQRGLDDHNMNQKYK"},
+    {"id": "Helix_5", "function": "Sensory helix", "trait_impact": {"sensing": 0.15}, "evolution_trigger": "stimuli", "sequence": "YACSSQYILSFRH"},
+    {"id": "Helix_6", "function": "Transport channel", "trait_impact": {"resource_flow": 0.10}, "evolution_trigger": "scarcity", "sequence": "IDKDGMIVFHLAVEQFAE"},
+    {"id": "Helix_8", "function": "Catalytic site", "trait_impact": {"reactions": 0.14}, "evolution_trigger": "metabolism", "sequence": "QEFFTLPCGLGAWYG"},
+    {"id": "Helix_10", "function": "Mobility driver", "trait_impact": {"speed": 0.13}, "evolution_trigger": "movement", "sequence": "KIWAFDRSYANTAR"},
+    {"id": "Helix_12", "function": "Long adaptor", "trait_impact": {"complexity": 0.16}, "evolution_trigger": "evolution", "sequence": "PYLNFEQWFKILRMWYFIH"},
+    {"id": "Helix_13", "function": "Toxin helix", "trait_impact": {"damage": 0.17}, "evolution_trigger": "hostility", "sequence": "QCHITCNYKTPW"},
+    {"id": "Helix_20", "function": "Innovation coil", "trait_impact": {"mutations": 0.11}, "evolution_trigger": "random", "sequence": "YMYNHNFCPKS"}
+  ],
+  "biomolecules": [
+    {"id": "ATP", "category": "nucleotide", "display_name": "Adenosine Triphosphate", "short_name": "ATP", "description": "Universal energy currency of all living cells", "energy_value": 25, "rarity": "common", "color": [1.0, 0.9, 0.1]},
+    {"id": "ADP", "category": "nucleotide", "display_name": "Adenosine Diphosphate", "short_name": "ADP", "description": "Spent energy carrier awaiting re-phosphorylation", "energy_value": 8, "rarity": "common", "color": [0.6, 0.5, 0.2]},
+    {"id": "GTP", "category": "nucleotide", "display_name": "Guanosine Triphosphate", "short_name": "GTP", "description": "Signal transduction cofactor and protein synthesis fuel", "energy_value": 22, "rarity": "uncommon", "color": [0.3, 0.9, 0.5]},
+    {"id": "Glucose", "category": "monosaccharide", "display_name": "D-Glucose", "short_name": "Glucose", "description": "Primary hexose sugar for glycolytic catabolism", "energy_value": 30, "rarity": "common", "color": [0.9, 0.7, 0.2]},
+    {"id": "Pyruvate", "category": "organic_acid", "display_name": "Pyruvic Acid", "short_name": "Pyruvate", "description": "End-product of glycolysis; gateway to the Krebs cycle", "energy_value": 15, "rarity": "uncommon", "color": [0.8, 0.5, 0.1]},
+    {"id": "NADH", "category": "coenzyme", "display_name": "Nicotinamide Adenine Dinucleotide", "short_name": "NADH", "description": "Electron carrier critical for oxidative phosphorylation", "energy_value": 20, "rarity": "uncommon", "color": [0.4, 0.6, 1.0]},
+    {"id": "FADH2", "category": "coenzyme", "display_name": "Flavin Adenine Dinucleotide", "short_name": "FADH2", "description": "Flavoprotein coenzyme for the electron transport chain", "energy_value": 18, "rarity": "rare", "color": [0.9, 0.5, 0.7]},
+    {"id": "Phospholipid", "category": "lipid", "display_name": "Phosphatidylcholine", "short_name": "Phospholipid", "description": "Amphipathic membrane bilayer constituent", "energy_value": 12, "rarity": "common", "color": [0.3, 0.7, 0.9]},
+    {"id": "AminoAcid_Ala", "category": "amino_acid", "display_name": "L-Alanine", "short_name": "Alanine", "description": "Non-polar alpha-amino acid for polypeptide synthesis", "energy_value": 10, "rarity": "common", "color": [0.7, 0.9, 0.4]},
+    {"id": "AminoAcid_Gly", "category": "amino_acid", "display_name": "Glycine", "short_name": "Glycine", "description": "Simplest amino acid; enables tight protein folding", "energy_value": 10, "rarity": "common", "color": [0.6, 0.85, 0.5]},
+    {"id": "AminoAcid_Trp", "category": "amino_acid", "display_name": "L-Tryptophan", "short_name": "Tryptophan", "description": "Essential aromatic amino acid and serotonin precursor", "energy_value": 14, "rarity": "rare", "color": [0.5, 0.3, 0.9]},
+    {"id": "Nucleotide_A", "category": "nucleotide_base", "display_name": "Adenine Nucleotide", "short_name": "Adenine", "description": "Purine base for DNA/RNA backbone assembly", "energy_value": 12, "rarity": "common", "color": [0.9, 0.3, 0.3]},
+    {"id": "Nucleotide_C", "category": "nucleotide_base", "display_name": "Cytosine Nucleotide", "short_name": "Cytosine", "description": "Pyrimidine base; pairs with guanine in double helix", "energy_value": 12, "rarity": "common", "color": [0.3, 0.5, 0.95]},
+    {"id": "Nucleotide_G", "category": "nucleotide_base", "display_name": "Guanine Nucleotide", "short_name": "Guanine", "description": "Purine base stabilizing triple hydrogen bonds", "energy_value": 12, "rarity": "uncommon", "color": [0.2, 0.8, 0.6]},
+    {"id": "CoA", "category": "coenzyme", "display_name": "Coenzyme A", "short_name": "CoA", "description": "Acyl group carrier essential for the citric acid cycle", "energy_value": 16, "rarity": "rare", "color": [0.8, 0.4, 0.9]},
+    {"id": "Ribose", "category": "monosaccharide", "display_name": "D-Ribose", "short_name": "Ribose", "description": "Pentose sugar forming the backbone of RNA", "energy_value": 14, "rarity": "uncommon", "color": [1.0, 0.6, 0.3]}
+  ],
+  "organelles": [
+    {"id": "Mitochondrion", "display_name": "Mitochondrion", "description": "Powerhouse: oxidative phosphorylation organelle", "function": "ATP synthesis via electron transport chain", "trait_impact": {"energy": 0.20}, "rarity": "rare", "color": [0.2, 0.9, 0.3]},
+    {"id": "Chloroplast", "display_name": "Chloroplast", "description": "Photosynthetic plastid with thylakoid membranes", "function": "Light-dependent carbon fixation", "trait_impact": {"light_energy": 0.18}, "rarity": "rare", "color": [0.1, 0.8, 0.2]},
+    {"id": "Ribosome", "display_name": "Ribosome (70S)", "description": "Ribonucleoprotein complex for mRNA translation", "function": "Polypeptide chain elongation", "trait_impact": {"protein_synthesis": 0.15}, "rarity": "uncommon", "color": [0.9, 0.6, 0.2]},
+    {"id": "Nucleus", "display_name": "Proto-Nucleus", "description": "Membrane-bound chromatin compartment", "function": "Genetic regulation and transcription", "trait_impact": {"complexity": 0.14}, "rarity": "legendary", "color": [0.4, 0.3, 0.9]},
+    {"id": "ER", "display_name": "Endoplasmic Reticulum", "description": "Cisternae network for protein folding and lipid synthesis", "function": "Post-translational modification", "trait_impact": {"protein_efficiency": 0.12}, "rarity": "rare", "color": [0.7, 0.5, 0.8]},
+    {"id": "Flagellum", "display_name": "Flagellar Motor", "description": "Rotary molecular engine for cellular locomotion", "function": "Propulsive thrust generation", "trait_impact": {"speed": 0.16}, "rarity": "uncommon", "color": [0.3, 0.8, 0.9]},
+    {"id": "Vacuole", "display_name": "Digestive Vacuole", "description": "Membrane-bound lytic compartment", "function": "Intracellular digestion and storage", "trait_impact": {"storage": 0.10}, "rarity": "common", "color": [0.8, 0.8, 0.3]}
+  ],
+  "splice_rules": [
+    {"splice_id": "Hybrid_MobilityDefense", "from": ["Gene_5", "Gene_4"], "viability": 0.85, "new_trait": {"speed": 0.15, "armor": 0.10}},
+    {"splice_id": "Hybrid_ToxinSensor", "from": ["Gene_7", "Gene_2"], "viability": 0.70, "new_trait": {"hostility_damage": 0.12, "detection_range": 0.10}},
+    {"splice_id": "Hybrid_MetabolismGrowth", "from": ["Gene_1", "Gene_9"], "viability": 0.90, "new_trait": {"energy_efficiency": 0.08, "size_increase": 0.12}},
+    {"splice_id": "Hybrid_ReproductionResilience", "from": ["Gene_3", "Gene_18"], "viability": 0.75, "new_trait": {"offspring_survival": 0.08, "extreme_survival": 0.10}}
+  ],
+  "migration_traits": [
+    {"trait_id": "Mig_AquaticTerrestrial", "requires": ["Gene_5", "Helix_6"], "success_rate": 0.75, "effect": {"adaptation_speed": 0.12}}
+  ],
+  "invasion_vectors": [
+    {"vector_id": "Virus_Toxin", "uses": ["Protein_7"], "spread_rate": 0.20, "counter": "Gene_8"}
+  ]
+}
