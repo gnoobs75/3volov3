@@ -8,7 +8,7 @@ extends Node2D
 @onready var health_bar: ProgressBar = $"HUD/ThreePaneLayout/MiddlePane/HealthBar"
 @onready var stats_label: Label = $"HUD/ThreePaneLayout/MiddlePane/StatsLabel"
 @onready var parasite_label: Label = $"HUD/ThreePaneLayout/MiddlePane/ParasiteLabel"
-@onready var helix_hud: Control = $"HUD/ThreePaneLayout/LeftPane/HelixHUD"
+@onready var helix_hud: Control = $"HUD/ThreePaneLayout/LeftPane/LeftVBox/HelixHUD"
 @onready var crispr_layer: CanvasLayer = $CRISPREditor
 
 const FOOD_SCENE := preload("res://scenes/food_particle.tscn")

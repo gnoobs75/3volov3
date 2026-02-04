@@ -78,13 +78,23 @@ custom_minimum_size = Vector2(280, 0)
 size_flags_horizontal = 0
 mouse_filter = 2
 
-[node name="HelixHUD" type="Control" parent="HUD/ThreePaneLayout/LeftPane"]
+[node name="LeftVBox" type="VBoxContainer" parent="HUD/ThreePaneLayout/LeftPane"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+
+[node name="OrganismCard" type="Control" parent="HUD/ThreePaneLayout/LeftPane/LeftVBox"]
+custom_minimum_size = Vector2(280, 620)
+layout_mode = 2
+script = ExtResource("10")
+
+[node name="HelixHUD" type="Control" parent="HUD/ThreePaneLayout/LeftPane/LeftVBox"]
+custom_minimum_size = Vector2(280, 460)
+layout_mode = 2
+size_flags_vertical = 3
 script = ExtResource("6")
 
 [node name="MiddlePane" type="Control" parent="HUD/ThreePaneLayout"]

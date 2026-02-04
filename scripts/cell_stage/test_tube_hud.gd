@@ -1,12 +1,12 @@
 extends Control
-## DNA helix HUD — large helix filling the left pane.
+## DNA helix HUD — compact helix for left pane bottom section.
 ## Redraws only on inventory change or periodic rotation tick.
 
-# Dynamic sizing based on parent - will be set in _ready
-var _cx: float = 144.0  # Center X (half of 288 pane width)
-var _top_y: float = 120.0  # Start below organism card header area
-var _height: float = 800.0  # Tall helix
-var _radius: float = 80.0  # Much wider helix
+# Compact sizing for bottom of left pane
+var _cx: float = 140.0  # Center X
+var _top_y: float = 30.0  # Start after header
+var _height: float = 350.0  # Compact height
+var _radius: float = 50.0  # Moderate radius
 const MAX_FILL: int = 10
 
 var _angle: float = 0.0
@@ -38,9 +38,9 @@ func _ready() -> void:
 func _calculate_sizes() -> void:
 	var parent_size: Vector2 = get_parent_area_size()
 	_cx = parent_size.x * 0.5
-	_top_y = 80.0  # Leave room for header
-	_height = parent_size.y - 160.0  # Leave margins
-	_radius = minf(parent_size.x * 0.35, 100.0)  # Scale radius to width
+	_top_y = 30.0  # Start after header
+	_height = parent_size.y - 80.0  # Leave margins
+	_radius = minf(parent_size.x * 0.35, 55.0)  # Moderate radius
 
 func _on_inv_changed() -> void:
 	for d in DEFS:
@@ -73,8 +73,8 @@ func _draw() -> void:
 	var font := ThemeDB.fallback_font
 
 	# Draw helix title
-	draw_string(font, Vector2(10, 30), "GENOME INVENTORY", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.4, 0.7, 0.9, 0.8))
-	draw_line(Vector2(10, 45), Vector2(size.x - 10, 45), Color(0.2, 0.5, 0.7, 0.4), 1.0)
+	draw_string(font, Vector2(10, 20), "GENOME", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.4, 0.7, 0.9, 0.8))
+	draw_line(Vector2(10, 28), Vector2(size.x - 10, 28), Color(0.2, 0.5, 0.7, 0.3), 1.0)
 
 	# Backbone thickness scales with size
 	var backbone_width: float = maxf(2.0, _radius * 0.04)
