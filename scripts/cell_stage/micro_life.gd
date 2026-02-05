@@ -2,8 +2,8 @@ extends Node2D
 ## Ambient micro-life: tiny non-interactable creatures that make the petri dish
 ## feel alive and horrifying. OPTIMIZED for performance.
 
-const NUM_CREATURES: int = 60  # Reduced from 80
-const SPAWN_RANGE: float = 500.0  # Reduced range
+const NUM_CREATURES: int = 35  # Further reduced for performance
+const SPAWN_RANGE: float = 400.0  # Smaller range for denser feel
 const PLAYER_DETECT_RANGE: float = 180.0
 const VIEWPORT_MARGIN: float = 100.0  # Pixels beyond viewport to still draw
 
@@ -282,17 +282,10 @@ func _draw_bacteria_simple(pos: Vector2, size: float, col: Color, c: Dictionary)
 	draw_line(p1, p2, col, size * 0.7, true)
 
 func _draw_paramecium_simple(pos: Vector2, size: float, col: Color, c: Dictionary) -> void:
+	# Simplified to just oval shape, no cilia
 	var facing: float = c.vel.angle() if c.vel.length() > 1.0 else c.rotation
-	# Oval shape
 	draw_circle(pos, size, Color(col.r, col.g, col.b, col.a * 0.5))
-	draw_circle(pos + Vector2(cos(facing), sin(facing)) * size * 0.5, size * 0.6, Color(col.r, col.g, col.b, col.a * 0.3))
-	# Few cilia
-	for i in range(6):
-		var a: float = TAU * i / 6.0
-		var base: Vector2 = pos + Vector2(cos(a + facing), sin(a + facing)) * size
-		var wave: float = sin(c.phase + i) * 0.3
-		var tip: Vector2 = base + Vector2(cos(a + facing + wave), sin(a + facing + wave)) * 3.0
-		draw_line(base, tip, Color(col.r, col.g, col.b, col.a * 0.5), 0.5, true)
+	draw_circle(pos + Vector2(cos(facing), sin(facing)) * size * 0.4, size * 0.5, Color(col.r, col.g, col.b, col.a * 0.4))
 
 func _draw_spirochete_simple(pos: Vector2, size: float, col: Color, c: Dictionary) -> void:
 	var facing: float = c.vel.angle() if c.vel.length() > 1.0 else c.rotation
@@ -308,14 +301,10 @@ func _draw_spirochete_simple(pos: Vector2, size: float, col: Color, c: Dictionar
 		prev = p
 
 func _draw_rotifer_simple(pos: Vector2, size: float, col: Color, c: Dictionary) -> void:
-	# Body
+	# Simplified - body with small head
 	draw_circle(pos, size, Color(col.r, col.g, col.b, col.a * 0.5))
-	# Spinning corona
-	var corona_pos: Vector2 = pos + Vector2(0, -size).rotated(c.rotation)
-	for i in range(4):
-		var a: float = TAU * i / 4.0 + c.phase
-		var tip: Vector2 = corona_pos + Vector2(cos(a), sin(a)) * size * 0.6
-		draw_line(corona_pos, tip, Color(col.r, col.g, col.b, col.a * 0.6), 0.6, true)
+	var head_pos: Vector2 = pos + Vector2(0, -size * 0.8).rotated(c.rotation)
+	draw_circle(head_pos, size * 0.4, Color(col.r, col.g, col.b, col.a * 0.6))
 
 func _draw_flagellate_simple(pos: Vector2, size: float, col: Color, c: Dictionary) -> void:
 	var facing: float = c.vel.angle() if c.vel.length() > 1.0 else c.rotation
@@ -338,29 +327,13 @@ func _draw_phage_simple(pos: Vector2, size: float, col: Color, c: Dictionary) ->
 	draw_line(pos + tail_dir * size, tail_end, col, size * 0.25, true)
 
 func _draw_diatom_simple(pos: Vector2, size: float, col: Color, c: Dictionary) -> void:
-	# Simple geometric shape
-	draw_circle(pos, size, Color(col.r, col.g, col.b, col.a * 0.3))
-	draw_arc(pos, size, 0, TAU, 8, Color(col.r, col.g, col.b, col.a * 0.6), 0.6, true)
-	# Radial lines
-	for i in range(4):
-		var a: float = TAU * i / 4.0 + c.rotation
-		draw_line(pos, pos + Vector2(cos(a), sin(a)) * size, Color(col.r, col.g, col.b, col.a * 0.4), 0.4, true)
+	# Simplified to just a circle with center dot
+	draw_circle(pos, size, Color(col.r, col.g, col.b, col.a * 0.4))
+	draw_circle(pos, size * 0.3, Color(col.r, col.g, col.b, col.a * 0.6))
 
 func _draw_tardigrade_simple(pos: Vector2, size: float, col: Color, c: Dictionary) -> void:
+	# Simplified to 2 circles for body + head
 	var facing: float = c.vel.angle() if c.vel.length() > 1.0 else c.rotation
-	# Body (3 circles)
-	for i in range(3):
-		var t: float = float(i) / 2.0
-		var seg_pos: Vector2 = pos + Vector2(cos(facing), sin(facing)) * (t - 0.5) * size * 2.5
-		var seg_size: float = size * (0.7 + 0.3 * sin(t * PI))
-		draw_circle(seg_pos, seg_size, Color(col.r, col.g, col.b, col.a * 0.5))
-	# Head
-	var head_pos: Vector2 = pos + Vector2(cos(facing), sin(facing)) * size * 1.5
-	draw_circle(head_pos, size * 0.5, col)
-	# Simple legs
-	var perp: Vector2 = Vector2(-sin(facing), cos(facing))
-	for i in range(3):
-		var seg_pos: Vector2 = pos + Vector2(cos(facing), sin(facing)) * (float(i) / 2.0 - 0.5) * size * 2.5
-		for side in [-1.0, 1.0]:
-			var leg_tip: Vector2 = seg_pos + perp * side * size * 0.8
-			draw_line(seg_pos, leg_tip, Color(col.r, col.g, col.b, col.a * 0.5), size * 0.15, true)
+	draw_circle(pos, size, Color(col.r, col.g, col.b, col.a * 0.5))
+	var head_pos: Vector2 = pos + Vector2(cos(facing), sin(facing)) * size * 1.2
+	draw_circle(head_pos, size * 0.6, col)

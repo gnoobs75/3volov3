@@ -13,6 +13,7 @@ var attack_range: float = 45.0
 var wander_target: Vector2 = Vector2.ZERO
 var wander_timer: float = 0.0
 var _confused_timer: float = 0.0
+var _target_velocity: Vector2 = Vector2.ZERO  # For smooth interpolated movement
 
 # Procedural graphics
 var _time: float = 0.0
@@ -31,6 +32,14 @@ var _eye_size: float = 0.0
 var _pupil_size: float = 0.0
 var _mouth_open: float = 0.0
 var _face_style: int = 0  # 0=round eyes, 1=angry slits, 2=derpy uneven
+
+# Comical animation extras
+var _eye_bounce: Vector2 = Vector2.ZERO  # Googly eye offset
+var _eye_bounce_vel: Vector2 = Vector2.ZERO  # For physics-based googly eyes
+var _tongue_out: float = 0.0  # 0-1 tongue extension
+var _eye_pop: float = 0.0  # Eye bulge multiplier
+var _double_blink: bool = false  # For double-take blinks
+var _eyebrow_bounce: float = 0.0  # Animated eyebrow raise
 
 func _ready() -> void:
 	_pick_wander_target()
@@ -106,16 +115,46 @@ func _physics_process(delta: float) -> void:
 				_do_pursue(delta, player)
 		State.FLEE: _do_flee(delta, player)
 		State.CONFUSED: _do_confused(delta)
+
+	# Smooth velocity interpolation (like player) for fluid movement
+	velocity = velocity.move_toward(_target_velocity, speed * 4.0 * delta)
 	move_and_slide()
 	_time += delta
 	_damage_flash = maxf(_damage_flash - delta * 4.0, 0.0)
 	_mouth_open = maxf(_mouth_open - delta * 3.0, 0.0)
-	# Blink
+
+	# Googly eye physics - eyes lag behind movement
+	var eye_target := -velocity * 0.015  # Eyes drift opposite to movement
+	var spring_k: float = 15.0
+	var damping: float = 5.0
+	_eye_bounce_vel += (eye_target - _eye_bounce) * spring_k * delta
+	_eye_bounce_vel *= exp(-damping * delta)
+	_eye_bounce += _eye_bounce_vel * delta
+	_eye_bounce = _eye_bounce.limit_length(3.0)  # Max offset
+
+	# Eye pop decay
+	_eye_pop = maxf(_eye_pop - delta * 3.0, 0.0)
+
+	# Tongue decay (stick out when pursuing)
+	if state == State.PURSUE:
+		_tongue_out = minf(_tongue_out + delta * 2.0, 0.7)
+	else:
+		_tongue_out = maxf(_tongue_out - delta * 3.0, 0.0)
+
+	# Eyebrow bounce decay
+	_eyebrow_bounce = maxf(_eyebrow_bounce - delta * 4.0, 0.0)
+
+	# Blink - with occasional double-take
 	_blink_timer -= delta
 	if _blink_timer <= 0:
 		if _is_blinking:
 			_is_blinking = false
-			_blink_timer = randf_range(1.5, 4.0)
+			if _double_blink:
+				_blink_timer = 0.15  # Quick second blink
+				_double_blink = false
+			else:
+				_blink_timer = randf_range(1.5, 4.0)
+				_double_blink = randf() < 0.2  # 20% chance of double blink
 		else:
 			_is_blinking = true
 			_blink_timer = 0.1
@@ -171,8 +210,9 @@ func _draw() -> void:
 
 func _draw_face() -> void:
 	var eye_y_offset: float = -0.5
-	var left_eye := Vector2(_eye_spacing * 0.5, -_eye_spacing * 0.5 + eye_y_offset)
-	var right_eye := Vector2(_eye_spacing * 0.5, _eye_spacing * 0.5 + eye_y_offset)
+	# Apply googly eye bounce offset
+	var left_eye := Vector2(_eye_spacing * 0.5, -_eye_spacing * 0.5 + eye_y_offset) + _eye_bounce
+	var right_eye := Vector2(_eye_spacing * 0.5, _eye_spacing * 0.5 + eye_y_offset) + _eye_bounce * 0.8  # Slight delay
 	var mouth_pos := Vector2(_cell_radius * 0.4, 0)
 
 	var eye_white_color := Color(0.95, 0.9, 0.85, 0.95)
@@ -235,6 +275,9 @@ func _draw_face() -> void:
 
 	if _is_blinking:
 		eye_squash_y = 0.07
+
+	# Apply eye pop effect (bulging eyes)
+	eye_r *= (1.0 + _eye_pop * 0.5)
 
 	# Draw eyes
 	for idx in range(2):
@@ -305,6 +348,27 @@ func _draw_face() -> void:
 		draw_line(m_left, m_mid, Color(0.2, 0.05, 0.05, 0.85), 1.8, true)
 		draw_line(m_mid, m_right, Color(0.2, 0.05, 0.05, 0.85), 1.8, true)
 
+	# Tongue sticking out when pursuing (drooling for prey)
+	if _tongue_out > 0.1:
+		var tongue_base := mouth_pos + Vector2(2.0, 0)
+		var tongue_len: float = 4.0 + _tongue_out * 5.0
+		var tongue_wave: float = sin(_time * 8.0) * 1.5 * _tongue_out
+		var tongue_tip := tongue_base + Vector2(tongue_len, tongue_wave)
+		var tongue_mid := tongue_base + Vector2(tongue_len * 0.5, tongue_wave * 0.3)
+		# Tongue shape
+		var tongue_pts: PackedVector2Array = PackedVector2Array([
+			tongue_base + Vector2(0, -1.2),
+			tongue_mid + Vector2(0, -1.0 - _tongue_out * 0.5),
+			tongue_tip + Vector2(0, -0.8),
+			tongue_tip + Vector2(1.0, 0),  # Rounded tip
+			tongue_tip + Vector2(0, 0.8),
+			tongue_mid + Vector2(0, 1.0 + _tongue_out * 0.5),
+			tongue_base + Vector2(0, 1.2),
+		])
+		draw_colored_polygon(tongue_pts, Color(0.9, 0.3, 0.35, 0.9))
+		# Tongue highlight
+		draw_line(tongue_base + Vector2(1, -0.3), tongue_mid + Vector2(0, -0.3), Color(1.0, 0.5, 0.5, 0.5), 0.8, true)
+
 	# Confused: orbiting stars/spirals above head
 	if state == State.CONFUSED:
 		for s in range(3):
@@ -317,13 +381,13 @@ func _do_wander(delta: float) -> void:
 	wander_timer -= delta
 	if wander_timer <= 0 or global_position.distance_to(wander_target) < 20:
 		_pick_wander_target()
-	velocity = global_position.direction_to(wander_target) * speed * 0.5
+	_target_velocity = global_position.direction_to(wander_target) * speed * 0.5
 
 func _do_pursue(delta: float, player: Node2D) -> void:
 	if not player:
 		state = State.WANDER
 		return
-	velocity = global_position.direction_to(player.global_position) * speed
+	_target_velocity = global_position.direction_to(player.global_position) * speed
 	if global_position.distance_to(player.global_position) < attack_range:
 		_mouth_open = 0.8
 		if player.has_method("take_damage"):
@@ -334,7 +398,7 @@ func _do_pursue_target(delta: float, target: Node2D) -> void:
 		_attack_target = null
 		state = State.WANDER
 		return
-	velocity = global_position.direction_to(target.global_position) * speed
+	_target_velocity = global_position.direction_to(target.global_position) * speed
 	if global_position.distance_to(target.global_position) < attack_range:
 		_mouth_open = 0.8
 		if _attack_cooldown <= 0 and target.has_method("take_damage"):
@@ -361,7 +425,7 @@ func _do_flee(delta: float, player: Node2D) -> void:
 	if not player:
 		state = State.WANDER
 		return
-	velocity = player.global_position.direction_to(global_position) * speed * 1.2
+	_target_velocity = player.global_position.direction_to(global_position) * speed * 1.2
 
 func _do_confused(delta: float) -> void:
 	# Spiral around randomly, dazed
@@ -369,9 +433,9 @@ func _do_confused(delta: float) -> void:
 	if wander_timer <= 0:
 		wander_target = global_position + Vector2(randf_range(-80, 80), randf_range(-80, 80))
 		wander_timer = randf_range(0.3, 0.8)
-	velocity = global_position.direction_to(wander_target) * speed * 0.3
+	var confused_vel := global_position.direction_to(wander_target) * speed * 0.3
 	# Add spin wobble
-	velocity = velocity.rotated(sin(_time * 6.0) * 0.5)
+	_target_velocity = confused_vel.rotated(sin(_time * 6.0) * 0.5)
 
 func confuse(duration: float) -> void:
 	## Called by player jet stream to daze this enemy
@@ -395,6 +459,8 @@ func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
 	_mouth_open = 0.7
+	_eye_pop = 1.0  # Eyes bulge when hit
+	_eyebrow_bounce = 1.0  # Eyebrows jump up
 	if health <= 0:
 		_die()
 

@@ -22,15 +22,20 @@ var _glitch_timer: float = 0.0
 var _blueprint_active: bool = false
 var _blueprint_timer: float = 0.0
 var _blueprint_mutation: Dictionary = {}
-var _blueprint_callouts: Array = []  # [{pos, label, alpha}]
+var _blueprint_callouts: Array = []  # [{pos, label, alpha, revealed}]
+
+# Live scanning state - features reveal as scan line passes
+var _scan_revealed_features: Array = []  # Feature IDs that have been revealed
+var _live_scan_mode: bool = true  # Scan reveals features as it passes
 
 # Creature shape data (regenerated on mutation)
 var _creature_points: Array = []  # Base membrane points
-var _creature_features: Array = []  # {type, pos, size, label}
+var _creature_features: Array = []  # {type, pos, size, label, id, scan_y}
 var _creature_radius: float = 60.0
 
 func _ready() -> void:
 	GameManager.evolution_applied.connect(_on_evolution_applied)
+	GameManager.inventory_changed.connect(_on_inventory_changed)
 	_regenerate_creature_shape()
 
 func _on_evolution_applied(mutation: Dictionary) -> void:
@@ -40,6 +45,13 @@ func _on_evolution_applied(mutation: Dictionary) -> void:
 	_glitch_timer = 0.3
 	_regenerate_creature_shape()
 	_generate_blueprint_callouts()
+	# Reset scan reveal for new mutation
+	_scan_revealed_features.clear()
+	_scan_y = 0.0
+
+func _on_inventory_changed() -> void:
+	# When inventory changes, trigger a quick glitch effect
+	_glitch_timer = 0.1
 
 func _regenerate_creature_shape() -> void:
 	# Generate membrane points
@@ -56,15 +68,18 @@ func _regenerate_creature_shape() -> void:
 
 	# Generate features based on mutations
 	_creature_features.clear()
+	_scan_revealed_features.clear()  # Reset revealed features
 	var feature_id: int = 0
 
-	# Always have nucleus
+	# Always have nucleus - center
+	var nucleus_pos := Vector2(0, 0)
 	_creature_features.append({
 		"type": "nucleus",
-		"pos": Vector2(0, 0),
+		"pos": nucleus_pos,
 		"size": 18.0,
 		"label": _make_alien_label(),
 		"id": feature_id,
+		"scan_y": VIEWER_HEIGHT * 0.5 + nucleus_pos.y,  # Y position for scan reveal
 	})
 	feature_id += 1
 
@@ -72,12 +87,14 @@ func _regenerate_creature_shape() -> void:
 	for i in range(3):
 		var angle: float = TAU * float(i) / 3.0 + 0.5
 		var dist: float = _creature_radius * 0.5
+		var org_pos := Vector2(cos(angle) * dist, sin(angle) * dist)
 		_creature_features.append({
 			"type": "organelle",
-			"pos": Vector2(cos(angle) * dist, sin(angle) * dist),
+			"pos": org_pos,
 			"size": 8.0 + randf() * 4,
 			"label": _make_alien_label(),
 			"id": feature_id,
+			"scan_y": VIEWER_HEIGHT * 0.5 + org_pos.y + 20,  # Offset to viewer center
 		})
 		feature_id += 1
 
@@ -88,66 +105,78 @@ func _regenerate_creature_shape() -> void:
 			"extra_cilia":
 				for i in range(6):
 					var angle: float = TAU * float(i) / 6.0
+					var cilia_pos := Vector2(cos(angle), sin(angle)) * _creature_radius
 					_creature_features.append({
 						"type": "cilia",
-						"pos": Vector2(cos(angle), sin(angle)) * _creature_radius,
+						"pos": cilia_pos,
 						"size": 15.0,
 						"angle": angle,
 						"label": _make_alien_label(),
 						"id": feature_id,
+						"scan_y": VIEWER_HEIGHT * 0.5 + cilia_pos.y + 20,
 					})
 					feature_id += 1
 			"third_eye", "eye_stalks", "photoreceptor":
+				var eye_pos := Vector2(0, -_creature_radius * 0.3)
 				_creature_features.append({
 					"type": "eye",
-					"pos": Vector2(0, -_creature_radius * 0.3),
+					"pos": eye_pos,
 					"size": 12.0,
 					"label": _make_alien_label(),
 					"id": feature_id,
+					"scan_y": VIEWER_HEIGHT * 0.5 + eye_pos.y + 20,
 				})
 				feature_id += 1
 			"spikes":
 				for i in range(8):
 					var angle: float = TAU * float(i) / 8.0
+					var spike_pos := Vector2(cos(angle), sin(angle)) * _creature_radius
 					_creature_features.append({
 						"type": "spike",
-						"pos": Vector2(cos(angle), sin(angle)) * _creature_radius,
+						"pos": spike_pos,
 						"size": 20.0,
 						"angle": angle,
 						"label": _make_alien_label(),
 						"id": feature_id,
+						"scan_y": VIEWER_HEIGHT * 0.5 + spike_pos.y + 20,
 					})
 					feature_id += 1
 			"flagellum":
+				var flag_pos := Vector2(0, _creature_radius)
 				_creature_features.append({
 					"type": "flagellum",
-					"pos": Vector2(0, _creature_radius),
+					"pos": flag_pos,
 					"size": 40.0,
 					"label": _make_alien_label(),
 					"id": feature_id,
+					"scan_y": VIEWER_HEIGHT * 0.5 + flag_pos.y + 20,
 				})
 				feature_id += 1
 			"tentacles":
 				for i in range(3):
 					var angle: float = PI + (float(i) - 1) * 0.4
+					var tent_pos := Vector2(cos(angle), sin(angle)) * _creature_radius * 0.8
 					_creature_features.append({
 						"type": "tentacle",
-						"pos": Vector2(cos(angle), sin(angle)) * _creature_radius * 0.8,
+						"pos": tent_pos,
 						"size": 30.0,
 						"angle": angle,
 						"label": _make_alien_label(),
 						"id": feature_id,
+						"scan_y": VIEWER_HEIGHT * 0.5 + tent_pos.y + 20,
 					})
 					feature_id += 1
 			"toxin_glands":
 				for i in range(2):
 					var angle: float = PI * 0.5 + float(i) * PI
+					var gland_pos := Vector2(cos(angle), sin(angle)) * _creature_radius * 0.6
 					_creature_features.append({
 						"type": "gland",
-						"pos": Vector2(cos(angle), sin(angle)) * _creature_radius * 0.6,
+						"pos": gland_pos,
 						"size": 10.0,
 						"label": _make_alien_label(),
 						"id": feature_id,
+						"scan_y": VIEWER_HEIGHT * 0.5 + gland_pos.y + 20,
 					})
 					feature_id += 1
 
@@ -176,7 +205,20 @@ func _make_alien_label() -> String:
 func _process(delta: float) -> void:
 	_time += delta
 	_rotation_angle += delta * 0.3  # Slow rotation
+	var old_scan_y: float = _scan_y
 	_scan_y = fmod(_scan_y + delta * 80.0, VIEWER_HEIGHT)
+
+	# Live feature reveal - when scan line passes a feature, reveal it
+	if _live_scan_mode:
+		for f in _creature_features:
+			var fid: int = f.get("id", -1)
+			var f_scan_y: float = f.get("scan_y", 0.0)
+			# Check if scan line just passed this feature (with some tolerance)
+			if fid not in _scan_revealed_features:
+				if (_scan_y > f_scan_y and old_scan_y <= f_scan_y) or \
+				   (_scan_y < old_scan_y and (f_scan_y > old_scan_y or f_scan_y < _scan_y)):
+					_scan_revealed_features.append(fid)
+					_glitch_timer = 0.08  # Small glitch when feature detected
 
 	if _glitch_timer > 0:
 		_glitch_timer -= delta
@@ -274,61 +316,96 @@ func _draw_creature_hologram(cx: float, cy: float, font: Font) -> void:
 		# Glow
 		draw_line(p1, p2, holo_glow, 4.0, true)
 
-	# Draw features
+	# Draw features - only show revealed features with fade-in effect
 	for f in _creature_features:
+		var fid: int = f.get("id", -1)
+		var is_revealed: bool = fid in _scan_revealed_features or not _live_scan_mode
+
+		# Calculate fade-in alpha (features fade in when revealed)
+		var feature_alpha: float = 1.0 if is_revealed else 0.1
+
 		var fp := Vector2(f.pos.x * scale_x, f.pos.y + f.pos.x * tilt)
 		var fpos := Vector2(cx + fp.x, cy + fp.y)
 
 		match f.type:
 			"nucleus":
-				draw_circle(fpos, f.size, Color(0.2, 0.5, 0.8, 0.4))
-				draw_arc(fpos, f.size, 0, TAU, 16, holo_color, 1.5)
+				# Nucleus is always visible but gets brighter when scanned
+				draw_circle(fpos, f.size, Color(0.2, 0.5, 0.8, 0.4 * feature_alpha))
+				draw_arc(fpos, f.size, 0, TAU, 16, Color(holo_color.r, holo_color.g, holo_color.b, feature_alpha), 1.5)
 				# Inner structure
-				draw_circle(fpos, f.size * 0.5, Color(0.3, 0.7, 1.0, 0.3))
+				draw_circle(fpos, f.size * 0.5, Color(0.3, 0.7, 1.0, 0.3 * feature_alpha))
+				# Newly revealed flash
+				if is_revealed and _glitch_timer > 0.02:
+					draw_circle(fpos, f.size + 5, Color(0.5, 0.9, 1.0, _glitch_timer * 3))
 
 			"organelle":
-				draw_circle(fpos, f.size, Color(0.3, 0.7, 0.5, 0.4))
-				draw_arc(fpos, f.size, 0, TAU, 12, Color(0.4, 0.9, 0.6, 0.6), 1.0)
+				if is_revealed:
+					draw_circle(fpos, f.size, Color(0.3, 0.7, 0.5, 0.4 * feature_alpha))
+					draw_arc(fpos, f.size, 0, TAU, 12, Color(0.4, 0.9, 0.6, 0.6 * feature_alpha), 1.0)
+					# Reveal flash
+					if _glitch_timer > 0.02:
+						draw_arc(fpos, f.size + 3, 0, TAU, 12, Color(0.6, 1.0, 0.7, _glitch_timer * 5), 2.0)
+				else:
+					# Ghost outline before reveal
+					draw_arc(fpos, f.size, 0, TAU, 12, Color(0.3, 0.5, 0.4, 0.15), 0.5)
 
 			"eye":
-				draw_circle(fpos, f.size, Color(0.9, 0.9, 0.3, 0.5))
-				draw_circle(fpos, f.size * 0.4, Color(0.1, 0.1, 0.1, 0.8))
-				draw_arc(fpos, f.size, 0, TAU, 12, holo_color, 1.0)
+				if is_revealed:
+					draw_circle(fpos, f.size, Color(0.9, 0.9, 0.3, 0.5 * feature_alpha))
+					draw_circle(fpos, f.size * 0.4, Color(0.1, 0.1, 0.1, 0.8 * feature_alpha))
+					draw_arc(fpos, f.size, 0, TAU, 12, Color(holo_color.r, holo_color.g, holo_color.b, feature_alpha), 1.0)
+					if _glitch_timer > 0.02:
+						draw_circle(fpos, f.size + 4, Color(1.0, 1.0, 0.5, _glitch_timer * 4))
+				else:
+					draw_arc(fpos, f.size, 0, TAU, 8, Color(0.5, 0.5, 0.2, 0.1), 0.5)
 
 			"cilia":
-				var angle: float = f.get("angle", 0)
-				var end_pos: Vector2 = fpos + Vector2(cos(angle), sin(angle)) * f.size
-				var wave: float = sin(_time * 5.0 + angle * 2.0) * 3.0
-				end_pos += Vector2(-sin(angle), cos(angle)) * wave
-				draw_line(fpos, end_pos, Color(0.5, 0.8, 1.0, 0.6), 1.5, true)
+				if is_revealed:
+					var angle: float = f.get("angle", 0)
+					var end_pos: Vector2 = fpos + Vector2(cos(angle), sin(angle)) * f.size
+					var wave: float = sin(_time * 5.0 + angle * 2.0) * 3.0
+					end_pos += Vector2(-sin(angle), cos(angle)) * wave
+					draw_line(fpos, end_pos, Color(0.5, 0.8, 1.0, 0.6 * feature_alpha), 1.5, true)
 
 			"spike":
-				var angle: float = f.get("angle", 0)
-				var tip: Vector2 = fpos + Vector2(cos(angle), sin(angle)) * f.size
-				draw_line(fpos, tip, Color(0.9, 0.4, 0.3, 0.7), 2.0, true)
+				if is_revealed:
+					var angle: float = f.get("angle", 0)
+					var tip: Vector2 = fpos + Vector2(cos(angle), sin(angle)) * f.size
+					draw_line(fpos, tip, Color(0.9, 0.4, 0.3, 0.7 * feature_alpha), 2.0, true)
+					if _glitch_timer > 0.02:
+						draw_circle(tip, 4, Color(1.0, 0.5, 0.3, _glitch_timer * 4))
+				else:
+					var angle: float = f.get("angle", 0)
+					var tip: Vector2 = fpos + Vector2(cos(angle), sin(angle)) * f.size * 0.5
+					draw_line(fpos, tip, Color(0.5, 0.3, 0.2, 0.1), 0.5, true)
 
 			"flagellum":
-				var base: Vector2 = fpos
-				for i in range(8):
-					var wave: float = sin(_time * 4.0 + i * 0.5) * 8.0
-					var next: Vector2 = base + Vector2(wave, 5.0)
-					draw_line(base, next, Color(0.4, 0.8, 0.6, 0.6 - i * 0.05), 2.0 - i * 0.15, true)
-					base = next
+				if is_revealed:
+					var base: Vector2 = fpos
+					for i in range(8):
+						var wave: float = sin(_time * 4.0 + i * 0.5) * 8.0
+						var next: Vector2 = base + Vector2(wave, 5.0)
+						draw_line(base, next, Color(0.4, 0.8, 0.6, (0.6 - i * 0.05) * feature_alpha), 2.0 - i * 0.15, true)
+						base = next
 
 			"tentacle":
-				var angle: float = f.get("angle", PI)
-				var base: Vector2 = fpos
-				for i in range(6):
-					var wave: float = sin(_time * 3.0 + i * 0.7 + angle) * 5.0
-					var dir := Vector2(cos(angle + wave * 0.05), sin(angle + wave * 0.05))
-					var next: Vector2 = base + dir * 5.0
-					draw_line(base, next, Color(0.6, 0.4, 0.8, 0.6 - i * 0.08), 2.5 - i * 0.3, true)
-					base = next
+				if is_revealed:
+					var angle: float = f.get("angle", PI)
+					var base: Vector2 = fpos
+					for i in range(6):
+						var wave: float = sin(_time * 3.0 + i * 0.7 + angle) * 5.0
+						var dir := Vector2(cos(angle + wave * 0.05), sin(angle + wave * 0.05))
+						var next: Vector2 = base + dir * 5.0
+						draw_line(base, next, Color(0.6, 0.4, 0.8, (0.6 - i * 0.08) * feature_alpha), 2.5 - i * 0.3, true)
+						base = next
 
 			"gland":
-				var pulse: float = 0.8 + 0.2 * sin(_time * 2.0)
-				draw_circle(fpos, f.size * pulse, Color(0.8, 0.3, 0.5, 0.5))
-				draw_arc(fpos, f.size, 0, TAU, 10, Color(0.9, 0.4, 0.6, 0.7), 1.0)
+				if is_revealed:
+					var pulse: float = 0.8 + 0.2 * sin(_time * 2.0)
+					draw_circle(fpos, f.size * pulse, Color(0.8, 0.3, 0.5, 0.5 * feature_alpha))
+					draw_arc(fpos, f.size, 0, TAU, 10, Color(0.9, 0.4, 0.6, 0.7 * feature_alpha), 1.0)
+					if _glitch_timer > 0.02:
+						draw_circle(fpos, f.size + 3, Color(1.0, 0.5, 0.6, _glitch_timer * 4))
 
 func _draw_tech_readouts(font: Font) -> void:
 	# Fake scientific readouts

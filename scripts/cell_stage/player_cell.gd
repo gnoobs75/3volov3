@@ -107,10 +107,12 @@ var _directional_front_damage: float = 0.0
 var _directional_rear_damage: float = 0.0
 var _directional_sides_damage: float = 0.0
 var _directional_contact_timer: float = 0.0
-const DIRECTIONAL_CONTACT_COOLDOWN: float = 0.5
+const DIRECTIONAL_CONTACT_COOLDOWN: float = 0.4
+var _tail_hit_flash: float = 0.0  # Separate visual feedback for rear hits
+var _front_hit_flash: float = 0.0  # Separate visual feedback for front hits
 
-# Face / mood system
-enum Mood { IDLE, HAPPY, EXCITED, STRESSED, SCARED, ANGRY, EATING, HURT, DEPLETED }
+# Face / mood system - Anime-style expressive eyes
+enum Mood { IDLE, HAPPY, EXCITED, STRESSED, SCARED, ANGRY, EATING, HURT, DEPLETED, ZOOM, SICK }
 var mood: Mood = Mood.IDLE
 var _mood_timer: float = 0.0
 var _blink_timer: float = 0.0
@@ -120,6 +122,12 @@ var _eye_spacing: float = 0.0
 var _eye_size: float = 0.0
 var _pupil_size: float = 0.0
 var _has_eyebrows: bool = true
+
+# Anime eye effects
+var _eye_sparkle_timer: float = 0.0
+var _eye_shake: Vector2 = Vector2.ZERO
+var _sweat_drop_y: float = 0.0
+var _spiral_angle: float = 0.0  # For sick/confused spiral eyes
 
 func _ready() -> void:
 	_apply_gene_traits()
@@ -265,6 +273,8 @@ func _physics_process(delta: float) -> void:
 	_toxin_flash = maxf(_toxin_flash - delta * 3.0, 0.0)
 	_feed_flash = maxf(_feed_flash - delta * 2.5, 0.0)
 	_damage_flash = maxf(_damage_flash - delta * 4.0, 0.0)
+	_tail_hit_flash = maxf(_tail_hit_flash - delta * 4.0, 0.0)
+	_front_hit_flash = maxf(_front_hit_flash - delta * 4.0, 0.0)
 	_update_mood(delta)
 	_update_wake_particles(delta)
 
@@ -293,11 +303,27 @@ func _update_mood(delta: float) -> void:
 
 	_mouth_open = maxf(_mouth_open - delta * 3.0, 0.0)
 
+	# Anime eye effects
+	_eye_sparkle_timer += delta
+	_sweat_drop_y = fmod(_sweat_drop_y + delta * 2.0, 1.0)
+	_spiral_angle += delta * 4.0
+
+	# Eye shake when stressed/hurt
+	if mood in [Mood.HURT, Mood.SCARED, Mood.STRESSED]:
+		_eye_shake = Vector2(randf_range(-1, 1), randf_range(-0.5, 0.5)) * 0.5
+	else:
+		_eye_shake = _eye_shake.lerp(Vector2.ZERO, delta * 5.0)
+
 	if _mood_timer <= 0:
 		var energy_ratio: float = energy / max_energy
 		var health_ratio: float = health / max_health
-		if attached_parasites.size() >= 3:
-			mood = Mood.SCARED
+		# Priority-based mood selection
+		if attached_parasites.size() >= 2:
+			mood = Mood.SICK  # Parasites make you look sick
+		elif attached_parasites.size() >= 4:
+			mood = Mood.SCARED  # Near death from parasites
+		elif is_sprinting and velocity.length() > move_speed * SPRINT_SPEED_MULT * 0.7:
+			mood = Mood.ZOOM  # Speed lines and focused face
 		elif is_energy_depleted:
 			mood = Mood.DEPLETED
 		elif health_ratio < 0.3:
@@ -456,141 +482,266 @@ func _draw() -> void:
 			draw_line(inner, outer, reticle_col, 1.2, true)
 
 func _draw_face() -> void:
-	var eye_y_offset: float = -1.0
-	var left_eye := Vector2(_eye_spacing * 0.6, -_eye_spacing * 0.5 + eye_y_offset)
-	var right_eye := Vector2(_eye_spacing * 0.6, _eye_spacing * 0.5 + eye_y_offset)
-	var mouth_pos := Vector2(_cell_radius * 0.45, 0)
+	# --- ANIME-STYLE EXPRESSIVE EYES ---
+	# Eyes are larger, cleaner, with distinct expressions
+	var eye_y_offset: float = 0.0
+	var base_spacing: float = _eye_spacing * 1.2  # Wider spacing for cleaner look
+	var left_eye := Vector2(_cell_radius * 0.25, -base_spacing * 0.4 + eye_y_offset) + _eye_shake
+	var right_eye := Vector2(_cell_radius * 0.25, base_spacing * 0.4 + eye_y_offset) + _eye_shake
+	var mouth_pos := Vector2(_cell_radius * 0.5, 0)
 
-	var eye_white_color := Color(0.95, 0.95, 1.0, 0.95)
-	var pupil_color := Color(0.05, 0.05, 0.15, 1.0)
-	var eye_r: float = _eye_size
-	var pupil_r: float = _pupil_size
+	# Anime eye colors - brighter, more vibrant
+	var eye_white_color := Color(1.0, 1.0, 1.0, 1.0)
+	var iris_color := Color(0.2, 0.5, 0.9, 1.0)  # Blue iris
+	var pupil_color := Color(0.02, 0.02, 0.08, 1.0)
+	var eye_r: float = _eye_size * 1.4  # Bigger eyes
+	var pupil_r: float = _pupil_size * 1.2
+	var iris_r: float = eye_r * 0.7
 	var eye_squash_y: float = 1.0
 	var pupil_offset := Vector2.ZERO
 	var eyebrow_angle_l: float = 0.0
 	var eyebrow_angle_r: float = 0.0
+	var show_sparkles: bool = false
+	var show_speed_lines: bool = false
+	var show_sweat: bool = false
+	var show_spiral: bool = false
 
 	match mood:
+		Mood.IDLE:
+			eye_squash_y = 0.9
+			show_sparkles = true
 		Mood.HAPPY:
-			eye_squash_y = 0.65
+			eye_squash_y = 0.5  # Closed happy eyes (anime ^_^)
 			eyebrow_angle_l = 0.2
 			eyebrow_angle_r = 0.2
+			show_sparkles = true
 		Mood.EXCITED:
-			eye_r *= 1.3
-			pupil_r *= 1.4
-			pupil_offset = Vector2(1.0, 0)
-			eyebrow_angle_l = 0.35
-			eyebrow_angle_r = 0.35
-		Mood.STRESSED:
-			eye_squash_y = 0.8
+			eye_r *= 1.2
+			pupil_r *= 1.3
+			iris_r *= 1.2
+			pupil_offset = Vector2(0.5, 0)
+			eyebrow_angle_l = 0.3
+			eyebrow_angle_r = 0.3
+			show_sparkles = true
+		Mood.ZOOM:
+			# Focused, intense sprint face
+			eye_squash_y = 0.7
+			pupil_r *= 0.7  # Focused small pupils
 			eyebrow_angle_l = -0.3
 			eyebrow_angle_r = 0.3
-			pupil_r *= 0.8
-		Mood.SCARED:
-			eye_r *= 1.4
-			pupil_r *= 0.6
-			eyebrow_angle_l = 0.4
+			pupil_offset = Vector2(1.5, 0)  # Looking forward intently
+			show_speed_lines = true
+		Mood.STRESSED:
+			eye_squash_y = 0.8
+			eyebrow_angle_l = -0.4
 			eyebrow_angle_r = 0.4
+			pupil_r *= 0.75
+			show_sweat = true
+		Mood.SCARED:
+			eye_r *= 1.5  # Huge eyes
+			pupil_r *= 0.4  # Tiny pinprick pupils
+			eye_squash_y = 1.3
+			eyebrow_angle_l = 0.5
+			eyebrow_angle_r = 0.5
+			show_sweat = true
 		Mood.ANGRY:
-			eye_squash_y = 0.7
-			eyebrow_angle_l = -0.45
-			eyebrow_angle_r = 0.45
-			pupil_r *= 0.9
+			eye_squash_y = 0.55
+			eyebrow_angle_l = -0.6
+			eyebrow_angle_r = 0.6
+			pupil_r *= 0.85
+			iris_color = Color(0.8, 0.3, 0.2, 1.0)  # Red-tinted iris when angry
 		Mood.EATING:
-			eye_squash_y = 0.5
+			eye_squash_y = 0.4  # Happy closed
 			eyebrow_angle_l = 0.15
 			eyebrow_angle_r = 0.15
 		Mood.HURT:
-			eye_squash_y = 0.4
+			# X_X or >_< style hurt
+			eye_squash_y = 0.3
+			eyebrow_angle_l = -0.5
+			eyebrow_angle_r = -0.5
+			show_sweat = true
+		Mood.DEPLETED:
+			eye_squash_y = 0.5
+			eye_r *= 0.85
 			eyebrow_angle_l = -0.4
 			eyebrow_angle_r = -0.4
-		Mood.DEPLETED:
-			# Droopy sad exhausted face
-			eye_squash_y = 0.55
-			eye_r *= 0.85
-			eyebrow_angle_l = -0.35
-			eyebrow_angle_r = -0.35
-			pupil_r *= 0.7
-			# Pupils droop down
-			pupil_offset = Vector2(-0.5, 0)
+			pupil_r *= 0.65
+			pupil_offset = Vector2(-0.3, 0.5)  # Looking down sadly
+			iris_color = Color(0.4, 0.5, 0.6, 1.0)  # Dull color
+			show_sweat = true
+		Mood.SICK:
+			# Spiral/swirly eyes when parasites attached
+			eye_squash_y = 1.0
+			eye_r *= 1.1
+			show_spiral = true
+			iris_color = Color(0.5, 0.7, 0.3, 1.0)  # Sickly green
 
 	if _is_blinking:
-		eye_squash_y = 0.08
+		eye_squash_y = 0.05
 
-	# Draw eye whites
-	for eye_pos in [left_eye, right_eye]:
+	# --- DRAW EYES ---
+	var mouse_local := (get_global_mouse_position() - global_position).rotated(-rotation)
+	var look_dir := mouse_local.normalized() * minf(eye_r * 0.25, mouse_local.length() * 0.015)
+
+	for idx in range(2):
+		var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
 		var ew: float = eye_r
 		var eh: float = eye_r * eye_squash_y
+
+		# Eye white (sclera) - clean oval
 		var eye_pts: PackedVector2Array = PackedVector2Array()
-		for i in range(12):
-			var a: float = TAU * i / 12.0
+		for i in range(16):
+			var a: float = TAU * i / 16.0
 			eye_pts.append(eye_pos + Vector2(cos(a) * ew, sin(a) * eh))
-		# Dull eyes when depleted
-		var white_col := eye_white_color
-		if mood == Mood.DEPLETED:
-			white_col = Color(0.8, 0.8, 0.82, 0.85)
-		draw_colored_polygon(eye_pts, white_col)
-		var mouse_local := (get_global_mouse_position() - global_position).rotated(-rotation)
-		var look_dir := mouse_local.normalized() * minf(eye_r * 0.3, mouse_local.length() * 0.02)
-		var p_pos: Vector2 = eye_pos + look_dir + pupil_offset
-		draw_circle(p_pos, pupil_r, pupil_color)
-		draw_circle(p_pos + Vector2(-0.5, -0.5), pupil_r * 0.35, Color(1, 1, 1, 0.7))
 
-	# Eyebrows
+		# Slight shadow under eye for depth
+		draw_colored_polygon(eye_pts, Color(0.85, 0.85, 0.9, 0.3))
+		# Main white
+		var offset_pts: PackedVector2Array = PackedVector2Array()
+		for p in eye_pts:
+			offset_pts.append(p + Vector2(-0.3, -0.3))
+		draw_colored_polygon(offset_pts, eye_white_color)
+
+		# Only draw iris/pupil if not fully squashed (blinking)
+		if eye_squash_y > 0.15:
+			var p_pos: Vector2 = eye_pos + look_dir + pupil_offset
+
+			if show_spiral:
+				# Spiral dizzy eyes for sick mood
+				_draw_spiral_eye(p_pos, iris_r * 0.8, iris_color)
+			else:
+				# Iris (colored part) - large for anime look
+				var iris_pts: PackedVector2Array = PackedVector2Array()
+				var i_eh: float = iris_r * eye_squash_y
+				for i in range(16):
+					var a: float = TAU * i / 16.0
+					iris_pts.append(p_pos + Vector2(cos(a) * iris_r, sin(a) * i_eh))
+				draw_colored_polygon(iris_pts, iris_color)
+
+				# Iris gradient/depth - darker ring
+				draw_arc(p_pos, iris_r * 0.9, 0, TAU, 16, Color(iris_color.r * 0.6, iris_color.g * 0.6, iris_color.b * 0.8, 0.5), iris_r * 0.2, true)
+
+				# Pupil - sharp black center
+				var p_eh: float = pupil_r * eye_squash_y
+				var pupil_pts: PackedVector2Array = PackedVector2Array()
+				for i in range(12):
+					var a: float = TAU * i / 12.0
+					pupil_pts.append(p_pos + Vector2(cos(a) * pupil_r, sin(a) * p_eh))
+				draw_colored_polygon(pupil_pts, pupil_color)
+
+				# Anime sparkle highlights - two white dots
+				if show_sparkles or mood == Mood.IDLE:
+					var sparkle1 := p_pos + Vector2(-iris_r * 0.35, -iris_r * 0.35)
+					var sparkle2 := p_pos + Vector2(iris_r * 0.2, iris_r * 0.3)
+					var sparkle_pulse: float = 0.7 + 0.3 * sin(_eye_sparkle_timer * 3.0 + idx)
+					draw_circle(sparkle1, pupil_r * 0.5 * sparkle_pulse, Color(1, 1, 1, 0.95))
+					draw_circle(sparkle2, pupil_r * 0.25 * sparkle_pulse, Color(1, 1, 1, 0.8))
+				else:
+					# Basic highlight
+					draw_circle(p_pos + Vector2(-pupil_r * 0.4, -pupil_r * 0.4), pupil_r * 0.35, Color(1, 1, 1, 0.8))
+
+		# Eye outline for definition
+		for i in range(eye_pts.size()):
+			draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.15, 0.25, 0.6), 0.8, true)
+
+	# --- EYEBROWS ---
 	if _has_eyebrows:
-		var brow_len: float = eye_r * 1.4
-		var brow_y: float = eye_y_offset - eye_r - 2.0
-		var lb_start := Vector2(left_eye.x - brow_len * 0.5, left_eye.y + brow_y)
+		var brow_len: float = eye_r * 1.6
+		var brow_y: float = eye_y_offset - eye_r * eye_squash_y - 3.0
+		var brow_color := Color(0.12, 0.25, 0.5, 0.95)
+		var lb_start := Vector2(left_eye.x - brow_len * 0.3, left_eye.y + brow_y)
 		var lb_end := lb_start + Vector2(brow_len, 0).rotated(eyebrow_angle_l)
-		draw_line(lb_start, lb_end, Color(0.15, 0.3, 0.6, 0.9), 1.8, true)
-		var rb_start := Vector2(right_eye.x - brow_len * 0.5, right_eye.y + brow_y)
+		draw_line(lb_start, lb_end, brow_color, 2.2, true)
+		var rb_start := Vector2(right_eye.x - brow_len * 0.3, right_eye.y + brow_y)
 		var rb_end := rb_start + Vector2(brow_len, 0).rotated(eyebrow_angle_r)
-		draw_line(rb_start, rb_end, Color(0.15, 0.3, 0.6, 0.9), 1.8, true)
+		draw_line(rb_start, rb_end, brow_color, 2.2, true)
 
-	# Mouth
+	# --- SPEED LINES for ZOOM mood ---
+	if show_speed_lines:
+		for i in range(4):
+			var line_y: float = -8.0 + i * 4.0
+			var line_start := Vector2(-_cell_radius - 5.0 - i * 2.0, line_y)
+			var line_end := Vector2(-_cell_radius - 15.0 - i * 3.0, line_y)
+			var line_alpha: float = 0.4 + 0.2 * sin(_time * 10.0 + i)
+			draw_line(line_start, line_end, Color(0.5, 0.8, 1.0, line_alpha), 1.5, true)
+
+	# --- SWEAT DROPS ---
+	if show_sweat:
+		var sweat_x: float = right_eye.y + eye_r + 3.0
+		var sweat_y: float = right_eye.x - eye_r * 0.5 + _sweat_drop_y * 8.0
+		var sweat_alpha: float = 1.0 - _sweat_drop_y
+		# Teardrop shape
+		draw_circle(Vector2(sweat_y, sweat_x), 1.8 * sweat_alpha, Color(0.6, 0.8, 1.0, sweat_alpha * 0.7))
+		draw_circle(Vector2(sweat_y - 1.0, sweat_x - 0.5), 1.0 * sweat_alpha, Color(0.7, 0.9, 1.0, sweat_alpha * 0.5))
+
+	# --- MOUTH ---
+	_draw_mouth(mouth_pos)
+
+func _draw_spiral_eye(center: Vector2, size: float, color: Color) -> void:
+	# Draw spiral/swirly eye for sick/dizzy state
+	var spiral_col := Color(color.r * 0.8, color.g, color.b * 0.5, 0.9)
+	var points: int = 24
+	var turns: float = 2.5
+	var prev_pt := center
+	for i in range(1, points + 1):
+		var t: float = float(i) / float(points)
+		var angle: float = t * turns * TAU + _spiral_angle
+		var r: float = t * size
+		var pt := center + Vector2(cos(angle) * r, sin(angle) * r)
+		draw_line(prev_pt, pt, spiral_col, 1.5 + (1.0 - t) * 1.5, true)
+		prev_pt = pt
+
+func _draw_mouth(mouth_pos: Vector2) -> void:
 	var mouth_width: float = 5.0
 	var mouth_curve: float = 0.0
 	var mouth_open_amt: float = _mouth_open
 
 	match mood:
-		Mood.HAPPY: mouth_curve = 3.0
-		Mood.EXCITED: mouth_curve = 4.0; mouth_open_amt = maxf(mouth_open_amt, 0.6)
+		Mood.IDLE: mouth_curve = 1.0  # Slight smile
+		Mood.HAPPY: mouth_curve = 4.0
+		Mood.EXCITED: mouth_curve = 4.5; mouth_open_amt = maxf(mouth_open_amt, 0.5)
+		Mood.ZOOM: mouth_curve = 0.0; mouth_width = 4.0  # Determined line
 		Mood.STRESSED: mouth_curve = -2.0; mouth_width = 3.5
-		Mood.SCARED: mouth_curve = -1.0; mouth_open_amt = maxf(mouth_open_amt, 0.8); mouth_width = 3.0
-		Mood.ANGRY: mouth_curve = -3.0; mouth_width = 6.0
-		Mood.EATING: mouth_curve = 2.0; mouth_open_amt = maxf(mouth_open_amt, 1.0)
-		Mood.HURT: mouth_curve = -2.5; mouth_open_amt = maxf(mouth_open_amt, 0.5)
-		Mood.DEPLETED:
-			# Sad wobbly frown
-			mouth_curve = -3.5
-			mouth_width = 4.0
+		Mood.SCARED: mouth_curve = -1.5; mouth_open_amt = maxf(mouth_open_amt, 0.7); mouth_width = 3.0
+		Mood.ANGRY: mouth_curve = -4.0; mouth_width = 6.0; mouth_open_amt = maxf(mouth_open_amt, 0.3)
+		Mood.EATING: mouth_curve = 2.5; mouth_open_amt = maxf(mouth_open_amt, 1.0)
+		Mood.HURT: mouth_curve = -3.0; mouth_open_amt = maxf(mouth_open_amt, 0.4)
+		Mood.DEPLETED: mouth_curve = -3.5; mouth_width = 4.0
+		Mood.SICK: mouth_curve = -2.0; mouth_width = 3.0  # Queasy frown
 
 	if mouth_open_amt > 0.1:
 		var mo_w: float = mouth_width * (0.5 + mouth_open_amt * 0.5)
-		var mo_h: float = 2.0 + mouth_open_amt * 3.0
+		var mo_h: float = 2.0 + mouth_open_amt * 3.5
 		var mo_pts: PackedVector2Array = PackedVector2Array()
-		for i in range(10):
-			var a: float = TAU * i / 10.0
+		for i in range(12):
+			var a: float = TAU * i / 12.0
 			mo_pts.append(mouth_pos + Vector2(cos(a) * mo_w * 0.4, sin(a) * mo_h))
-		draw_colored_polygon(mo_pts, Color(0.15, 0.05, 0.2, 0.9))
+		draw_colored_polygon(mo_pts, Color(0.1, 0.02, 0.08, 0.95))
+		# Tongue for eating
 		if mood == Mood.EATING:
-			draw_circle(mouth_pos + Vector2(0, mo_h * 0.3), mo_w * 0.25, Color(0.8, 0.3, 0.4, 0.8))
+			draw_circle(mouth_pos + Vector2(0, mo_h * 0.2), mo_w * 0.3, Color(0.85, 0.4, 0.45, 0.9))
+		# Teeth when angry
+		if mood == Mood.ANGRY:
+			for t in range(3):
+				var tx: float = mouth_pos.x - mo_w * 0.15 + mo_w * 0.15 * t
+				var ty: float = mouth_pos.y - mo_h * 0.5
+				var tooth_pts: PackedVector2Array = PackedVector2Array([
+					Vector2(tx - 0.7, ty),
+					Vector2(tx, ty + 1.2),
+					Vector2(tx + 0.7, ty),
+				])
+				draw_colored_polygon(tooth_pts, Color(0.98, 0.95, 0.9, 0.95))
 	else:
+		# Closed mouth - clean curved line
 		var m_left := mouth_pos + Vector2(0, -mouth_width * 0.5)
 		var m_right := mouth_pos + Vector2(0, mouth_width * 0.5)
 		var m_mid := mouth_pos + Vector2(mouth_curve, 0)
-		var mouth_col := Color(0.15, 0.2, 0.4, 0.85)
+		var mouth_col := Color(0.12, 0.15, 0.35, 0.9)
 		if mood == Mood.DEPLETED:
-			# Wobbly sad line
 			m_mid.y += sin(_time * 2.0) * 0.5
-			mouth_col = Color(0.2, 0.2, 0.35, 0.8)
-		draw_line(m_left, m_mid, mouth_col, 1.5, true)
-		draw_line(m_mid, m_right, mouth_col, 1.5, true)
-
-	# Depleted: sweat drop
-	if mood == Mood.DEPLETED:
-		var sweat_y: float = left_eye.y - eye_r - 4.0 + sin(_time * 3.0) * 1.0
-		draw_circle(Vector2(left_eye.x + 3, sweat_y), 1.2, Color(0.5, 0.7, 1.0, 0.6))
+			mouth_col = Color(0.2, 0.2, 0.35, 0.85)
+		draw_line(m_left, m_mid, mouth_col, 2.0, true)
+		draw_line(m_mid, m_right, mouth_col, 2.0, true)
 
 func _fire_toxin() -> void:
 	energy -= toxin_cost
@@ -717,36 +868,52 @@ func _check_directional_contact_damage() -> void:
 	all_targets.append_array(enemies)
 	all_targets.append_array(competitors)
 
+	# Different ranges for different directions (tail extends further)
+	var front_range: float = _cell_radius + 35.0  # Spikes/horns
+	var rear_range: float = _cell_radius + 45.0   # Stingers/clubs extend far
+	var side_range: float = _cell_radius + 30.0   # Barbs
+
 	for target in all_targets:
 		if not is_instance_valid(target):
 			continue
 		var dist: float = global_position.distance_to(target.global_position)
-		if dist > _cell_radius + 30.0:
+		# Skip if too far for any attack
+		if dist > rear_range:
 			continue
 
 		var damage: float = 0.0
-		var hit: bool = false
+		var hit_type: String = ""
 
-		# Front spike/horn damage
-		if _has_directional_front and _is_target_in_front(target.global_position, 0.5):
+		# Front spike/horn damage - wider arc (0.7 radians = ~80 degrees)
+		if _has_directional_front and dist <= front_range and _is_target_in_front(target.global_position, 0.7):
 			damage += _directional_front_damage
-			hit = true
+			hit_type = "front"
 
-		# Rear stinger damage
-		if _has_directional_rear and _is_target_in_rear(target.global_position, 0.5):
+		# Rear stinger damage - wider arc for tail sweep (0.8 radians = ~90 degrees)
+		if _has_directional_rear and dist <= rear_range and _is_target_in_rear(target.global_position, 0.8):
 			damage += _directional_rear_damage
-			hit = true
+			hit_type = "rear" if hit_type == "" else hit_type
 
 		# Side barb damage
-		if _has_directional_sides and _is_target_on_sides(target.global_position, 0.5):
+		if _has_directional_sides and dist <= side_range and _is_target_on_sides(target.global_position, 0.5):
 			damage += _directional_sides_damage
-			hit = true
+			hit_type = "sides" if hit_type == "" else hit_type
 
-		if hit and damage > 0 and target.has_method("take_damage"):
+		if hit_type != "" and damage > 0 and target.has_method("take_damage"):
 			target.take_damage(damage)
 			damage_dealt.emit(damage)
 			_directional_contact_timer = DIRECTIONAL_CONTACT_COOLDOWN
-			_toxin_flash = 0.5  # Visual feedback
+			# Visual feedback based on hit type
+			match hit_type:
+				"front":
+					_front_hit_flash = 1.0
+					_set_mood(Mood.ANGRY, 0.4)
+				"rear":
+					_tail_hit_flash = 1.0
+					_set_mood(Mood.EXCITED, 0.3)
+				"sides":
+					_toxin_flash = 0.5
+			AudioManager.play_toxin()  # Impact sound
 			break  # One target per check
 
 func _metabolize() -> void:
@@ -1319,16 +1486,33 @@ func _draw_mut_gas_vacuole() -> void:
 
 func _draw_mut_front_spike() -> void:
 	# Big horn at front of cell
+	var spike_col := Color(0.85, 0.75, 0.5, 0.9)
+	var edge_col := Color(0.7, 0.5, 0.2, 1.0)
+	# Flash on impact
+	if _front_hit_flash > 0:
+		spike_col = spike_col.lerp(Color(1.0, 0.9, 0.6, 1.0), _front_hit_flash)
+		edge_col = edge_col.lerp(Color(1.0, 0.8, 0.4, 1.0), _front_hit_flash)
 	var base1 := Vector2(_cell_radius - 2.0, -4.0)
 	var base2 := Vector2(_cell_radius - 2.0, 4.0)
-	var tip := Vector2(_cell_radius + 18.0 + sin(_time * 3.0) * 2.0, 0)
+	# Jab forward on hit
+	var jab: float = _front_hit_flash * 6.0 * sin(_front_hit_flash * PI)
+	var tip := Vector2(_cell_radius + 18.0 + sin(_time * 3.0) * 2.0 + jab, 0)
 	var pts: PackedVector2Array = PackedVector2Array([base1, tip, base2])
-	draw_colored_polygon(pts, Color(0.85, 0.75, 0.5, 0.9))
-	draw_line(base1, tip, Color(0.7, 0.5, 0.2, 1.0), 1.5, true)
-	draw_line(base2, tip, Color(0.7, 0.5, 0.2, 1.0), 1.5, true)
-	# Danger glow when moving fast
-	if velocity.length() > 100:
-		draw_circle(tip, 4.0, Color(1.0, 0.3, 0.1, 0.3))
+	draw_colored_polygon(pts, spike_col)
+	draw_line(base1, tip, edge_col, 1.5, true)
+	draw_line(base2, tip, edge_col, 1.5, true)
+	# Danger glow when moving fast or hitting
+	if velocity.length() > 100 or _front_hit_flash > 0:
+		var glow_size: float = 4.0 + _front_hit_flash * 6.0
+		var glow_col := Color(1.0, 0.3, 0.1, 0.3 + _front_hit_flash * 0.5)
+		draw_circle(tip, glow_size, glow_col)
+	# Impact burst
+	if _front_hit_flash > 0.5:
+		for i in range(5):
+			var a: float = -0.6 + i * 0.3
+			var burst_len: float = 10.0 * _front_hit_flash
+			var burst_end := tip + Vector2(cos(a) * burst_len, sin(a) * burst_len)
+			draw_line(tip, burst_end, Color(1.0, 0.8, 0.3, _front_hit_flash), 1.5, true)
 
 func _draw_mut_mandibles() -> void:
 	# Two pincer jaws at front
@@ -1361,17 +1545,35 @@ func _draw_mut_rear_stinger() -> void:
 	# Scorpion-like stinger at back
 	var segments: int = 5
 	var prev := Vector2(-_cell_radius, 0)
+	var base_color := Color(0.3, 0.7, 0.2, 0.9)
+	var tip_color := Color(0.2, 0.8, 0.1, 1.0)
+	var glow_color := Color(0.1, 0.9, 0.2, 0.6 + sin(_time * 6.0) * 0.3)
+	# Flash white/yellow when hitting
+	if _tail_hit_flash > 0:
+		base_color = base_color.lerp(Color(1.0, 1.0, 0.5, 1.0), _tail_hit_flash)
+		tip_color = tip_color.lerp(Color(1.0, 1.0, 0.3, 1.0), _tail_hit_flash)
+		glow_color = Color(1.0, 1.0, 0.2, 0.9 * _tail_hit_flash)
 	for i in range(segments):
 		var t: float = float(i + 1) / segments
 		var wave: float = sin(_time * 3.0 + t * 2.0) * 4.0
-		var cur := Vector2(-_cell_radius - t * 16.0, wave * t)
+		# Quick jab motion on hit
+		var jab_offset: float = _tail_hit_flash * -8.0 * sin(_tail_hit_flash * PI)
+		var cur := Vector2(-_cell_radius - t * 16.0 + jab_offset * t, wave * t)
 		var width: float = 3.0 * (1.0 - t * 0.6)
-		draw_line(prev, cur, Color(0.3, 0.7, 0.2, 0.9), width, true)
+		draw_line(prev, cur, base_color, width, true)
 		prev = cur
 	# Stinger tip
-	var stinger_tip := prev + Vector2(-6.0, 0)
-	draw_line(prev, stinger_tip, Color(0.2, 0.8, 0.1, 1.0), 1.5, true)
-	draw_circle(stinger_tip, 2.0, Color(0.1, 0.9, 0.2, 0.6 + sin(_time * 6.0) * 0.3))
+	var jab_offset: float = _tail_hit_flash * -8.0 * sin(_tail_hit_flash * PI)
+	var stinger_tip := prev + Vector2(-6.0 + jab_offset, 0)
+	draw_line(prev, stinger_tip, tip_color, 1.5, true)
+	draw_circle(stinger_tip, 2.0 + _tail_hit_flash * 3.0, glow_color)
+	# Impact burst on hit
+	if _tail_hit_flash > 0.5:
+		for i in range(6):
+			var a: float = TAU * i / 6.0
+			var burst_r: float = 8.0 * _tail_hit_flash
+			var burst_end := stinger_tip + Vector2(cos(a) * burst_r, sin(a) * burst_r)
+			draw_line(stinger_tip, burst_end, Color(1.0, 0.9, 0.3, _tail_hit_flash), 1.5, true)
 
 func _draw_mut_ramming_crest() -> void:
 	# Armored head plate
@@ -1408,17 +1610,34 @@ func _draw_mut_proboscis() -> void:
 
 func _draw_mut_tail_club() -> void:
 	# Heavy club at back
+	var stem_col := Color(0.6, 0.5, 0.4, 0.9)
+	var club_col := Color(0.55, 0.45, 0.35, 0.85)
+	var outline_col := Color(0.4, 0.35, 0.3, 0.9)
+	# Flash on hit
+	if _tail_hit_flash > 0:
+		stem_col = stem_col.lerp(Color(1.0, 0.8, 0.4, 1.0), _tail_hit_flash)
+		club_col = club_col.lerp(Color(1.0, 0.9, 0.5, 1.0), _tail_hit_flash)
+		outline_col = outline_col.lerp(Color(1.0, 0.7, 0.3, 1.0), _tail_hit_flash)
 	var base := Vector2(-_cell_radius, 0)
-	var stem := base + Vector2(-10.0, sin(_time * 2.0) * 3.0)
-	draw_line(base, stem, Color(0.6, 0.5, 0.4, 0.9), 3.0, true)
-	# Club head
+	# Swing motion on hit
+	var swing: float = sin(_time * 2.0) * 3.0
+	if _tail_hit_flash > 0:
+		swing += sin(_tail_hit_flash * PI * 2.0) * 12.0 * _tail_hit_flash
+	var stem := base + Vector2(-10.0, swing)
+	draw_line(base, stem, stem_col, 3.0, true)
+	# Club head - grows slightly on impact
 	var club_pts: PackedVector2Array = PackedVector2Array()
+	var size_boost: float = 1.0 + _tail_hit_flash * 0.4
 	for i in range(8):
 		var a: float = TAU * i / 8.0
-		var r: float = 5.0 + sin(a * 2.0 + _time * 3.0) * 1.5
+		var r: float = (5.0 + sin(a * 2.0 + _time * 3.0) * 1.5) * size_boost
 		club_pts.append(stem + Vector2(cos(a) * r - 3.0, sin(a) * r))
-	draw_colored_polygon(club_pts, Color(0.55, 0.45, 0.35, 0.85))
-	draw_arc(stem + Vector2(-3.0, 0), 5.5, 0, TAU, 12, Color(0.4, 0.35, 0.3, 0.9), 1.0, true)
+	draw_colored_polygon(club_pts, club_col)
+	draw_arc(stem + Vector2(-3.0, 0), 5.5 * size_boost, 0, TAU, 12, outline_col, 1.0, true)
+	# Impact shockwave on hit
+	if _tail_hit_flash > 0.3:
+		var ring_r: float = 15.0 * (1.0 - _tail_hit_flash)
+		draw_arc(stem + Vector2(-3.0, 0), ring_r, 0, TAU, 16, Color(1.0, 0.9, 0.6, _tail_hit_flash * 0.7), 2.0, true)
 
 func _draw_mut_electroreceptors() -> void:
 	# Sensory pits around the body

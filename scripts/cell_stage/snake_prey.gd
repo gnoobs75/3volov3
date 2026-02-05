@@ -16,6 +16,7 @@ var energy_restore: float = 10.0
 var _time: float = 0.0
 var wander_target: Vector2 = Vector2.ZERO
 var wander_timer: float = 0.0
+var _target_velocity: Vector2 = Vector2.ZERO  # For smooth interpolated movement
 
 # Body segments
 var _num_segments: int = 0
@@ -115,6 +116,8 @@ func _physics_process(delta: float) -> void:
 		_beam_stretch = maxf(_beam_stretch - 4.0 * delta, 0.0)
 		_segment_compression = minf(_segment_compression + 3.0 * delta, 1.0)
 		_slurp_vibrate = maxf(_slurp_vibrate - 5.0 * delta, 0.0)
+		# Smooth velocity interpolation for fluid movement (only when not beamed)
+		velocity = velocity.move_toward(_target_velocity, panic_speed * 4.0 * delta)
 
 	move_and_slide()
 
@@ -152,7 +155,7 @@ func _do_idle(delta: float) -> void:
 	wander_timer -= delta
 	if wander_timer <= 0 or global_position.distance_to(wander_target) < 15:
 		_pick_wander_target()
-	velocity = global_position.direction_to(wander_target) * speed * 0.4
+	_target_velocity = global_position.direction_to(wander_target) * speed * 0.4
 	_panic_level = maxf(_panic_level - delta * 1.5, 0.0)
 
 func _do_panic(delta: float, player: Node2D) -> void:
@@ -163,7 +166,7 @@ func _do_panic(delta: float, player: Node2D) -> void:
 	var flee_dir: Vector2 = (global_position - player.global_position).normalized()
 	var zigzag: float = sin(_time * 8.0) * 0.4
 	flee_dir = flee_dir.rotated(zigzag)
-	velocity = flee_dir * lerpf(speed, panic_speed, _panic_level)
+	_target_velocity = flee_dir * lerpf(speed, panic_speed, _panic_level)
 	state = State.FLEEING
 
 func _pick_wander_target() -> void:

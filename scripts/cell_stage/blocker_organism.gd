@@ -10,6 +10,14 @@ var _branch_angles: Array[float] = []
 var _branch_lengths: Array[float] = []
 var _shape_points: Array[Vector2] = []
 
+# Face animation
+var _blink_timer: float = 0.0
+var _is_blinking: bool = false
+var _yawn_timer: float = 0.0
+var _is_yawning: bool = false
+var _eye_roll_angle: float = 0.0
+var _annoyance: float = 0.0  # Increases when player is nearby
+
 func _ready() -> void:
 	_radius = randf_range(16.0, 26.0)
 	_base_color = Color(
@@ -28,9 +36,47 @@ func _ready() -> void:
 		var r: float = _radius + randf_range(-3.0, 4.0)
 		_shape_points.append(Vector2(cos(a) * r, sin(a) * r))
 	add_to_group("blockers")
+	_blink_timer = randf_range(3.0, 8.0)
+	_yawn_timer = randf_range(8.0, 20.0)
 
 func _process(delta: float) -> void:
 	_time += delta
+
+	# Check if player is nearby for annoyance
+	var players := get_tree().get_nodes_in_group("player")
+	if not players.is_empty():
+		var player_dist: float = global_position.distance_to(players[0].global_position)
+		if player_dist < 150.0:
+			_annoyance = minf(_annoyance + delta * 0.5, 1.0)
+		else:
+			_annoyance = maxf(_annoyance - delta * 0.3, 0.0)
+
+	# Blink timer
+	_blink_timer -= delta
+	if _blink_timer <= 0:
+		if _is_blinking:
+			_is_blinking = false
+			_blink_timer = randf_range(3.0, 8.0)
+		else:
+			_is_blinking = true
+			_blink_timer = 0.2  # Slow, heavy blink
+
+	# Yawn timer
+	_yawn_timer -= delta
+	if _yawn_timer <= 0:
+		if _is_yawning:
+			_is_yawning = false
+			_yawn_timer = randf_range(10.0, 25.0)
+		else:
+			_is_yawning = true
+			_yawn_timer = 1.5  # Yawn duration
+
+	# Eye roll when annoyed
+	if _annoyance > 0.5:
+		_eye_roll_angle = sin(_time * 2.0) * 0.3
+	else:
+		_eye_roll_angle = lerpf(_eye_roll_angle, 0.0, delta * 3.0)
+
 	queue_redraw()
 
 func _draw() -> void:
@@ -67,17 +113,53 @@ func _draw() -> void:
 		draw_line(pts[i], pts[(i + 1) % pts.size()], Color(_base_color, 0.7), 1.5, true)
 
 	# Stubborn face (barely visible, like it's embedded in rock)
-	var face_a: float = 0.5 + 0.1 * sin(_time * 0.5)
+	var face_a: float = 0.6 + 0.1 * sin(_time * 0.5)
 	# Tiny unamused eyes
 	var le := Vector2(-2.5, 0)
 	var re := Vector2(2.5, 0)
-	draw_circle(le, 2.5, Color(0.9, 0.85, 0.8, face_a))
-	draw_circle(re, 2.5, Color(0.9, 0.85, 0.8, face_a))
-	# Half-lidded pupils (bored)
-	draw_circle(le, 1.0, Color(0.1, 0.08, 0.05, face_a))
-	draw_circle(re, 1.0, Color(0.1, 0.08, 0.05, face_a))
-	# Heavy eyelids (top half darkened)
-	draw_line(le + Vector2(-2.5, -0.5), le + Vector2(2.5, -0.5), Color(_base_color.r * 0.3, _base_color.g * 0.3, _base_color.b * 0.25, face_a), 2.0, true)
-	draw_line(re + Vector2(-2.5, -0.5), re + Vector2(2.5, -0.5), Color(_base_color.r * 0.3, _base_color.g * 0.3, _base_color.b * 0.25, face_a), 2.0, true)
-	# Flat line mouth
-	draw_line(Vector2(-3, 4), Vector2(3, 4), Color(0.15, 0.1, 0.08, face_a), 1.5, true)
+
+	# Eye roll offset when annoyed
+	var roll_offset := Vector2(sin(_eye_roll_angle) * 1.0, cos(_eye_roll_angle) * 0.5 - 0.5)
+
+	var eye_squash: float = 1.0
+	if _is_blinking:
+		eye_squash = 0.15
+
+	# Eyes - slightly squashed when bored/blinking
+	var eye_h: float = 2.5 * eye_squash
+	for eye_pos in [le, re]:
+		var eye_pts: PackedVector2Array = PackedVector2Array()
+		for i in range(10):
+			var a: float = TAU * i / 10.0
+			eye_pts.append(eye_pos + Vector2(cos(a) * 2.5, sin(a) * eye_h))
+		draw_colored_polygon(eye_pts, Color(0.9, 0.85, 0.8, face_a))
+
+	# Pupils with eye roll
+	if not _is_blinking:
+		draw_circle(le + roll_offset, 1.0, Color(0.1, 0.08, 0.05, face_a))
+		draw_circle(re + roll_offset, 1.0, Color(0.1, 0.08, 0.05, face_a))
+
+	# Heavy droopy eyelids
+	var lid_droop: float = 1.5 if _annoyance > 0.3 else 1.0
+	draw_line(le + Vector2(-3.0, -0.5), le + Vector2(3.0, -0.5 + lid_droop), Color(_base_color.r * 0.3, _base_color.g * 0.3, _base_color.b * 0.25, face_a), 2.5, true)
+	draw_line(re + Vector2(-3.0, -0.5 + lid_droop), re + Vector2(3.0, -0.5), Color(_base_color.r * 0.3, _base_color.g * 0.3, _base_color.b * 0.25, face_a), 2.5, true)
+
+	# Mouth - yawns occasionally
+	if _is_yawning:
+		# Big open yawn mouth
+		var yawn_progress: float = sin((_yawn_timer / 1.5) * PI)  # Peaks in middle
+		var yawn_size: float = 2.0 + yawn_progress * 4.0
+		var yawn_pts: PackedVector2Array = PackedVector2Array()
+		for i in range(10):
+			var a: float = TAU * i / 10.0
+			yawn_pts.append(Vector2(4, 0) + Vector2(cos(a) * yawn_size * 0.8, sin(a) * yawn_size))
+		draw_colored_polygon(yawn_pts, Color(0.1, 0.05, 0.05, face_a))
+		# Tiny uvula wiggle
+		if yawn_progress > 0.3:
+			var uvula_y: float = sin(_time * 6.0) * 0.5
+			draw_circle(Vector2(4 - yawn_size * 0.3, uvula_y), 0.6, Color(0.8, 0.4, 0.4, face_a * 0.7))
+	else:
+		# Flat annoyed line mouth - slight frown when annoyed
+		var frown: float = _annoyance * 1.5
+		draw_line(Vector2(-3, 4), Vector2(0, 4 + frown), Color(0.15, 0.1, 0.08, face_a), 1.5, true)
+		draw_line(Vector2(0, 4 + frown), Vector2(3, 4), Color(0.15, 0.1, 0.08, face_a), 1.5, true)

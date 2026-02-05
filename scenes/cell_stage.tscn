@@ -32,6 +32,8 @@ shader_parameter/deep_color = Color(0.01, 0.03, 0.06, 1)
 shader_parameter/vent_color = Color(0.15, 0.06, 0.02, 1)
 shader_parameter/particle_color = Color(0.2, 0.5, 0.8, 0.3)
 
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_panel"]
+
 [node name="CellStage" type="Node2D"]
 script = ExtResource("1")
 
@@ -77,6 +79,7 @@ grow_vertical = 2
 custom_minimum_size = Vector2(280, 0)
 size_flags_horizontal = 0
 mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxEmpty_panel")
 
 [node name="LeftVBox" type="VBoxContainer" parent="HUD/ThreePaneLayout/LeftPane"]
 layout_mode = 1
@@ -85,6 +88,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+theme_override_constants/separation = 0
 
 [node name="OrganismCard" type="Control" parent="HUD/ThreePaneLayout/LeftPane/LeftVBox"]
 custom_minimum_size = Vector2(280, 620)
@@ -177,6 +181,16 @@ horizontal_alignment = 2
 theme_override_font_sizes/font_size = 14
 theme_override_colors/font_color = Color(0.9, 0.2, 0.3, 0.9)
 
+[node name="FPSLabel" type="Label" parent="HUD/ThreePaneLayout/MiddlePane"]
+layout_mode = 0
+offset_left = 240.0
+offset_top = 4.0
+offset_right = 480.0
+offset_bottom = 78.0
+text = "FPS: 120"
+theme_override_font_sizes/font_size = 10
+theme_override_colors/font_color = Color(0.5, 0.9, 0.5, 0.8)
+
 [node name="ControlsLabel" type="Label" parent="HUD/ThreePaneLayout/MiddlePane"]
 layout_mode = 1
 anchors_preset = 2
@@ -206,6 +220,7 @@ script = ExtResource("11")
 custom_minimum_size = Vector2(320, 0)
 size_flags_horizontal = 0
 mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxEmpty_panel")
 
 [node name="ObserverNotes" type="Control" parent="HUD/ThreePaneLayout/RightPane"]
 layout_mode = 1

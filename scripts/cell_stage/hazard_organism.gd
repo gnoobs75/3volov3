@@ -20,6 +20,15 @@ var _has_face: bool = true
 var health: float = 60.0
 var _damage_flash: float = 0.0
 
+# Googly eye animation
+var _eye_bounce_l: Vector2 = Vector2.ZERO
+var _eye_bounce_r: Vector2 = Vector2.ZERO
+var _eye_vel_l: Vector2 = Vector2.ZERO
+var _eye_vel_r: Vector2 = Vector2.ZERO
+var _blink_timer: float = 0.0
+var _is_blinking: bool = false
+var _tongue_wiggle: float = 0.0
+
 func _ready() -> void:
 	_init_hazard()
 	add_to_group("hazards")
@@ -32,6 +41,7 @@ func setup(type: HazardType) -> void:
 func _init_hazard() -> void:
 	_pulse_phase = randf() * TAU
 	_has_face = randf() > 0.2
+	_blink_timer = randf_range(2.0, 5.0)
 	match hazard_type:
 		HazardType.JELLYFISH:
 			_radius = randf_range(8.0, 12.0)
@@ -67,6 +77,35 @@ func _process(delta: float) -> void:
 	_time += delta
 	_damage_flash = maxf(_damage_flash - delta * 4.0, 0.0)
 	global_position += drift_velocity * delta
+
+	# Googly eye physics - eyes react to drift
+	var spring_k: float = 20.0
+	var damping: float = 6.0
+	var eye_target := -drift_velocity * 0.01
+	# Left eye
+	_eye_vel_l += (eye_target - _eye_bounce_l) * spring_k * delta
+	_eye_vel_l *= exp(-damping * delta)
+	_eye_bounce_l += _eye_vel_l * delta
+	_eye_bounce_l = _eye_bounce_l.limit_length(2.0)
+	# Right eye (slightly different timing for derpy effect)
+	_eye_vel_r += (eye_target * 0.8 - _eye_bounce_r) * spring_k * delta
+	_eye_vel_r *= exp(-damping * delta * 0.9)
+	_eye_bounce_r += _eye_vel_r * delta
+	_eye_bounce_r = _eye_bounce_r.limit_length(2.0)
+
+	# Blink timer
+	_blink_timer -= delta
+	if _blink_timer <= 0:
+		if _is_blinking:
+			_is_blinking = false
+			_blink_timer = randf_range(2.0, 5.0)
+		else:
+			_is_blinking = true
+			_blink_timer = 0.15
+
+	# Tongue wiggle animation
+	_tongue_wiggle = sin(_time * 4.0) * 0.3
+
 	# Apply continuous damage to touching bodies
 	for body in _touching_bodies:
 		if is_instance_valid(body) and body.has_method("take_damage"):
@@ -156,24 +195,44 @@ func _draw_toxic_blob() -> void:
 		draw_circle(bp, 1.5, Color(_base_color.r, _base_color.g, _base_color.b, 0.4))
 
 func _draw_tiny_face() -> void:
-	# Minimalist derpy face on hazards
+	# Minimalist derpy face on hazards with googly eyes
 	var le := Vector2(0, -_eye_size * 0.8)
 	var re := Vector2(0, _eye_size * 0.8)
 	var er: float = _eye_size
-	# Vacant stare
-	var face_col := Color(0.95, 0.95, 0.9, 0.8)
+
+	var eye_squash: float = 1.0 if not _is_blinking else 0.15
+
+	# Vacant stare with googly bounce
+	var face_col := Color(0.95, 0.95, 0.9, 0.9)
 	if _damage_flash > 0:
 		face_col = face_col.lerp(Color.WHITE, _damage_flash)
-	draw_circle(le, er, face_col)
-	draw_circle(re, er, face_col)
-	# Tiny pupils looking in random slow directions
-	var look_a: float = sin(_time * 0.5) * 0.5
-	var look_v := Vector2(cos(look_a), sin(look_a)) * er * 0.3
-	draw_circle(le + look_v, er * 0.45, Color(0.1, 0.0, 0.1, 0.9))
-	draw_circle(re + look_v, er * 0.45, Color(0.1, 0.0, 0.1, 0.9))
-	# Tiny o-shaped mouth
+
+	# Draw eye whites (slightly different sizes for derpy look)
+	var le_pts: PackedVector2Array = PackedVector2Array()
+	var re_pts: PackedVector2Array = PackedVector2Array()
+	for i in range(10):
+		var a: float = TAU * i / 10.0
+		le_pts.append(le + Vector2(cos(a) * er, sin(a) * er * eye_squash))
+		re_pts.append(re + Vector2(cos(a) * er * 1.15, sin(a) * er * 1.15 * eye_squash))  # Derpy: one eye bigger
+	draw_colored_polygon(le_pts, face_col)
+	draw_colored_polygon(re_pts, face_col)
+
+	# Googly pupils that bounce around
+	if not _is_blinking:
+		var pupil_col := Color(0.1, 0.0, 0.1, 0.95)
+		draw_circle(le + _eye_bounce_l, er * 0.5, pupil_col)
+		draw_circle(re + _eye_bounce_r, er * 0.55, pupil_col)  # Slightly bigger for derpy eye
+		# Tiny highlight
+		draw_circle(le + _eye_bounce_l + Vector2(-0.3, -0.3), er * 0.15, Color(1, 1, 1, 0.7))
+		draw_circle(re + _eye_bounce_r + Vector2(-0.3, -0.3), er * 0.15, Color(1, 1, 1, 0.7))
+
+	# Tongue sticking out slightly (hazards are derpy)
 	var mp := Vector2(_radius * 0.3, 0)
-	draw_arc(mp, 1.5, 0, TAU, 8, Color(0.2, 0.05, 0.1, 0.7), 1.0, true)
+	var tongue_y: float = _tongue_wiggle
+	# Small tongue blob
+	draw_circle(mp + Vector2(1.5, tongue_y), 1.2, Color(0.9, 0.35, 0.4, 0.85))
+	# O-shaped mouth behind tongue
+	draw_arc(mp, 1.5, 0, TAU, 8, Color(0.2, 0.05, 0.1, 0.7), 1.2, true)
 
 func take_damage(amount: float) -> void:
 	health -= amount

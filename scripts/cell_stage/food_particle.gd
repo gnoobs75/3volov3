@@ -1,6 +1,22 @@
 extends Area2D
-## Procedurally drawn food particle with scientific labels.
+## Procedurally drawn food particle with alien symbol labels.
 ## Biomolecules use color from JSON data; organelles get complex multi-ring shapes.
+
+# Alien glyphs for category-based symbols
+const CATEGORY_SYMBOLS: Dictionary = {
+	"nucleotide": "⊛",
+	"amino_acid": "∆",
+	"coenzyme": "Ω",
+	"lipid": "◊",
+	"nucleotide_base": "Φ",
+	"monosaccharide": "⊕",
+	"organic_acid": "Ψ",
+	"organelle": "⊞",
+	"default": "⊗",
+}
+
+# Additional decorative glyphs
+const DECO_GLYPHS: Array = ["╬", "╫", "╪", "┼", "╋", "╂", "╁", "╀"]
 
 var component_data: Dictionary = {}
 var is_organelle: bool = false
@@ -8,6 +24,8 @@ var _time: float = 0.0
 var _base_radius: float = 6.0
 var _shape_seed: float = 0.0
 var _color: Color = Color(0.95, 0.85, 0.2, 0.8)
+var _symbol: String = "⊗"  # Alien symbol for this particle
+var _deco_glyph: String = ""  # Optional decorative glyph
 
 # Beam interaction
 var is_being_beamed: bool = false
@@ -21,6 +39,13 @@ func _ready() -> void:
 	var c: Array = component_data.get("color", [])
 	if c.size() >= 3:
 		_color = Color(c[0], c[1], c[2], 0.85)
+	# Assign alien symbol based on category
+	var category: String = component_data.get("category", "default")
+	_symbol = CATEGORY_SYMBOLS.get(category, CATEGORY_SYMBOLS["default"])
+	# Random decorative glyph for rare items
+	var rarity: String = component_data.get("rarity", "common")
+	if rarity in ["uncommon", "rare", "legendary"]:
+		_deco_glyph = DECO_GLYPHS[randi() % DECO_GLYPHS.size()]
 	body_entered.connect(_on_body_entered)
 
 func setup(data: Dictionary, organelle: bool = false) -> void:
@@ -31,9 +56,11 @@ func _process(delta: float) -> void:
 	_time += delta
 	if is_being_beamed:
 		_beam_pull_speed = minf(_beam_pull_speed + 500.0 * delta, 600.0)
-	else:
+		queue_redraw()  # Only redraw when being beamed (visual feedback needed)
+	elif _beam_pull_speed > 0.0:
 		_beam_pull_speed = maxf(_beam_pull_speed - 400.0 * delta, 0.0)
-	queue_redraw()
+		queue_redraw()  # Redraw while decelerating from beam
+	# Skip redraw when idle - pulse animation is subtle and not worth the cost
 
 func beam_pull_toward(target_pos: Vector2, delta: float) -> void:
 	## Called by player each frame while beaming this particle
@@ -184,23 +211,33 @@ func _draw_organelle(r: float) -> void:
 			draw_circle(sp, 1.0, Color(1.0, 1.0, 0.8, 0.3 + 0.2 * sin(_time * 4.0 + s)))
 
 func _draw_label() -> void:
-	# Floating short_name above the particle
-	var short_name: String = component_data.get("short_name", "")
-	if short_name == "":
-		short_name = component_data.get("id", "")
-	if short_name == "":
-		return
-	# Draw text background
-	var label_y: float = -_base_radius - 8.0 + sin(_time * 2.0) * 1.5
-	var label_pos := Vector2(0, label_y)
-	# Use draw_string is not available in _draw, so draw a small colored rectangle + approximate
-	# Actually in Godot 4 we can use draw_string with default font
+	# Simple floating alien symbol - minimal and clean
 	var font := ThemeDB.fallback_font
-	var font_size: int = 8
-	var text_width: float = font.get_string_size(short_name, HORIZONTAL_ALIGNMENT_CENTER, -1, font_size).x
-	# Background pill
-	draw_rect(Rect2(label_pos.x - text_width * 0.5 - 2, label_y - 5, text_width + 4, 10), Color(0.0, 0.0, 0.0, 0.4))
-	draw_string(font, Vector2(label_pos.x - text_width * 0.5, label_y + 3), short_name, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(1.0, 1.0, 1.0, 0.9))
+	var font_size: int = 10
+	var label_y: float = -_base_radius - 6.0 + sin(_time * 2.0) * 1.0
+	var rarity: String = component_data.get("rarity", "common")
+
+	# Just the symbol, color-matched to the particle
+	var symbol_color := Color(
+		minf(_color.r * 1.2, 1.0),
+		minf(_color.g * 1.2, 1.0),
+		minf(_color.b * 1.1, 1.0),
+		0.85
+	)
+
+	# Rarity affects brightness
+	if rarity == "uncommon":
+		symbol_color = symbol_color.lightened(0.15)
+	elif rarity == "rare":
+		symbol_color = Color(1.0, 0.95, 0.6, 0.95)
+	elif rarity == "legendary":
+		var hue: float = fmod(_time * 0.3, 1.0)
+		symbol_color = Color.from_hsv(hue, 0.5, 1.0, 0.95)
+
+	# Tiny shadow for readability
+	var text_width: float = font.get_string_size(_symbol, HORIZONTAL_ALIGNMENT_CENTER, -1, font_size).x
+	draw_string(font, Vector2(-text_width * 0.5 + 0.5, label_y + 0.5), _symbol, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0, 0, 0, 0.4))
+	draw_string(font, Vector2(-text_width * 0.5, label_y), _symbol, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, symbol_color)
 
 func _on_body_entered(body: Node2D) -> void:
 	if body.has_method("feed"):

@@ -8,8 +8,8 @@ var _player: Node2D = null
 var _camera_pos: Vector2 = Vector2.ZERO
 var _camera_zoom: float = 1.0
 
-const NUM_PARTICLES: int = 100  # Reduced from 160
-const SPAWN_RANGE: float = 600.0  # Reduced from 800
+const NUM_PARTICLES: int = 50  # Further reduced for performance
+const SPAWN_RANGE: float = 500.0  # Smaller range, denser feel
 const VIEWPORT_MARGIN: float = 80.0
 const VIEWPORT_SIZE: Vector2 = Vector2(1920, 1080)
 
@@ -54,11 +54,19 @@ func _process(delta: float) -> void:
 	# Update positions
 	for p in _particles:
 		p.pos += p.drift * delta
-		# Respawn if too far
+		# Respawn if too far - randomize position to avoid horizontal bands
 		if p.pos.length() > SPAWN_RANGE or _player and p.pos.distance_to(_player.global_position - global_position) > SPAWN_RANGE:
-			p.pos = Vector2(randf_range(-SPAWN_RANGE, SPAWN_RANGE), SPAWN_RANGE * 0.4)
+			# Spawn at random edge position, not fixed y
+			var edge: int = randi() % 4
+			match edge:
+				0: p.pos = Vector2(randf_range(-SPAWN_RANGE, SPAWN_RANGE), -SPAWN_RANGE * 0.9)  # Top
+				1: p.pos = Vector2(randf_range(-SPAWN_RANGE, SPAWN_RANGE), SPAWN_RANGE * 0.9)   # Bottom
+				2: p.pos = Vector2(-SPAWN_RANGE * 0.9, randf_range(-SPAWN_RANGE, SPAWN_RANGE))  # Left
+				3: p.pos = Vector2(SPAWN_RANGE * 0.9, randf_range(-SPAWN_RANGE, SPAWN_RANGE))   # Right
 			if _player:
 				p.pos += _player.global_position - global_position
+			# Randomize drift direction to avoid uniform movement
+			p.drift = Vector2(randf_range(-10.0, 10.0), randf_range(-10.0, 10.0))
 
 	queue_redraw()
 
@@ -93,15 +101,8 @@ func _draw() -> void:
 		pos.x += sin(_time * 1.5 + p.phase) * 2.0
 		pos.y += sin(_time * 0.7 + p.phase * 2.0) * 1.0
 
+		# All particles are simple dots now for performance
+		draw_circle(pos, p.size, c)
+		# Glow halo only for type 4 (jellyfish)
 		if p.type == 4:
-			# Jellyfish plankton - simplified
-			draw_circle(pos, p.size, Color(c.r, c.g, c.b, alpha * 0.4))
-			draw_arc(pos, p.size, PI, TAU, 8, Color(c.r, c.g, c.b, alpha * 0.7), 0.8, true)
-			# Single tendril
-			draw_line(pos + Vector2(0, p.size), pos + Vector2(sin(_time * 2.0 + p.phase) * 2.0, p.size + 8.0), Color(c.r, c.g, c.b, alpha * 0.4), 0.6, true)
-		else:
-			# Simple glowing dot
-			draw_circle(pos, p.size, c)
-			# Glow halo (only for larger particles)
-			if p.size > 1.5:
-				draw_circle(pos, p.size * 2.5, Color(c.r, c.g, c.b, alpha * 0.1))
+			draw_circle(pos, p.size * 2.0, Color(c.r, c.g, c.b, alpha * 0.15))

@@ -34,13 +34,16 @@ func _ready() -> void:
 		_last_counts[d.key] = 0
 	# Calculate sizes based on available space
 	call_deferred("_calculate_sizes")
+	# Recalculate when resized
+	resized.connect(_calculate_sizes)
 
 func _calculate_sizes() -> void:
-	var parent_size: Vector2 = get_parent_area_size()
-	_cx = parent_size.x * 0.5
+	# Use own size property for reliable sizing (fixes cutoff issue)
+	_cx = size.x * 0.5
 	_top_y = 30.0  # Start after header
-	_height = parent_size.y - 80.0  # Leave margins
-	_radius = minf(parent_size.x * 0.35, 55.0)  # Moderate radius
+	_height = size.y - 80.0  # Leave margins for header and footer
+	# Scale radius to fit available space - ensures helix is fully visible
+	_radius = minf(size.x * 0.32, minf(size.y * 0.08, 50.0))
 
 func _on_inv_changed() -> void:
 	for d in DEFS:

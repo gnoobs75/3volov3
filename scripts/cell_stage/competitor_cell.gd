@@ -15,6 +15,7 @@ var food_target: Node2D = null
 var eat_timer: float = 0.0
 var startled_timer: float = 0.0
 var collected_count: int = 0
+var _target_velocity: Vector2 = Vector2.ZERO  # For smooth interpolated movement
 
 # Procedural
 var _time: float = 0.0
@@ -77,7 +78,7 @@ func _physics_process(delta: float) -> void:
 			_do_hunt(delta)
 		State.EATING:
 			eat_timer -= delta
-			velocity = Vector2.ZERO
+			_target_velocity = Vector2.ZERO
 			if eat_timer <= 0:
 				state = State.WANDER
 		State.STARTLED:
@@ -85,10 +86,12 @@ func _physics_process(delta: float) -> void:
 			# Flee from player briefly
 			var player := _find_player()
 			if player:
-				velocity = player.global_position.direction_to(global_position) * speed * 1.3
+				_target_velocity = player.global_position.direction_to(global_position) * speed * 1.3
 			if startled_timer <= 0:
 				state = State.WANDER
 
+	# Smooth velocity interpolation for fluid movement
+	velocity = velocity.move_toward(_target_velocity, speed * 4.0 * delta)
 	move_and_slide()
 	_time += delta
 	_damage_flash = maxf(_damage_flash - delta * 4.0, 0.0)
@@ -110,7 +113,7 @@ func _do_wander(delta: float) -> void:
 	wander_timer -= delta
 	if wander_timer <= 0 or global_position.distance_to(wander_target) < 20:
 		_pick_wander_target()
-	velocity = global_position.direction_to(wander_target) * speed * 0.4
+	_target_velocity = global_position.direction_to(wander_target) * speed * 0.4
 
 func _scan_for_food() -> void:
 	var foods := get_tree().get_nodes_in_group("food")
@@ -164,7 +167,7 @@ func _do_hunt(delta: float) -> void:
 			state = State.WANDER
 			return
 		var dist := global_position.distance_to(_parasite_target.global_position)
-		velocity = global_position.direction_to(_parasite_target.global_position) * speed * 0.9
+		_target_velocity = global_position.direction_to(_parasite_target.global_position) * speed * 0.9
 		if dist < 15.0:
 			# Eat the parasite off the player
 			_mouth_open = 1.0
@@ -181,7 +184,7 @@ func _do_hunt(delta: float) -> void:
 	# Hunting prey target
 	if _prey_target and is_instance_valid(_prey_target):
 		var dist := global_position.distance_to(_prey_target.global_position)
-		velocity = global_position.direction_to(_prey_target.global_position) * speed * 1.1
+		_target_velocity = global_position.direction_to(_prey_target.global_position) * speed * 1.1
 		if dist < 18.0 and _prey_attack_cooldown <= 0:
 			_mouth_open = 1.0
 			if _prey_target.has_method("take_damage"):
@@ -199,7 +202,7 @@ func _do_hunt(delta: float) -> void:
 		state = State.WANDER
 		return
 	var dist := global_position.distance_to(food_target.global_position)
-	velocity = global_position.direction_to(food_target.global_position) * speed
+	_target_velocity = global_position.direction_to(food_target.global_position) * speed
 	if dist < 15.0:
 		_eat_food()
 
