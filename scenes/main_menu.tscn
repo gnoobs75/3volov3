@@ -45,6 +45,11 @@ theme_override_font_sizes/font_size = 18
 layout_mode = 2
 text = "Begin Observation"
 
+[node name="MusicToggle" type="CheckButton" parent="VBoxContainer"]
+layout_mode = 2
+text = "Use Music Files"
+tooltip_text = "Toggle between procedural audio and music files"
+
 [node name="QuitButton" type="Button" parent="VBoxContainer"]
 layout_mode = 2
 text = "Quit"

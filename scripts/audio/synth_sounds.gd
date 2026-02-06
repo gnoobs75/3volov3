@@ -188,3 +188,107 @@ static func gen_sprint() -> PackedFloat32Array:
 		var s: float = noise() * 0.3 + sin(t * 400.0 * TAU) * 0.1
 		buf[i] = s * env
 	return buf
+
+## === ALIEN OBSERVER VOCALIZATIONS ===
+
+## Observer gasp - sharp intake of breath (concern/surprise)
+static func gen_observer_gasp() -> PackedFloat32Array:
+	var dur: float = 0.35
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Quick attack, sustained breath sound
+		var env: float = adsr(t, 0.02, 0.08, 0.6, 0.15, dur)
+		# Rising pitch for intake effect
+		var freq: float = lerpf(180.0, 320.0, t / dur) + sin(t * 15.0) * 30.0
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 1.5) / SAMPLE_RATE
+		# Breathy noise + harmonic
+		var s: float = sine(phase) * 0.25 + sine(phase2) * 0.1 + noise() * 0.15 * env
+		buf[i] = s * env * 0.5
+	return buf
+
+## Observer hmm - curious/interested thinking sound
+static func gen_observer_hmm() -> PackedFloat32Array:
+	var dur: float = 0.5
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.05, 0.1, 0.7, 0.2, dur)
+		# Slight pitch rise then fall (questioning inflection)
+		var pitch_curve: float = sin(t / dur * PI) * 0.3
+		var freq: float = 140.0 * (1.0 + pitch_curve) + sin(t * 8.0) * 10.0
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 2.0) / SAMPLE_RATE  # Overtone
+		# Nasal resonance
+		var s: float = sine(phase) * 0.4 + sine(phase2) * 0.15 + triangle(phase * 0.5) * 0.1
+		buf[i] = s * env * 0.4
+	return buf
+
+## Observer laugh - alien chuckle (amusement)
+static func gen_observer_laugh() -> PackedFloat32Array:
+	var dur: float = 0.6
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.01, 0.05, 0.5, 0.25, dur)
+		# Pulsing envelope for "ha ha" effect
+		var pulse: float = 0.5 + 0.5 * sin(t * 25.0)
+		# Descending pitch with wobble
+		var freq: float = lerpf(280.0, 180.0, t / dur) + sin(t * 12.0) * 25.0
+		phase += freq / SAMPLE_RATE
+		var s: float = sine(phase) * 0.35 + triangle(phase * 1.5) * 0.15
+		buf[i] = s * env * pulse * 0.5
+	return buf
+
+## Observer impressed - "ooh" sound (wonder/amazement)
+static func gen_observer_impressed() -> PackedFloat32Array:
+	var dur: float = 0.55
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.08, 0.1, 0.6, 0.2, dur)
+		# Rising then sustained pitch
+		var pitch_t: float = minf(t / 0.15, 1.0)
+		var freq: float = lerpf(160.0, 240.0, pitch_t) + sin(t * 5.0) * 15.0
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 1.5) / SAMPLE_RATE
+		# Warm, rounded sound
+		var s: float = sine(phase) * 0.4 + sine(phase2) * 0.12 + sine(phase * 0.5) * 0.1
+		buf[i] = s * env * 0.45
+	return buf
+
+## Observer distressed - worried warble (concern for specimen)
+static func gen_observer_distressed() -> PackedFloat32Array:
+	var dur: float = 0.7
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.03, 0.1, 0.5, 0.3, dur)
+		# Wavering, uncertain pitch
+		var vibrato: float = sin(t * 18.0) * 40.0
+		var freq: float = lerpf(220.0, 160.0, t / dur) + vibrato
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 1.33) / SAMPLE_RATE  # Minor third for sad feeling
+		var s: float = sine(phase) * 0.35 + sine(phase2) * 0.2 + noise() * 0.05 * env
+		buf[i] = s * env * 0.45
+	return buf

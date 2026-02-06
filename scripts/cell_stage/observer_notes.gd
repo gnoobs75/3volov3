@@ -3,8 +3,8 @@ extends Control
 ## Notes appear as handwritten alien script that burns/etches into the surface.
 
 const PANE_WIDTH: float = 320.0
-const MAX_NOTES: int = 6
-const NOTE_HEIGHT: float = 140.0
+const MAX_NOTES: int = 4  # Reduced to fit with CreatureViewer below
+const NOTE_HEIGHT: float = 130.0
 const WRITE_DURATION: float = 1.5  # Time to "write" the note
 const BURN_DURATION: float = 2.5  # Time to burn into tablet
 const EMBEDDED_DURATION: float = 12.0  # How long before fading
@@ -49,6 +49,9 @@ var _note_cooldown: float = 0.0
 var _tablet_scratches: Array = []  # Permanent background scratches
 
 func _ready() -> void:
+	# Add to group so CreatureViewer can notify us
+	add_to_group("observer_notes")
+
 	# Connect to game events
 	if GameManager.has_signal("biomolecule_collected"):
 		GameManager.biomolecule_collected.connect(_on_biomolecule_collected)
@@ -82,7 +85,7 @@ func _connect_player_signals() -> void:
 		if player.has_signal("reproduction_complete"):
 			player.reproduction_complete.connect(_on_reproduction)
 
-func _on_biomolecule_collected(_type: String, _amount: int) -> void:
+func _on_biomolecule_collected(_item: Dictionary) -> void:
 	if randf() < 0.05:  # 5% chance
 		_queue_note()
 

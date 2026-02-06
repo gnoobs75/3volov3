@@ -13,6 +13,7 @@
 [ext_resource type="Script" path="res://scripts/cell_stage/loot_notifier.gd" id="11"]
 [ext_resource type="Script" path="res://scripts/cell_stage/micro_life.gd" id="12"]
 [ext_resource type="Script" path="res://scripts/cell_stage/observer_notes.gd" id="13"]
+[ext_resource type="Script" path="res://scripts/cell_stage/creature_viewer.gd" id="14"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_player"]
 radius = 18.0
@@ -222,14 +223,25 @@ size_flags_horizontal = 0
 mouse_filter = 2
 theme_override_styles/panel = SubResource("StyleBoxEmpty_panel")
 
-[node name="ObserverNotes" type="Control" parent="HUD/ThreePaneLayout/RightPane"]
+[node name="RightVBox" type="VBoxContainer" parent="HUD/ThreePaneLayout/RightPane"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+theme_override_constants/separation = 0
+
+[node name="ObserverNotes" type="Control" parent="HUD/ThreePaneLayout/RightPane/RightVBox"]
+custom_minimum_size = Vector2(320, 680)
+layout_mode = 2
 script = ExtResource("13")
+
+[node name="CreatureViewer" type="Control" parent="HUD/ThreePaneLayout/RightPane/RightVBox"]
+custom_minimum_size = Vector2(320, 400)
+layout_mode = 2
+size_flags_vertical = 3
+script = ExtResource("14")
 
 [node name="CRISPREditor" parent="." instance=ExtResource("4")]
 

@@ -7,6 +7,10 @@ var _bg_cells: Array[Dictionary] = []
 func _ready() -> void:
 	$VBoxContainer/StartButton.pressed.connect(_on_start)
 	$VBoxContainer/QuitButton.pressed.connect(_on_quit)
+	# Music toggle
+	var music_toggle: CheckButton = $VBoxContainer/MusicToggle
+	music_toggle.button_pressed = AudioManager.is_using_music_files()
+	music_toggle.toggled.connect(_on_music_toggle)
 	# Generate background decorative cells
 	for i in range(20):
 		_bg_cells.append({
@@ -48,3 +52,6 @@ func _on_start() -> void:
 
 func _on_quit() -> void:
 	get_tree().quit()
+
+func _on_music_toggle(enabled: bool) -> void:
+	AudioManager.set_use_music_files(enabled)

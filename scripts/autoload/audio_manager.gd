@@ -1,6 +1,6 @@
 extends Node
-## Autoload: Procedural audio manager for all game sounds.
-## Generates sounds from waveforms — no external audio files needed.
+## Autoload: Audio manager for all game sounds.
+## Supports both procedural synthesis and music file playback.
 
 const SAMPLE_RATE: int = 22050
 const BGM_SAMPLE_RATE: int = 22050
@@ -9,11 +9,36 @@ const BGM_SAMPLE_RATE: int = 22050
 var _sfx_players: Array[AudioStreamPlayer] = []
 const SFX_POOL_SIZE: int = 8
 
-# BGM
+# Procedural BGM
 var _bgm_player: AudioStreamPlayer
 var _bgm_generator: AudioStreamGenerator
 var _bgm_playback: AudioStreamGeneratorPlayback
 var _bgm_time: float = 0.0
+
+# === MUSIC FILE SYSTEM ===
+# Music mode: true = file-based, false = procedural
+var use_music_files: bool = false
+
+# Music players (two for crossfading)
+var _music_player_a: AudioStreamPlayer
+var _music_player_b: AudioStreamPlayer
+var _active_music_player: AudioStreamPlayer
+var _crossfade_time: float = 0.0
+var _crossfade_duration: float = 2.0
+var _is_crossfading: bool = false
+
+# Music tracks by category
+var _music_tracks: Dictionary = {
+	"menu": "res://audio/music/menu.ogg",
+	"cell_stage": "res://audio/music/cell_stage.ogg",
+	"evolution": "res://audio/music/evolution.ogg",
+	"death": "res://audio/music/death.ogg",
+	"victory": "res://audio/music/victory.ogg",
+}
+
+# Current music state
+var _current_music_key: String = ""
+const MUSIC_VOLUME_DB: float = -8.0
 
 # Pre-generated sound buffers
 var _buf_collect: PackedFloat32Array
@@ -27,6 +52,17 @@ var _buf_beam: PackedFloat32Array
 var _buf_jet: PackedFloat32Array
 var _buf_bubble: PackedFloat32Array
 var _buf_sprint: PackedFloat32Array
+
+# Observer vocalization buffers
+var _buf_observer_gasp: PackedFloat32Array
+var _buf_observer_hmm: PackedFloat32Array
+var _buf_observer_laugh: PackedFloat32Array
+var _buf_observer_impressed: PackedFloat32Array
+var _buf_observer_distressed: PackedFloat32Array
+
+# Observer sound cooldown
+var _observer_cooldown: float = 0.0
+const OBSERVER_COOLDOWN_TIME: float = 4.0
 
 # Beam looping state
 var _beam_playing: bool = false
@@ -68,8 +104,36 @@ func _ready() -> void:
 	_buf_bubble = SynthSounds.gen_bubble()
 	_buf_sprint = SynthSounds.gen_sprint()
 
-	# Setup BGM
+	# Pre-generate observer vocalization buffers
+	_buf_observer_gasp = SynthSounds.gen_observer_gasp()
+	_buf_observer_hmm = SynthSounds.gen_observer_hmm()
+	_buf_observer_laugh = SynthSounds.gen_observer_laugh()
+	_buf_observer_impressed = SynthSounds.gen_observer_impressed()
+	_buf_observer_distressed = SynthSounds.gen_observer_distressed()
+
+	# Setup music players for file-based music
+	_setup_music_players()
+
+	# Setup procedural BGM
 	_setup_bgm()
+
+	# Connect to GameManager for stage changes
+	if GameManager:
+		GameManager.stage_changed.connect(_on_stage_changed)
+
+func _setup_music_players() -> void:
+	# Create two music players for crossfading
+	_music_player_a = AudioStreamPlayer.new()
+	_music_player_a.bus = "Master"
+	_music_player_a.volume_db = MUSIC_VOLUME_DB
+	add_child(_music_player_a)
+
+	_music_player_b = AudioStreamPlayer.new()
+	_music_player_b.bus = "Master"
+	_music_player_b.volume_db = -80.0  # Start silent
+	add_child(_music_player_b)
+
+	_active_music_player = _music_player_a
 
 func _setup_bgm() -> void:
 	_bgm_player = AudioStreamPlayer.new()
@@ -81,14 +145,41 @@ func _setup_bgm() -> void:
 	_bgm_generator.mix_rate = BGM_SAMPLE_RATE
 	_bgm_generator.buffer_length = 0.5
 	_bgm_player.stream = _bgm_generator
-	_bgm_player.play()
-	_bgm_playback = _bgm_player.get_stream_playback()
+
+	# Only play procedural BGM if not using music files
+	if not use_music_files:
+		_bgm_player.play()
+		_bgm_playback = _bgm_player.get_stream_playback()
 
 func _process(delta: float) -> void:
-	_fill_bgm_buffer(delta)
+	# Handle procedural BGM or crossfade
+	if use_music_files:
+		_update_crossfade(delta)
+	else:
+		_fill_bgm_buffer(delta)
+
 	# Random ambient bubbles
 	if randf() < delta * 0.3:  # ~0.3 bubbles per second
 		play_bubble()
+	# Update observer cooldown
+	if _observer_cooldown > 0:
+		_observer_cooldown -= delta
+
+func _update_crossfade(delta: float) -> void:
+	if not _is_crossfading:
+		return
+
+	_crossfade_time += delta
+	var t: float = clampf(_crossfade_time / _crossfade_duration, 0.0, 1.0)
+
+	# Crossfade volumes
+	var fade_out_player: AudioStreamPlayer = _music_player_b if _active_music_player == _music_player_a else _music_player_a
+	_active_music_player.volume_db = lerpf(-80.0, MUSIC_VOLUME_DB, t)
+	fade_out_player.volume_db = lerpf(MUSIC_VOLUME_DB, -80.0, t)
+
+	if t >= 1.0:
+		_is_crossfading = false
+		fade_out_player.stop()
 
 func _fill_bgm_buffer(_delta: float) -> void:
 	if not _bgm_playback:
@@ -208,3 +299,157 @@ func stop_beam() -> void:
 		return
 	_beam_playing = false
 	_beam_player.stop()
+
+## === OBSERVER VOCALIZATION FUNCTIONS ===
+
+func _can_play_observer() -> bool:
+	return _observer_cooldown <= 0
+
+func _play_observer_sound(buf: PackedFloat32Array, volume_db: float = -4.0) -> void:
+	if not _can_play_observer():
+		return
+	_observer_cooldown = OBSERVER_COOLDOWN_TIME
+	_play_buffer(buf, volume_db)
+
+func play_observer_gasp() -> void:
+	_play_observer_sound(_buf_observer_gasp, -3.0)
+
+func play_observer_hmm() -> void:
+	_play_observer_sound(_buf_observer_hmm, -5.0)
+
+func play_observer_laugh() -> void:
+	_play_observer_sound(_buf_observer_laugh, -4.0)
+
+func play_observer_impressed() -> void:
+	_play_observer_sound(_buf_observer_impressed, -4.0)
+
+func play_observer_distressed() -> void:
+	_play_observer_sound(_buf_observer_distressed, -3.0)
+
+## === MUSIC FILE PLAYBACK ===
+
+## Play a music track by key (crossfades from current track)
+func play_music(key: String) -> void:
+	if not use_music_files:
+		return
+	if key == _current_music_key:
+		return
+	if key not in _music_tracks:
+		push_warning("AudioManager: Unknown music key: " + key)
+		return
+
+	var path: String = _music_tracks[key]
+	if not ResourceLoader.exists(path):
+		push_warning("AudioManager: Music file not found: " + path)
+		return
+
+	_current_music_key = key
+	var stream: AudioStream = load(path)
+
+	# Swap active player and start crossfade
+	var next_player: AudioStreamPlayer = _music_player_b if _active_music_player == _music_player_a else _music_player_a
+	next_player.stream = stream
+	next_player.volume_db = -80.0
+	next_player.play()
+
+	_active_music_player = next_player
+	_crossfade_time = 0.0
+	_is_crossfading = true
+
+## Stop all music with fade out
+func stop_music() -> void:
+	_current_music_key = ""
+	_is_crossfading = false
+	# Quick fade out
+	var tween := create_tween()
+	tween.tween_property(_music_player_a, "volume_db", -80.0, 0.5)
+	tween.parallel().tween_property(_music_player_b, "volume_db", -80.0, 0.5)
+	tween.tween_callback(func():
+		_music_player_a.stop()
+		_music_player_b.stop()
+	)
+
+## Play a one-shot event music (like death or victory jingle)
+func play_event_music(key: String) -> void:
+	if not use_music_files:
+		return
+	if key not in _music_tracks:
+		return
+
+	var path: String = _music_tracks[key]
+	if not ResourceLoader.exists(path):
+		return
+
+	# Use an SFX player for one-shot event music
+	var stream: AudioStream = load(path)
+	for p in _sfx_players:
+		if not p.playing:
+			p.stream = stream
+			p.volume_db = MUSIC_VOLUME_DB
+			p.play()
+			return
+
+## === MUSIC/PROCEDURAL TOGGLE ===
+
+## Toggle between procedural and file-based music
+func set_use_music_files(enabled: bool) -> void:
+	if use_music_files == enabled:
+		return
+
+	use_music_files = enabled
+
+	if enabled:
+		# Stop procedural BGM
+		_bgm_player.stop()
+		_bgm_playback = null
+		# Start file-based music for current stage
+		_start_music_for_current_stage()
+	else:
+		# Stop file music
+		stop_music()
+		# Restart procedural BGM
+		_bgm_player.stream = _bgm_generator
+		_bgm_player.play()
+		_bgm_playback = _bgm_player.get_stream_playback()
+
+func toggle_music_mode() -> void:
+	set_use_music_files(not use_music_files)
+
+func is_using_music_files() -> bool:
+	return use_music_files
+
+## === STAGE-BASED MUSIC ===
+
+func _on_stage_changed(new_stage: String) -> void:
+	if not use_music_files:
+		return
+	match new_stage:
+		"menu":
+			play_music("menu")
+		"intro":
+			play_music("menu")  # Use menu music for intro too
+		"cell":
+			play_music("cell_stage")
+		"ocean_stub":
+			play_music("victory")
+
+func _start_music_for_current_stage() -> void:
+	if not GameManager:
+		return
+	match GameManager.current_stage:
+		GameManager.Stage.MENU:
+			play_music("menu")
+		GameManager.Stage.INTRO:
+			play_music("menu")
+		GameManager.Stage.CELL:
+			play_music("cell_stage")
+		GameManager.Stage.OCEAN_STUB:
+			play_music("victory")
+
+## Register a custom music track
+func register_music_track(key: String, path: String) -> void:
+	_music_tracks[key] = path
+
+## Get list of registered music keys
+func get_music_keys() -> Array:
+	return _music_tracks.keys()
