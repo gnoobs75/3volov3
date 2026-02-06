@@ -223,13 +223,6 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 func _draw() -> void:
-	# Tablet background
-	var bg_color := Color(0.02, 0.03, 0.05, 0.92)
-	draw_rect(Rect2(0, 0, PANE_WIDTH, size.y), bg_color)
-
-	# Border glow
-	draw_line(Vector2(0, 0), Vector2(0, size.y), Color(0.15, 0.3, 0.4, 0.5), 2.0)
-
 	# Tablet scratches (permanent texture)
 	for scratch in _tablet_scratches:
 		draw_line(scratch.start, scratch.end, Color(0.3, 0.4, 0.5, scratch.alpha), 0.5)

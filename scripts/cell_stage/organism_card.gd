@@ -239,9 +239,6 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	var font := ThemeDB.fallback_font
 
-	# Background
-	draw_rect(Rect2(0, 0, CARD_WIDTH, size.y), Color(0.015, 0.025, 0.04, 0.9))
-
 	# === TOP: Hologram Viewer ===
 	_draw_hologram_viewer(font)
 

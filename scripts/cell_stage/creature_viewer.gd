@@ -351,16 +351,6 @@ func _process(delta: float) -> void:
 		queue_redraw()
 
 func _draw() -> void:
-	# Background
-	var bg_alpha: float = 0.9
-	if _display_timer > DISPLAY_DURATION:
-		bg_alpha *= 1.0 - ((_display_timer - DISPLAY_DURATION) / FADE_DURATION)
-
-	draw_rect(Rect2(0, 0, VIEWER_WIDTH, VIEWER_HEIGHT), Color(0.015, 0.025, 0.04, bg_alpha))
-
-	# Border
-	draw_line(Vector2(0, 0), Vector2(0, VIEWER_HEIGHT), Color(0.15, 0.3, 0.4, 0.5 * bg_alpha), 2.0)
-
 	if not _is_displaying:
 		_draw_idle_state()
 		return

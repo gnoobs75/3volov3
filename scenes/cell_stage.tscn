@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3 uid="uid://cell_stage"]
+[gd_scene load_steps=16 format=3 uid="uid://cell_stage"]
 
 [ext_resource type="Script" path="res://scripts/cell_stage/cell_stage_manager.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/cell_stage/player_cell.gd" id="2"]
@@ -34,7 +34,15 @@ shader_parameter/deep_color = Color(0.01, 0.03, 0.06, 1)
 shader_parameter/vent_color = Color(0.15, 0.06, 0.02, 1)
 shader_parameter/particle_color = Color(0.2, 0.5, 0.8, 0.3)
 
-[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_panel"]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_left_panel"]
+bg_color = Color(0.015, 0.025, 0.04, 1.0)
+border_width_right = 2
+border_color = Color(0.12, 0.25, 0.35, 0.7)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_right_panel"]
+bg_color = Color(0.015, 0.025, 0.04, 1.0)
+border_width_left = 2
+border_color = Color(0.12, 0.25, 0.35, 0.7)
 
 [node name="CellStage" type="Node2D"]
 script = ExtResource("1")
@@ -82,7 +90,7 @@ grow_vertical = 2
 custom_minimum_size = Vector2(280, 0)
 size_flags_horizontal = 0
 mouse_filter = 2
-theme_override_styles/panel = SubResource("StyleBoxEmpty_panel")
+theme_override_styles/panel = SubResource("StyleBoxFlat_left_panel")
 
 [node name="LeftVBox" type="VBoxContainer" parent="HUD/ThreePaneLayout/LeftPane"]
 layout_mode = 1
@@ -223,7 +231,7 @@ script = ExtResource("11")
 custom_minimum_size = Vector2(320, 0)
 size_flags_horizontal = 0
 mouse_filter = 2
-theme_override_styles/panel = SubResource("StyleBoxEmpty_panel")
+theme_override_styles/panel = SubResource("StyleBoxFlat_right_panel")
 
 [node name="RightVBox" type="VBoxContainer" parent="HUD/ThreePaneLayout/RightPane"]
 layout_mode = 1
