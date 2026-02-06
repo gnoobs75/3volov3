@@ -317,11 +317,11 @@ func _update_mood(delta: float) -> void:
 	if _mood_timer <= 0:
 		var energy_ratio: float = energy / max_energy
 		var health_ratio: float = health / max_health
-		# Priority-based mood selection
-		if attached_parasites.size() >= 2:
-			mood = Mood.SICK  # Parasites make you look sick
-		elif attached_parasites.size() >= 4:
+		# Priority-based mood selection (check higher counts first)
+		if attached_parasites.size() >= 4:
 			mood = Mood.SCARED  # Near death from parasites
+		elif attached_parasites.size() >= 2:
+			mood = Mood.SICK  # Parasites make you look sick
 		elif is_sprinting and velocity.length() > move_speed * SPRINT_SPEED_MULT * 0.7:
 			mood = Mood.ZOOM  # Speed lines and focused face
 		elif is_energy_depleted:
@@ -750,6 +750,8 @@ func _fire_toxin() -> void:
 	_set_mood(Mood.ANGRY, 0.8)
 	_mouth_open = 0.9
 	AudioManager.play_toxin()
+	if camera and camera.has_method("shake"):
+		camera.shake(4.0, 0.2)
 	for body in $ToxinArea.get_overlapping_bodies():
 		if body.has_method("take_damage"):
 			body.take_damage(toxin_damage)
@@ -774,9 +776,13 @@ func take_damage(amount: float) -> void:
 	_set_mood(Mood.HURT, 0.6)
 	_mouth_open = 0.7
 	AudioManager.play_hurt()
+	if camera and camera.has_method("shake"):
+		camera.shake(clampf(amount * 0.4, 2.0, 8.0), 0.25)
 	damaged.emit(amount)
 	if health <= 0:
 		AudioManager.play_death()
+		if camera and camera.has_method("shake"):
+			camera.shake(12.0, 0.5)
 		died.emit()
 
 func heal(amount: float) -> void:
@@ -830,6 +836,8 @@ func _try_eat_prey() -> void:
 				_mouth_open = 1.0
 				_spawn_collection_vfx(nutrition)
 				AudioManager.play_eat()
+				if camera and camera.has_method("shake"):
+					camera.shake(3.0, 0.15)
 				prey_killed.emit()
 				prey.queue_free()
 				break  # One per frame
@@ -1194,6 +1202,8 @@ func _on_evolution_applied(mutation: Dictionary) -> void:
 	_feed_flash = 1.0
 	_set_mood(Mood.EXCITED, 2.0)
 	_mouth_open = 0.8
+	if camera and camera.has_method("shake"):
+		camera.shake(6.0, 0.4)
 	# Grow cell slightly for larger_membrane
 	if mutation.get("visual", "") == "larger_membrane":
 		_cell_radius += 3.0

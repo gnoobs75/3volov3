@@ -53,6 +53,15 @@ var _buf_jet: PackedFloat32Array
 var _buf_bubble: PackedFloat32Array
 var _buf_sprint: PackedFloat32Array
 
+# Phase 1 polish sound buffers
+var _buf_evolution_fanfare: PackedFloat32Array
+var _buf_sensory_upgrade: PackedFloat32Array
+var _buf_heartbeat: PackedFloat32Array
+var _buf_ui_hover: PackedFloat32Array
+var _buf_ui_select: PackedFloat32Array
+var _buf_ui_open: PackedFloat32Array
+var _buf_energy_warning: PackedFloat32Array
+
 # Observer vocalization buffers
 var _buf_observer_gasp: PackedFloat32Array
 var _buf_observer_hmm: PackedFloat32Array
@@ -103,6 +112,15 @@ func _ready() -> void:
 	_buf_jet = SynthSounds.gen_jet()
 	_buf_bubble = SynthSounds.gen_bubble()
 	_buf_sprint = SynthSounds.gen_sprint()
+
+	# Pre-generate Phase 1 polish sounds
+	_buf_evolution_fanfare = SynthSounds.gen_evolution_fanfare()
+	_buf_sensory_upgrade = SynthSounds.gen_sensory_upgrade()
+	_buf_heartbeat = SynthSounds.gen_heartbeat()
+	_buf_ui_hover = SynthSounds.gen_ui_hover()
+	_buf_ui_select = SynthSounds.gen_ui_select()
+	_buf_ui_open = SynthSounds.gen_ui_open()
+	_buf_energy_warning = SynthSounds.gen_energy_warning()
 
 	# Pre-generate observer vocalization buffers
 	_buf_observer_gasp = SynthSounds.gen_observer_gasp()
@@ -281,6 +299,29 @@ func play_bubble() -> void:
 
 func play_sprint() -> void:
 	_play_buffer(_buf_sprint, -6.0)
+
+## --- Phase 1 Polish sounds ---
+
+func play_evolution_fanfare() -> void:
+	_play_buffer(_buf_evolution_fanfare, -1.0)
+
+func play_sensory_upgrade() -> void:
+	_play_buffer(_buf_sensory_upgrade, -2.0)
+
+func play_heartbeat() -> void:
+	_play_buffer(_buf_heartbeat, -2.0)
+
+func play_ui_hover() -> void:
+	_play_buffer(_buf_ui_hover, -8.0)
+
+func play_ui_select() -> void:
+	_play_buffer(_buf_ui_select, -4.0)
+
+func play_ui_open() -> void:
+	_play_buffer(_buf_ui_open, -4.0)
+
+func play_energy_warning() -> void:
+	_play_buffer(_buf_energy_warning, -3.0)
 
 ## Beam sound (looping while active)
 func start_beam() -> void:

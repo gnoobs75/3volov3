@@ -273,6 +273,139 @@ static func gen_observer_impressed() -> PackedFloat32Array:
 		buf[i] = s * env * 0.45
 	return buf
 
+## === PHASE 1 POLISH: NEW SOUNDS ===
+
+## Evolution fanfare - triumphant ascending arpeggio
+static func gen_evolution_fanfare() -> PackedFloat32Array:
+	var dur: float = 0.8
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	var phase3: float = 0.0
+	# Three-note ascending arpeggio: C5, E5, G5 then shimmer
+	var notes: Array = [523.25, 659.25, 783.99]
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.02, 0.1, 0.6, 0.3, dur)
+		# Sweep through the arpeggio
+		var note_t: float = clampf(t / 0.5, 0.0, 1.0)  # First 0.5s for notes
+		var note_idx: int = mini(int(note_t * 3.0), 2)
+		var freq: float = notes[note_idx]
+		# Add shimmer in the tail
+		if t > 0.4:
+			freq += sin(t * 20.0) * 30.0
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 1.5) / SAMPLE_RATE  # Fifth
+		phase3 += (freq * 2.0) / SAMPLE_RATE  # Octave
+		var s: float = sine(phase) * 0.3 + sine(phase2) * 0.15 + sine(phase3) * 0.08 + triangle(phase * 0.5) * 0.05
+		buf[i] = s * env * 0.6
+	return buf
+
+## Sensory upgrade - ethereal ascending tone with sparkle
+static func gen_sensory_upgrade() -> PackedFloat32Array:
+	var dur: float = 0.6
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.05, 0.15, 0.5, 0.2, dur)
+		# Slow rising ethereal tone
+		var freq: float = lerpf(300.0, 600.0, t / dur)
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 1.498) / SAMPLE_RATE  # Slightly detuned fifth = shimmer
+		# High sparkle overlay
+		var sparkle: float = sin(t * 3000.0 * TAU) * 0.03 * maxf(0.0, (t - 0.3) / 0.3)
+		var s: float = sine(phase) * 0.3 + sine(phase2) * 0.2 + sparkle
+		buf[i] = s * env * 0.5
+	return buf
+
+## Heartbeat - low thump for health warning
+static func gen_heartbeat() -> PackedFloat32Array:
+	var dur: float = 0.35
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Double thump: two short pulses
+		var env1: float = exp(-t * 20.0) * 0.8
+		var env2: float = exp(-(t - 0.15) * 20.0) * 0.5 if t > 0.15 else 0.0
+		var env: float = env1 + env2
+		var freq: float = 50.0 + exp(-t * 10.0) * 30.0
+		phase += freq / SAMPLE_RATE
+		var s: float = sine(phase) * 0.7 + noise() * 0.05 * env
+		buf[i] = s * env * 0.6
+	return buf
+
+## UI hover - tiny bright tick
+static func gen_ui_hover() -> PackedFloat32Array:
+	var dur: float = 0.06
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = exp(-t * 40.0)
+		phase += 1200.0 / SAMPLE_RATE
+		buf[i] = sine(phase) * env * 0.3
+	return buf
+
+## UI select - confirming click
+static func gen_ui_select() -> PackedFloat32Array:
+	var dur: float = 0.15
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.005, 0.03, 0.3, 0.06, dur)
+		var freq: float = lerpf(600.0, 900.0, t / dur)
+		phase += freq / SAMPLE_RATE
+		var s: float = sine(phase) * 0.5 + sine(phase * 2.0) * 0.15
+		buf[i] = s * env * 0.5
+	return buf
+
+## UI open - soft whoosh-chime for panel opening
+static func gen_ui_open() -> PackedFloat32Array:
+	var dur: float = 0.25
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.02, 0.05, 0.4, 0.1, dur)
+		var freq: float = lerpf(400.0, 700.0, t / dur)
+		phase += freq / SAMPLE_RATE
+		var s: float = sine(phase) * 0.3 + noise() * 0.06 * exp(-t * 12.0)
+		buf[i] = s * env * 0.4
+	return buf
+
+## Energy warning - urgent low beep
+static func gen_energy_warning() -> PackedFloat32Array:
+	var dur: float = 0.2
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.01, 0.03, 0.5, 0.08, dur)
+		# Two-tone alert
+		var freq: float = 220.0 if fmod(t, 0.1) < 0.05 else 180.0
+		phase += freq / SAMPLE_RATE
+		var s: float = triangle(phase) * 0.4 + sine(phase * 2.0) * 0.15
+		buf[i] = s * env * 0.4
+	return buf
+
 ## Observer distressed - worried warble (concern for specimen)
 static func gen_observer_distressed() -> PackedFloat32Array:
 	var dur: float = 0.7

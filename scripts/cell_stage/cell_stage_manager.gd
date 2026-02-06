@@ -28,12 +28,53 @@ var chunk_manager: Node2D = null
 var _biome_label_timer: float = 0.0
 var _current_biome_name: String = ""
 
+# Sensory upgrade notification
+var _sensory_notify_text: String = ""
+var _sensory_notify_timer: float = 0.0
+var _sensory_notify_alpha: float = 0.0
+var _last_sensory_level: int = 0
+
+# Death recap
+var _death_recap_active: bool = false
+var _death_recap_timer: float = 0.0
+var _death_recap_data: Dictionary = {}
+var _session_time: float = 0.0
+var _session_kills: int = 0
+var _session_collections: int = 0
+
+# Low health warning
+var _low_health_pulse: float = 0.0
+var _heartbeat_timer: float = 0.0
+var _energy_warning_played: bool = false
+
+var _overlay: Control = null  # For drawing screen-space effects
+
 func _ready() -> void:
 	add_to_group("cell_stage_manager")
 	player.reproduced.connect(_on_player_reproduced)
 	player.organelle_collected.connect(_on_organelle_collected)
 	player.died.connect(_on_player_died)
 	player.parasites_changed.connect(_on_parasites_changed)
+	player.prey_killed.connect(_on_prey_killed)
+	player.food_consumed.connect(_on_food_collected)
+
+	# Connect evolution signals
+	GameManager.evolution_applied.connect(_on_evolution_applied)
+	_last_sensory_level = GameManager.sensory_level
+
+	# Create overlay for screen-space effects (health pulse, sensory popup, death recap)
+	var overlay_layer := CanvasLayer.new()
+	overlay_layer.layer = 8
+	overlay_layer.name = "OverlayLayer"
+	add_child(overlay_layer)
+	var OverlayScript := preload("res://scripts/cell_stage/screen_overlay.gd")
+	_overlay = Control.new()
+	_overlay.set_script(OverlayScript)
+	_overlay.name = "ScreenOverlay"
+	_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_overlay.draw_callback = _draw_overlay
+	overlay_layer.add_child(_overlay)
 
 	# Create and setup chunk manager
 	var ChunkManagerScript := preload("res://scripts/cell_stage/world_chunk_manager.gd")
@@ -96,6 +137,40 @@ func _process(delta: float) -> void:
 			fps_label.text = "FPS: %d" % current_fps
 
 		fps_label.add_theme_color_override("font_color", fps_color)
+
+	# Session time
+	if not _death_recap_active:
+		_session_time += delta
+
+	# Sensory notification fade
+	if _sensory_notify_timer > 0:
+		_sensory_notify_timer -= delta
+		_sensory_notify_alpha = clampf(_sensory_notify_timer / 2.5, 0.0, 1.0)
+		if _sensory_notify_timer < 0.5:
+			_sensory_notify_alpha = _sensory_notify_timer / 0.5
+
+	# Low health warning pulse
+	if player.health > 0 and player.health / player.max_health < 0.3:
+		_low_health_pulse += delta * 4.0
+		_heartbeat_timer -= delta
+		if _heartbeat_timer <= 0:
+			_heartbeat_timer = 0.8
+			AudioManager.play_heartbeat()
+	else:
+		_low_health_pulse = 0.0
+		_heartbeat_timer = 0.0
+
+	# Energy warning (one-shot when crossing 25% threshold)
+	var energy_ratio: float = player.energy / player.max_energy
+	if energy_ratio < 0.25 and not _energy_warning_played:
+		_energy_warning_played = true
+		AudioManager.play_energy_warning()
+	elif energy_ratio > 0.35:
+		_energy_warning_played = false
+
+	# Request overlay redraw
+	if _overlay:
+		_overlay.queue_redraw()
 
 	# Keep background centered on player for infinite world feel
 	if background:
@@ -161,11 +236,88 @@ func _on_parasites_changed(count: int) -> void:
 	else:
 		parasite_label.text = ""
 
+func _on_prey_killed() -> void:
+	_session_kills += 1
+
+func _on_food_collected() -> void:
+	_session_collections += 1
+
+func _on_evolution_applied(mutation: Dictionary) -> void:
+	# Check if sensory level changed
+	if GameManager.sensory_level > _last_sensory_level:
+		var tier: Dictionary = GameManager.get_sensory_tier()
+		_sensory_notify_text = tier.get("name", "Unknown") + " UNLOCKED"
+		_sensory_notify_timer = 3.0
+		_sensory_notify_alpha = 1.0
+		AudioManager.play_sensory_upgrade()
+		_last_sensory_level = GameManager.sensory_level
+
 func _on_player_died() -> void:
+	_death_recap_active = true
+	_death_recap_timer = 3.5
+	var cause: String = "Cell destroyed"
 	if player.attached_parasites.size() >= 5:
-		stats_label.text = "PARASITIC TAKEOVER - Cell lost!"
-	else:
-		stats_label.text = "CELL DIED - Restarting..."
-	await get_tree().create_timer(2.0).timeout
+		cause = "Parasitic takeover"
+	_death_recap_data = {
+		"cause": cause,
+		"time": _session_time,
+		"kills": _session_kills,
+		"collections": _session_collections,
+		"mutations": GameManager.active_mutations.size(),
+	}
+	# Wait for recap to display, then restart
+	await get_tree().create_timer(3.5).timeout
+	_death_recap_active = false
+	_session_time = 0.0
+	_session_kills = 0
+	_session_collections = 0
 	GameManager.reset_stats()
 	GameManager.go_to_cell_stage()
+
+func _draw_overlay(ctl: Control) -> void:
+	var vp := ctl.get_viewport_rect().size
+	var font := ThemeDB.fallback_font
+
+	# --- Low health red pulse vignette ---
+	if _low_health_pulse > 0:
+		var pulse: float = 0.5 + 0.5 * sin(_low_health_pulse)
+		var alpha: float = pulse * 0.25
+		var grad_w: float = vp.x * 0.15
+		var grad_h: float = vp.y * 0.15
+		ctl.draw_rect(Rect2(0, 0, vp.x, grad_h), Color(0.8, 0.05, 0.05, alpha * 0.6))
+		ctl.draw_rect(Rect2(0, vp.y - grad_h, vp.x, grad_h), Color(0.8, 0.05, 0.05, alpha * 0.6))
+		ctl.draw_rect(Rect2(0, 0, grad_w, vp.y), Color(0.8, 0.05, 0.05, alpha * 0.4))
+		ctl.draw_rect(Rect2(vp.x - grad_w, 0, grad_w, vp.y), Color(0.8, 0.05, 0.05, alpha * 0.4))
+
+	# --- Sensory upgrade notification ---
+	if _sensory_notify_timer > 0 and _sensory_notify_alpha > 0.01:
+		var text_size := font.get_string_size(_sensory_notify_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 24)
+		var tx: float = (vp.x - text_size.x) * 0.5
+		var ty: float = vp.y * 0.35
+		var pill_w: float = text_size.x + 40.0
+		var pill_h: float = 40.0
+		ctl.draw_rect(Rect2(tx - 20, ty - 28, pill_w, pill_h), Color(0.05, 0.1, 0.2, 0.7 * _sensory_notify_alpha))
+		ctl.draw_rect(Rect2(tx - 21, ty - 29, pill_w + 2, 1), Color(0.4, 0.7, 1.0, _sensory_notify_alpha * 0.5))
+		ctl.draw_rect(Rect2(tx - 21, ty + 11, pill_w + 2, 1), Color(0.4, 0.7, 1.0, _sensory_notify_alpha * 0.5))
+		ctl.draw_string(font, Vector2(tx, ty), _sensory_notify_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color(0.5, 0.9, 1.0, _sensory_notify_alpha))
+
+	# --- Death recap overlay ---
+	if _death_recap_active and _death_recap_data.size() > 0:
+		ctl.draw_rect(Rect2(0, 0, vp.x, vp.y), Color(0.0, 0.0, 0.02, 0.6))
+		var cy: float = vp.y * 0.35
+		var title: String = _death_recap_data.get("cause", "Cell destroyed")
+		var ts := font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 28)
+		ctl.draw_string(font, Vector2((vp.x - ts.x) * 0.5, cy), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color(0.9, 0.2, 0.2, 0.95))
+		cy += 50.0
+		var time_s: float = _death_recap_data.get("time", 0.0)
+		var time_str: String = "%d:%02d" % [int(time_s) / 60, int(time_s) % 60]
+		var stats: Array = [
+			"Time survived: " + time_str,
+			"Kills: %d" % _death_recap_data.get("kills", 0),
+			"Collections: %d" % _death_recap_data.get("collections", 0),
+			"Mutations: %d" % _death_recap_data.get("mutations", 0),
+		]
+		for line in stats:
+			var ls := font.get_string_size(line, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
+			ctl.draw_string(font, Vector2((vp.x - ls.x) * 0.5, cy), line, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.6, 0.8, 0.9, 0.85))
+			cy += 24.0

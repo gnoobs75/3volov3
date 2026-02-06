@@ -17,6 +17,8 @@ var _card_draw: Control = null
 var _bg_particles: Array = []  # [{pos, vel, life, color, size}]
 var _selected_index: int = -1
 var _select_anim: float = 0.0  # 0→1 selection flash
+var _flash_alpha: float = 0.0  # Screen flash on open
+var _prev_hover: int = -1  # Track hover changes for sound
 
 func _ready() -> void:
 	visible = false
@@ -41,14 +43,21 @@ func _on_evolution_triggered(category_key: String) -> void:
 	_active = true
 	_appear_t = 0.0
 	_hover_index = -1
+	_prev_hover = -1
+	_flash_alpha = 1.0
 	visible = true
 	get_tree().paused = true
+	AudioManager.play_evolution_fanfare()
+	AudioManager.play_ui_open()
 
 func _process(delta: float) -> void:
 	if not _active:
 		return
 	_time += delta
 	_appear_t = minf(_appear_t + delta * 3.0, 1.0)
+
+	# Flash decay
+	_flash_alpha = maxf(_flash_alpha - delta * 3.0, 0.0)
 
 	# Selection animation
 	if _selected_index >= 0:
@@ -94,8 +103,13 @@ func _on_gui_input(event: InputEvent) -> void:
 			if _get_card_rect(i).has_point(event.position):
 				_hover_index = i
 				break
+		# Play hover sound when hovering a new card
+		if _hover_index != _prev_hover and _hover_index >= 0:
+			AudioManager.play_ui_hover()
+		_prev_hover = _hover_index
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if _hover_index >= 0 and _hover_index < _choices.size():
+			AudioManager.play_ui_select()
 			_select_choice(_hover_index)
 
 func _select_choice(index: int) -> void:
@@ -122,6 +136,10 @@ func _draw_cards() -> void:
 
 	# Dim background
 	_card_draw.draw_rect(Rect2(0, 0, vp_size.x, vp_size.y), Color(0.0, 0.02, 0.05, 0.75 * _appear_t))
+
+	# Evolution flash overlay (bright white/cyan flash that fades out)
+	if _flash_alpha > 0.01:
+		_card_draw.draw_rect(Rect2(0, 0, vp_size.x, vp_size.y), Color(0.4, 0.8, 1.0, _flash_alpha * 0.4))
 
 	# Background floating particles
 	for p in _bg_particles:
