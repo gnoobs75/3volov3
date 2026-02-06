@@ -73,7 +73,9 @@ func _physics_process(delta: float) -> void:
 				var strength: float = (1.0 - dist / repel_range) * repel_force * 1.5
 				var push_dir: Vector2 = (p.global_position - global_position).normalized()
 				p.global_position += push_dir * strength * delta
-	queue_redraw()
+	var _vp_cam := get_viewport().get_camera_2d()
+	if not _vp_cam or global_position.distance_squared_to(_vp_cam.global_position) < 1440000.0:
+		queue_redraw()
 
 func _strip_parasites(player: Node2D) -> void:
 	if not player.has_method("attach_parasite"):

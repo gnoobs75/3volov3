@@ -128,7 +128,9 @@ func _physics_process(delta: float) -> void:
 		_lunge_stretch = maxf(_lunge_stretch - delta * 4.0, 0.0)
 
 	move_and_slide()
-	queue_redraw()
+	var _vp_cam := get_viewport().get_camera_2d()
+	if not _vp_cam or global_position.distance_squared_to(_vp_cam.global_position) < 1440000.0:
+		queue_redraw()
 
 func _do_patrol(delta: float) -> void:
 	_patrol_timer -= delta

@@ -158,7 +158,9 @@ func _physics_process(delta: float) -> void:
 		else:
 			_is_blinking = true
 			_blink_timer = 0.1
-	queue_redraw()
+	var _vp_cam := get_viewport().get_camera_2d()
+	if not _vp_cam or global_position.distance_squared_to(_vp_cam.global_position) < 1440000.0:
+		queue_redraw()
 
 func _draw() -> void:
 	var health_ratio: float = health / max_health

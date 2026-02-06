@@ -60,7 +60,9 @@ func _physics_process(delta: float) -> void:
 				FlowType.THERMAL_VENT:
 					p.pos = Vector2(randf_range(-zone_radius * 0.3, zone_radius * 0.3), zone_radius * 0.5)
 			p.life = 1.0
-	queue_redraw()
+	var _vp_cam := get_viewport().get_camera_2d()
+	if not _vp_cam or global_position.distance_squared_to(_vp_cam.global_position) < 1440000.0:
+		queue_redraw()
 
 func _get_flow_at(local_pos: Vector2) -> Vector2:
 	var dist: float = local_pos.length()

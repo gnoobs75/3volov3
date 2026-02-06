@@ -168,8 +168,8 @@ func _process(delta: float) -> void:
 	elif energy_ratio > 0.35:
 		_energy_warning_played = false
 
-	# Request overlay redraw
-	if _overlay:
+	# Request overlay redraw only when an effect is active
+	if _overlay and (_low_health_pulse > 0 or _sensory_notify_timer > 0 or _death_recap_active):
 		_overlay.queue_redraw()
 
 	# Keep background centered on player for infinite world feel
