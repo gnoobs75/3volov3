@@ -27,30 +27,30 @@ var _last_player_chunk: Vector2i = Vector2i(999999, 999999)
 var _player: Node2D = null
 var _world_seed: int = 0
 
-# Spawn tables per biome: {type: [min_count, max_count]} - OPTIMIZED for performance
+# Spawn tables per biome: {type: [min_count, max_count]}
 const SPAWN_TABLES: Dictionary = {
 	Biome.NORMAL: {
-		"food": [2, 4], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 1],
+		"food": [3, 6], "enemy": [0, 2], "competitor": [0, 1], "snake": [1, 2],
 		"hazard": [0, 1], "repeller": [0, 0], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 1], "dart_predator": [0, 0], "leviathan": [0, 0],
 	},
 	Biome.THERMAL_VENT: {
-		"food": [2, 3], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 1],
-		"hazard": [0, 1], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
+		"food": [3, 5], "enemy": [1, 2], "competitor": [0, 1], "snake": [1, 2],
+		"hazard": [0, 2], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 1], "dart_predator": [0, 1], "leviathan": [0, 0],
 	},
 	Biome.DEEP_ABYSS: {
-		"food": [1, 2], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 1],
-		"hazard": [0, 1], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
+		"food": [2, 3], "enemy": [1, 2], "competitor": [0, 1], "snake": [0, 1],
+		"hazard": [0, 2], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 1], "dart_predator": [0, 1], "leviathan": [0, 1],
 	},
 	Biome.SHALLOWS: {
-		"food": [3, 5], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 1],
+		"food": [5, 8], "enemy": [0, 1], "competitor": [1, 2], "snake": [1, 3],
 		"hazard": [0, 0], "repeller": [0, 0], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 0], "dart_predator": [0, 0], "leviathan": [0, 0],
 	},
 	Biome.NUTRIENT_RICH: {
-		"food": [4, 6], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 1],
+		"food": [6, 9], "enemy": [0, 1], "competitor": [1, 2], "snake": [1, 2],
 		"hazard": [0, 1], "repeller": [0, 0], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 1], "dart_predator": [0, 1], "leviathan": [0, 0],
 	},

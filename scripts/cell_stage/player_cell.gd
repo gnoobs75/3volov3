@@ -218,7 +218,11 @@ func _physics_process(delta: float) -> void:
 		var decel_rate: float = _current_velocity.length() / DECEL_TIME
 		_current_velocity = _current_velocity.move_toward(Vector2.ZERO, decel_rate * delta)
 		if _current_velocity.length() < 5.0:
+			# Full regen when stopped
 			energy = minf(energy + ENERGY_REGEN_RATE * delta, max_energy)
+		elif _current_velocity.length() < move_speed * 0.3:
+			# Partial regen when moving slowly (1/sec)
+			energy = minf(energy + 1.0 * delta, max_energy)
 	energy = maxf(energy, 0.0)
 
 	velocity = _current_velocity

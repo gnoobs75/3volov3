@@ -187,13 +187,14 @@ func get_sensory_tier() -> Dictionary:
 	return SENSORY_TIERS[sensory_level]
 
 func reset_stats() -> void:
+	## Soft reset: keep evolution progress, lose inventory and reproduction count.
+	## Organelles partially preserved (50% rounded down).
 	player_stats.reproductions = 0
-	player_stats.organelles_collected = 0
+	var kept_organelles: int = player_stats.organelles_collected / 2
+	player_stats.organelles_collected = kept_organelles
 	player_stats.genes = ["Gene_1", "Gene_3"]
 	player_stats.proteins = ["Protein_1"]
 	player_stats.spliced_traits = {}
 	for key in inventory:
 		inventory[key] = []
-	evolution_level = 0
-	active_mutations = []
-	sensory_level = 0
+	# Keep evolution level, mutations, and sensory upgrades across deaths
