@@ -6,9 +6,13 @@ var _hub_data = null  # HubData from cave_generator
 var _floor_heightmap: Array = []  # 2D array of floor heights for queries
 var _grid_size: int = 0
 var _noise: FastNoiseLite = null
+var _tunnel_connection_points: Array[Vector3] = []  # Local-space XZ of tunnel mouths
 
 func setup(hub_data) -> void:
 	_hub_data = hub_data
+
+func add_tunnel_connection(world_pos: Vector3) -> void:
+	_tunnel_connection_points.append(world_pos)
 
 func _ready() -> void:
 	if _hub_data:
@@ -29,20 +33,37 @@ func _build_hub() -> void:
 	_build_ceiling(biome_colors)
 	_build_walls(biome_colors)
 
+	# Add tunnel mouth lights (deferred so tunnel connections are registered)
+	call_deferred("_add_tunnel_mouth_lights", biome_colors)
+
+func _add_tunnel_mouth_lights(colors: Dictionary) -> void:
+	for conn_world_pos in _tunnel_connection_points:
+		var local_pos: Vector3 = conn_world_pos - position
+		# Place light at tunnel mouth, slightly above floor
+		var light: OmniLight3D = OmniLight3D.new()
+		light.name = "TunnelMouthLight"
+		light.light_color = colors.emission.lightened(0.3)
+		light.light_energy = 0.3
+		light.omni_range = 5.0
+		light.omni_attenuation = 1.5
+		light.shadow_enabled = false
+		light.position = local_pos + Vector3(0, 1.5, 0)
+		add_child(light)
+
 func _get_biome_colors() -> Dictionary:
 	var CaveGen = load("res://scripts/snake_stage/cave_generator.gd")
 	if CaveGen:
 		var biome_key: int = _hub_data.biome
 		if biome_key in CaveGen.BIOME_COLORS:
 			return CaveGen.BIOME_COLORS[biome_key]
-	# Fallback
+	# Fallback (Stomach colors)
 	return {
-		"floor": Color(0.04, 0.08, 0.06),
-		"wall": Color(0.03, 0.06, 0.05),
-		"ceiling": Color(0.02, 0.05, 0.04),
-		"emission": Color(0.1, 0.4, 0.3),
-		"ambient": Color(0.05, 0.15, 0.12),
-		"fog": Color(0.02, 0.06, 0.04),
+		"floor": Color(0.06, 0.08, 0.02),
+		"wall": Color(0.05, 0.07, 0.02),
+		"ceiling": Color(0.04, 0.06, 0.02),
+		"emission": Color(0.3, 0.5, 0.1),
+		"ambient": Color(0.08, 0.12, 0.03),
+		"fog": Color(0.04, 0.06, 0.02),
 	}
 
 func _build_floor(colors: Dictionary) -> void:
@@ -66,6 +87,20 @@ func _build_floor(colors: Dictionary) -> void:
 			var edge_rise: float = edge_factor * edge_factor * edge_factor * _hub_data.height * 0.4
 
 			_floor_heightmap[gx][gz] = height_noise + edge_rise
+
+	# Flatten floor in 5-unit radius around tunnel connection points
+	for conn_world_pos in _tunnel_connection_points:
+		var local_x: float = conn_world_pos.x - _hub_data.position.x
+		var local_z: float = conn_world_pos.z - _hub_data.position.z
+		for gx2 in range(_grid_size):
+			for gz2 in range(_grid_size):
+				var wx2: float = (float(gx2) / subdivs - 0.5) * radius * 2.0
+				var wz2: float = (float(gz2) / subdivs - 0.5) * radius * 2.0
+				var d: float = Vector2(wx2 - local_x, wz2 - local_z).length()
+				if d < 5.0:
+					var blend: float = d / 5.0
+					blend = blend * blend  # Smooth falloff
+					_floor_heightmap[gx2][gz2] = lerpf(0.0, _floor_heightmap[gx2][gz2], blend)
 
 	# Build mesh
 	var st: SurfaceTool = SurfaceTool.new()

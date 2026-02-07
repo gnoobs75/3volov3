@@ -6,6 +6,8 @@ extends CharacterBody3D
 signal damaged(amount: float)
 signal died
 signal nutrient_collected(item: Dictionary)
+signal stun_burst_fired
+signal bite_performed
 
 # --- Movement ---
 const BASE_SPEED: float = 8.0
@@ -47,6 +49,22 @@ var _face_billboard: Sprite3D = null
 var _face_canvas: Control = null
 var _head_mesh: MeshInstance3D = null
 
+# --- Trifold Jaw ---
+var _jaw_petals: Array[Node3D] = []  # 3 pivot nodes holding jaw cone + teeth
+var _jaw_open_amount: float = 0.0  # 0 = closed, 1 = full open
+var _jaw_state: int = 0  # 0=closed, 1=open, 2=bite
+var _bite_cooldown: float = 0.0
+var _bite_tween: Tween = null
+const BITE_COOLDOWN_TIME: float = 0.5
+
+# --- Stealth & Combat ---
+var noise_level: float = 0.0  # 0.0-1.0 for WBC detection
+var _noise_spike: float = 0.0
+var _noise_spike_timer: float = 0.0
+var _stun_cooldown: float = 0.0
+const STUN_COOLDOWN_TIME: float = 4.0
+const STUN_ENERGY_COST: float = 15.0
+
 # --- Visuals ---
 var _time: float = 0.0
 var _body_color: Color = Color(0.55, 0.35, 0.45)  # Pink-brown worm
@@ -77,7 +95,7 @@ func _build_head() -> void:
 	mat.albedo_color = _body_color
 	mat.roughness = 0.6
 	mat.emission_enabled = true
-	mat.emission = _body_color * 0.3  # Slightly brighter emission for cave visibility
+	mat.emission = _body_color * 0.3
 	mat.emission_energy_multiplier = 0.8
 	_head_mesh.material_override = mat
 
@@ -85,23 +103,112 @@ func _build_head() -> void:
 	_head_mesh.rotation.x = PI * 0.5
 	add_child(_head_mesh)
 
-	# Nose bump
-	var nose: MeshInstance3D = MeshInstance3D.new()
-	var nose_sphere: SphereMesh = SphereMesh.new()
-	nose_sphere.radius = 0.25
-	nose_sphere.height = 0.45
-	nose_sphere.radial_segments = 10
-	nose_sphere.rings = 6
-	nose.mesh = nose_sphere
-	var nose_mat: StandardMaterial3D = StandardMaterial3D.new()
-	nose_mat.albedo_color = _body_color.lightened(0.1)
-	nose_mat.roughness = 0.5
-	nose_mat.emission_enabled = true
-	nose_mat.emission = _body_color.lightened(0.1) * 0.25
-	nose_mat.emission_energy_multiplier = 0.5
-	nose.material_override = nose_mat
-	nose.position = Vector3(0, 0.6, 0.5)
-	add_child(nose)
+	# Dark mouth interior (visible when jaw opens)
+	var mouth_interior: MeshInstance3D = MeshInstance3D.new()
+	var mouth_sphere: SphereMesh = SphereMesh.new()
+	mouth_sphere.radius = 0.2
+	mouth_sphere.height = 0.35
+	mouth_sphere.radial_segments = 8
+	mouth_sphere.rings = 4
+	mouth_interior.mesh = mouth_sphere
+	var mouth_mat: StandardMaterial3D = StandardMaterial3D.new()
+	mouth_mat.albedo_color = Color(0.08, 0.02, 0.03)
+	mouth_mat.roughness = 0.9
+	mouth_interior.material_override = mouth_mat
+	mouth_interior.position = Vector3(0, 0.6, 0.45)
+	add_child(mouth_interior)
+
+	# Trifold jaw: 3 petals at 120° intervals
+	_build_trifold_jaw()
+
+func _build_trifold_jaw() -> void:
+	var petal_color: Color = _body_color.lightened(0.05)
+	var tooth_color: Color = Color(0.9, 0.85, 0.7)  # Yellowish white
+
+	for i in range(3):
+		var angle_offset: float = TAU / 3.0 * i  # 0, 120, 240 degrees
+
+		# Pivot node at the base of the jaw, at the front of the head
+		var pivot: Node3D = Node3D.new()
+		pivot.name = "JawPetal_%d" % i
+		pivot.position = Vector3(0, 0.6, 0.4)
+		# Rotate pivot around Z (forward) axis to space petals
+		pivot.rotation.z = angle_offset
+		add_child(pivot)
+
+		# Jaw petal: tapered cone
+		var petal: MeshInstance3D = MeshInstance3D.new()
+		var cone: CylinderMesh = CylinderMesh.new()
+		cone.top_radius = 0.02
+		cone.bottom_radius = 0.15
+		cone.height = 0.4
+		cone.radial_segments = 6
+		petal.mesh = cone
+		var petal_mat: StandardMaterial3D = StandardMaterial3D.new()
+		petal_mat.albedo_color = petal_color
+		petal_mat.roughness = 0.5
+		petal_mat.emission_enabled = true
+		petal_mat.emission = petal_color * 0.2
+		petal_mat.emission_energy_multiplier = 0.4
+		petal.material_override = petal_mat
+		# Cone points forward (+Z), oriented along the petal direction
+		petal.position = Vector3(0, 0.15, 0.15)
+		petal.rotation.x = -PI * 0.35  # Angled forward
+		pivot.add_child(petal)
+
+		# Jagged teeth: 3-4 small spikes along inner edge
+		var tooth_count: int = randi_range(3, 4)
+		for t in range(tooth_count):
+			var tooth: MeshInstance3D = MeshInstance3D.new()
+			var spike: CylinderMesh = CylinderMesh.new()
+			spike.top_radius = 0.005
+			spike.bottom_radius = 0.02 + randf() * 0.01
+			spike.height = 0.08 + randf() * 0.06
+			spike.radial_segments = 4
+			tooth.mesh = spike
+			var tooth_mat: StandardMaterial3D = StandardMaterial3D.new()
+			tooth_mat.albedo_color = tooth_color
+			tooth_mat.roughness = 0.3
+			tooth_mat.emission_enabled = true
+			tooth_mat.emission = tooth_color * 0.3
+			tooth_mat.emission_energy_multiplier = 0.6
+			tooth.material_override = tooth_mat
+			# Place teeth along inner edge of petal
+			var tz: float = 0.05 + float(t) / tooth_count * 0.25
+			tooth.position = Vector3(0, 0.05, tz)
+			tooth.rotation.x = -PI * 0.2 + randf() * 0.3
+			pivot.add_child(tooth)
+
+		_jaw_petals.append(pivot)
+
+func _trigger_bite() -> void:
+	if _bite_cooldown > 0 or _jaw_state == 2:
+		return
+	_jaw_state = 2
+	_bite_cooldown = BITE_COOLDOWN_TIME
+	# Kill existing tween
+	if _bite_tween and _bite_tween.is_valid():
+		_bite_tween.kill()
+	_bite_tween = create_tween()
+	# Open wide
+	_bite_tween.tween_property(self, "_jaw_open_amount", 1.0, 0.1)
+	# Snap shut + deal damage at snap
+	_bite_tween.tween_callback(do_bite_damage)
+	_bite_tween.tween_property(self, "_jaw_open_amount", 0.0, 0.15)
+	_bite_tween.tween_callback(func(): _jaw_state = 0)
+	# Noise spike from bite
+	_noise_spike = 1.0
+	_noise_spike_timer = 1.0
+	bite_performed.emit()
+
+func _update_jaw() -> void:
+	# Apply jaw_open_amount to petal rotations
+	for i in range(_jaw_petals.size()):
+		var pivot: Node3D = _jaw_petals[i]
+		# When closed: petals together. When open: splay outward 60 degrees
+		var splay_angle: float = _jaw_open_amount * deg_to_rad(60.0)
+		# Each petal rotates outward from center on X axis (away from forward)
+		pivot.rotation.x = splay_angle
 
 func _build_face() -> void:
 	_face_viewport = SubViewport.new()
@@ -264,6 +371,46 @@ func _physics_process(delta: float) -> void:
 	# --- Damage flash ---
 	_damage_flash = maxf(_damage_flash - delta * 3.0, 0.0)
 
+	# --- Cooldowns ---
+	_bite_cooldown = maxf(_bite_cooldown - delta, 0.0)
+	_stun_cooldown = maxf(_stun_cooldown - delta, 0.0)
+
+	# --- Noise level ---
+	_noise_spike_timer = maxf(_noise_spike_timer - delta, 0.0)
+	if _noise_spike_timer <= 0:
+		_noise_spike = 0.0
+	var base_noise: float = 0.0
+	if _is_creeping:
+		base_noise = 0.15
+	elif _is_sprinting:
+		base_noise = 1.0
+	elif absf(_current_speed) > 0.5:
+		base_noise = 0.5
+	noise_level = maxf(base_noise, _noise_spike)
+
+	# --- Bite attack (LMB / beam_collect) ---
+	if Input.is_action_just_pressed("beam_collect"):
+		_trigger_bite()
+
+	# --- Stun burst (E key) ---
+	if Input.is_action_just_pressed("stun_burst") and _stun_cooldown <= 0 and energy >= STUN_ENERGY_COST:
+		_trigger_stun_burst()
+
+	# --- Update jaw visual ---
+	_update_jaw()
+
+	# --- Creep opacity ---
+	if _head_mesh:
+		var target_alpha: float = 0.7 if _is_creeping else 1.0
+		var head_mat: StandardMaterial3D = _head_mesh.material_override
+		if head_mat:
+			if _is_creeping and head_mat.transparency != BaseMaterial3D.TRANSPARENCY_ALPHA:
+				head_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				head_mat.albedo_color.a = 0.7
+			elif not _is_creeping and head_mat.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+				head_mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+				head_mat.albedo_color.a = 1.0
+
 	# --- Update face ---
 	_update_face(delta)
 
@@ -372,3 +519,35 @@ func heal(amount: float) -> void:
 
 func restore_energy(amount: float) -> void:
 	energy = minf(energy + amount, max_energy)
+
+func _trigger_stun_burst() -> void:
+	energy -= STUN_ENERGY_COST
+	_stun_cooldown = STUN_COOLDOWN_TIME
+	_noise_spike = 0.8
+	_noise_spike_timer = 2.0
+	# VFX and damage handled by snake_stage_manager listening for signal
+	stun_burst_fired.emit()
+
+func get_bite_targets() -> Array:
+	## Returns WBCs within bite range and forward cone
+	var targets: Array = []
+	var forward: Vector3 = Vector3(sin(_heading), 0, cos(_heading))
+	for wbc in get_tree().get_nodes_in_group("white_blood_cell"):
+		var to_target: Vector3 = wbc.global_position - global_position
+		var dist: float = to_target.length()
+		if dist > 2.0:
+			continue
+		var dot: float = forward.dot(to_target.normalized())
+		if dot > 0.7:
+			targets.append(wbc)
+	return targets
+
+func do_bite_damage() -> void:
+	## Called during bite snap — deals damage to WBCs in range
+	var targets: Array = get_bite_targets()
+	for target in targets:
+		if target.has_method("take_damage"):
+			target.take_damage(25.0)
+	# Brief forward lunge
+	var forward: Vector3 = Vector3(sin(_heading), 0, cos(_heading))
+	velocity += forward * 8.0

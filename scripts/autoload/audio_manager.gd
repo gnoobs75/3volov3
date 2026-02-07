@@ -85,6 +85,11 @@ var _buf_tunnel_echo: PackedFloat32Array
 var _buf_land_collect: PackedFloat32Array
 var _buf_ambient_hum: PackedFloat32Array
 
+# Parasite mode combat sound buffers
+var _buf_bite_snap: PackedFloat32Array
+var _buf_stun_burst: PackedFloat32Array
+var _buf_wbc_alert: PackedFloat32Array
+
 # Cave stage sound buffers
 var _buf_sonar_ping: PackedFloat32Array
 var _buf_sonar_return: PackedFloat32Array
@@ -164,6 +169,11 @@ func _ready() -> void:
 	_buf_tunnel_echo = SynthSounds.gen_tunnel_echo()
 	_buf_land_collect = SynthSounds.gen_land_collect()
 	_buf_ambient_hum = SynthSounds.gen_ambient_hum()
+
+	# Pre-generate parasite mode combat sounds
+	_buf_bite_snap = SynthSounds.gen_bite_snap()
+	_buf_stun_burst = SynthSounds.gen_stun_burst()
+	_buf_wbc_alert = SynthSounds.gen_wbc_alert()
 
 	# Pre-generate cave stage sounds
 	_buf_sonar_ping = SynthSounds.gen_sonar_ping()
@@ -440,6 +450,17 @@ func play_land_collect() -> void:
 
 func play_ambient_hum() -> void:
 	_play_buffer(_buf_ambient_hum, -16.0)
+
+## === PARASITE MODE COMBAT SOUNDS ===
+
+func play_bite_snap() -> void:
+	_play_buffer(_buf_bite_snap, -2.0)
+
+func play_stun_burst() -> void:
+	_play_buffer(_buf_stun_burst, -1.0)
+
+func play_wbc_alert() -> void:
+	_play_buffer(_buf_wbc_alert, -4.0)
 
 ## === CAVE STAGE SOUNDS ===
 

@@ -1,76 +1,76 @@
 extends Node3D
-## Cave world generator: hub-and-spoke graph of caverns connected by Bezier tunnels.
-## Manages the entire cave topology, biome assignment, and chunk activation.
+## Parasite Mode: hub-and-spoke graph of organ caverns connected by vein/artery tunnels.
+## The worm is inside a host animal's body. Biomes are organs.
 
 signal cave_ready
 
-# --- Biome definitions ---
+# --- Organ biome definitions ---
 enum Biome {
-	BIOLUMINESCENT_GROTTO,
-	CRYSTAL_CAVERN,
-	FUNGAL_FOREST,
-	CORAL_REEF,
-	BONE_GARDEN,
-	LAVA_TUBES,
-	DEEP_ABYSS
+	STOMACH,           # Spawn, safe, acidic green-yellow glow
+	HEART_CHAMBER,     # Pulsing red, rhythmic
+	INTESTINAL_TRACT,  # Pink-brown, villi textures
+	LUNG_TISSUE,       # Pink-white, spongy
+	BONE_MARROW,       # Pale yellow-white
+	LIVER,             # Dark red-brown, bile pools
+	BRAIN              # Dark purple-grey, nerve tendrils
 }
 
 const BIOME_COLORS: Dictionary = {
-	Biome.BIOLUMINESCENT_GROTTO: {
-		"floor": Color(0.04, 0.08, 0.06),
-		"wall": Color(0.03, 0.06, 0.05),
-		"ceiling": Color(0.02, 0.05, 0.04),
-		"emission": Color(0.1, 0.4, 0.3),
-		"ambient": Color(0.05, 0.15, 0.12),
-		"fog": Color(0.02, 0.06, 0.04),
+	Biome.STOMACH: {
+		"floor": Color(0.06, 0.08, 0.02),
+		"wall": Color(0.05, 0.07, 0.02),
+		"ceiling": Color(0.04, 0.06, 0.02),
+		"emission": Color(0.3, 0.5, 0.1),
+		"ambient": Color(0.08, 0.12, 0.03),
+		"fog": Color(0.04, 0.06, 0.02),
 	},
-	Biome.CRYSTAL_CAVERN: {
-		"floor": Color(0.06, 0.04, 0.08),
-		"wall": Color(0.05, 0.03, 0.07),
-		"ceiling": Color(0.04, 0.03, 0.06),
-		"emission": Color(0.4, 0.2, 0.6),
-		"ambient": Color(0.12, 0.06, 0.18),
-		"fog": Color(0.04, 0.02, 0.06),
+	Biome.HEART_CHAMBER: {
+		"floor": Color(0.1, 0.02, 0.02),
+		"wall": Color(0.08, 0.015, 0.02),
+		"ceiling": Color(0.06, 0.01, 0.015),
+		"emission": Color(0.7, 0.1, 0.08),
+		"ambient": Color(0.18, 0.04, 0.03),
+		"fog": Color(0.06, 0.015, 0.01),
 	},
-	Biome.FUNGAL_FOREST: {
-		"floor": Color(0.06, 0.05, 0.03),
-		"wall": Color(0.05, 0.04, 0.02),
-		"ceiling": Color(0.04, 0.03, 0.02),
-		"emission": Color(0.3, 0.4, 0.1),
-		"ambient": Color(0.1, 0.12, 0.04),
-		"fog": Color(0.04, 0.05, 0.02),
+	Biome.INTESTINAL_TRACT: {
+		"floor": Color(0.08, 0.05, 0.04),
+		"wall": Color(0.07, 0.04, 0.035),
+		"ceiling": Color(0.05, 0.03, 0.025),
+		"emission": Color(0.4, 0.25, 0.2),
+		"ambient": Color(0.1, 0.06, 0.05),
+		"fog": Color(0.05, 0.03, 0.025),
 	},
-	Biome.CORAL_REEF: {
-		"floor": Color(0.03, 0.06, 0.07),
-		"wall": Color(0.02, 0.05, 0.06),
-		"ceiling": Color(0.02, 0.04, 0.05),
-		"emission": Color(0.1, 0.5, 0.4),
-		"ambient": Color(0.04, 0.12, 0.1),
-		"fog": Color(0.02, 0.05, 0.05),
+	Biome.LUNG_TISSUE: {
+		"floor": Color(0.08, 0.06, 0.07),
+		"wall": Color(0.07, 0.055, 0.065),
+		"ceiling": Color(0.06, 0.05, 0.055),
+		"emission": Color(0.5, 0.35, 0.4),
+		"ambient": Color(0.1, 0.07, 0.08),
+		"fog": Color(0.05, 0.04, 0.045),
 	},
-	Biome.BONE_GARDEN: {
-		"floor": Color(0.07, 0.06, 0.06),
-		"wall": Color(0.06, 0.05, 0.05),
-		"ceiling": Color(0.05, 0.04, 0.04),
-		"emission": Color(0.3, 0.35, 0.4),
-		"ambient": Color(0.08, 0.09, 0.1),
-		"fog": Color(0.04, 0.04, 0.05),
+	Biome.BONE_MARROW: {
+		"floor": Color(0.09, 0.08, 0.06),
+		"wall": Color(0.08, 0.07, 0.055),
+		"ceiling": Color(0.07, 0.06, 0.05),
+		"emission": Color(0.5, 0.45, 0.3),
+		"ambient": Color(0.12, 0.1, 0.07),
+		"fog": Color(0.06, 0.055, 0.04),
 	},
-	Biome.LAVA_TUBES: {
+	Biome.LIVER: {
 		"floor": Color(0.08, 0.03, 0.02),
-		"wall": Color(0.06, 0.02, 0.01),
-		"ceiling": Color(0.05, 0.02, 0.01),
-		"emission": Color(0.6, 0.2, 0.05),
-		"ambient": Color(0.15, 0.06, 0.02),
-		"fog": Color(0.06, 0.02, 0.01),
+		"wall": Color(0.06, 0.02, 0.015),
+		"ceiling": Color(0.05, 0.018, 0.012),
+		"emission": Color(0.5, 0.15, 0.08),
+		"ambient": Color(0.12, 0.04, 0.025),
+		"fog": Color(0.05, 0.02, 0.012),
 	},
-	Biome.DEEP_ABYSS: {
-		"floor": Color(0.01, 0.01, 0.015),
-		"wall": Color(0.008, 0.008, 0.012),
-		"ceiling": Color(0.005, 0.005, 0.008),
-		"emission": Color(0.02, 0.02, 0.03),
-		"ambient": Color(0.005, 0.005, 0.008),
-		"fog": Color(0.002, 0.002, 0.004),
+	Biome.BRAIN: {
+		"floor": Color(0.04, 0.03, 0.05),
+		"wall": Color(0.03, 0.025, 0.045),
+		"ceiling": Color(0.025, 0.02, 0.04),
+		"emission": Color(0.15, 0.1, 0.25),
+		"ambient": Color(0.04, 0.03, 0.06),
+		"fog": Color(0.02, 0.015, 0.03),
 	},
 }
 
@@ -80,7 +80,7 @@ class HubData:
 	var position: Vector3 = Vector3.ZERO
 	var radius: float = 25.0
 	var height: float = 15.0
-	var biome: int = Biome.BIOLUMINESCENT_GROTTO  # Use int for Biome enum
+	var biome: int = Biome.STOMACH  # Use int for Biome enum
 	var depth_level: int = 0  # Graph distance from spawn
 	var connections: Array[int] = []  # Connected hub IDs
 	var node_3d: Node3D = null  # Runtime reference to cave_hub instance
@@ -93,8 +93,8 @@ class TunnelData:
 	var hub_b: int = 0
 	var path: Array[Vector3] = []  # Cubic Bezier sampled points
 	var width: float = 3.0
-	var biome_a: int = Biome.BIOLUMINESCENT_GROTTO
-	var biome_b: int = Biome.BIOLUMINESCENT_GROTTO
+	var biome_a: int = Biome.STOMACH
+	var biome_b: int = Biome.STOMACH
 	var dead_ends: Array = []  # Array of {branch_point: int, path: Array[Vector3]}
 	var node_3d: Node3D = null
 	var is_active: bool = false
@@ -148,7 +148,7 @@ func _place_hubs() -> void:
 	spawn.position = Vector3(0, SPAWN_Y, 0)
 	spawn.radius = SPAWN_HUB_RADIUS
 	spawn.height = SPAWN_HUB_HEIGHT
-	spawn.biome = Biome.BIOLUMINESCENT_GROTTO
+	spawn.biome = Biome.STOMACH
 	hubs.append(spawn)
 	spawn_hub_id = 0
 
@@ -175,7 +175,7 @@ func _place_hubs() -> void:
 		var hub: HubData = HubData.new()
 		hub.id = hubs.size()
 		hub.position = candidate  # Y will be set by depth assignment
-		hub.biome = Biome.BIOLUMINESCENT_GROTTO  # Will be reassigned
+		hub.biome = Biome.STOMACH  # Will be reassigned
 
 		# Random size category
 		var size_roll: float = randf()
@@ -276,25 +276,25 @@ func _assign_depths() -> void:
 		var depth_fraction: float = float(hub.depth_level) / maxf(max_depth, 1.0)
 		hub.position.y = lerpf(SPAWN_Y - 10.0, -120.0, depth_fraction) + randf_range(-5.0, 5.0)
 
-# --- Biome Assignment ---
+# --- Organ Biome Assignment ---
 func _assign_biomes() -> void:
-	hubs[spawn_hub_id].biome = Biome.BIOLUMINESCENT_GROTTO
+	hubs[spawn_hub_id].biome = Biome.STOMACH
 
 	for hub in hubs:
 		if hub.id == spawn_hub_id:
 			continue
 		var depth: int = hub.depth_level
 		if depth <= 1:
-			# Shallow: safe biomes
-			hub.biome = [Biome.BIOLUMINESCENT_GROTTO, Biome.CRYSTAL_CAVERN][randi_range(0, 1)]
+			# Near stomach: safe organs
+			hub.biome = [Biome.STOMACH, Biome.INTESTINAL_TRACT][randi_range(0, 1)]
 		elif depth <= 2:
-			hub.biome = [Biome.CRYSTAL_CAVERN, Biome.FUNGAL_FOREST, Biome.CORAL_REEF][randi_range(0, 2)]
+			hub.biome = [Biome.INTESTINAL_TRACT, Biome.LUNG_TISSUE, Biome.HEART_CHAMBER][randi_range(0, 2)]
 		elif depth <= 3:
-			hub.biome = [Biome.FUNGAL_FOREST, Biome.CORAL_REEF, Biome.BONE_GARDEN][randi_range(0, 2)]
+			hub.biome = [Biome.LUNG_TISSUE, Biome.HEART_CHAMBER, Biome.BONE_MARROW][randi_range(0, 2)]
 		elif depth <= 4:
-			hub.biome = [Biome.BONE_GARDEN, Biome.LAVA_TUBES][randi_range(0, 1)]
+			hub.biome = [Biome.BONE_MARROW, Biome.LIVER][randi_range(0, 1)]
 		else:
-			hub.biome = [Biome.LAVA_TUBES, Biome.DEEP_ABYSS][randi_range(0, 1)]
+			hub.biome = [Biome.LIVER, Biome.BRAIN][randi_range(0, 1)]
 
 # --- Tunnel Path Generation ---
 func _generate_tunnel_paths() -> void:
@@ -314,9 +314,9 @@ func _generate_tunnel_paths() -> void:
 			tunnel.biome_a = hub.biome
 			tunnel.biome_b = hubs[conn_id].biome
 
-			# Tunnel width based on smaller connected hub
+			# Tunnel width: wider for navigability (vein/artery tubes)
 			var min_radius: float = minf(hub.radius, hubs[conn_id].radius)
-			tunnel.width = clampf(min_radius * 0.1, 1.5, 5.0)
+			tunnel.width = clampf(min_radius * 0.15, 3.0, 6.0)
 
 			# Generate cubic Bezier path
 			var p0: Vector3 = hub.position
@@ -332,11 +332,11 @@ func _generate_tunnel_paths() -> void:
 				perp = flat_dir.cross(Vector3.RIGHT)
 			perp = perp.normalized()
 
-			var curve_amount: float = flat_length * 0.25
+			var curve_amount: float = flat_length * 0.15  # Gentler curves for easier navigation
 			var p1: Vector3 = p0 + flat_dir * flat_length * 0.33 + perp * randf_range(-curve_amount, curve_amount)
-			p1.y = lerpf(p0.y, p3.y, 0.33) + randf_range(-curve_amount * 0.3, curve_amount * 0.3)
+			p1.y = lerpf(p0.y, p3.y, 0.33) + randf_range(-curve_amount * 0.2, curve_amount * 0.2)
 			var p2: Vector3 = p0 + flat_dir * flat_length * 0.66 + perp * randf_range(-curve_amount, curve_amount)
-			p2.y = lerpf(p0.y, p3.y, 0.66) + randf_range(-curve_amount * 0.3, curve_amount * 0.3)
+			p2.y = lerpf(p0.y, p3.y, 0.66) + randf_range(-curve_amount * 0.2, curve_amount * 0.2)
 
 			# Sample cubic Bezier
 			tunnel.path = _sample_cubic_bezier(p0, p1, p2, p3, TUNNEL_SUBDIVISIONS)
@@ -382,14 +382,28 @@ func _instantiate_geometry() -> void:
 	var hub_script = load("res://scripts/snake_stage/cave_hub.gd")
 	var tunnel_script = load("res://scripts/snake_stage/cave_tunnel_mesh.gd")
 
+	# Create hub nodes (setup but don't add_child yet so we can register tunnel connections)
 	for hub in hubs:
 		var hub_node: Node3D = Node3D.new()
 		hub_node.set_script(hub_script)
 		hub_node.name = "Hub_%d" % hub.id
 		hub_node.setup(hub)
-		add_child(hub_node)
 		hub.node_3d = hub_node
 		hub.is_active = true
+
+	# Register tunnel mouth positions with hubs BEFORE they build geometry
+	for tunnel in tunnels:
+		if tunnel.path.size() >= 2:
+			var hub_a = hubs[tunnel.hub_a]
+			var hub_b = hubs[tunnel.hub_b]
+			if hub_a.node_3d and hub_a.node_3d.has_method("add_tunnel_connection"):
+				hub_a.node_3d.add_tunnel_connection(tunnel.path[0])
+			if hub_b.node_3d and hub_b.node_3d.has_method("add_tunnel_connection"):
+				hub_b.node_3d.add_tunnel_connection(tunnel.path[-1])
+
+	# Now add hubs to tree (triggers _ready → _build_hub with tunnel info)
+	for hub in hubs:
+		add_child(hub.node_3d)
 
 	for tunnel in tunnels:
 		var tunnel_node: Node3D = Node3D.new()
@@ -490,7 +504,7 @@ func get_nearest_hub(pos: Vector3) -> HubData:
 func get_biome_colors(biome: int) -> Dictionary:
 	if biome in BIOME_COLORS:
 		return BIOME_COLORS[biome]
-	return BIOME_COLORS[Biome.BIOLUMINESCENT_GROTTO]
+	return BIOME_COLORS[Biome.STOMACH]
 
 func get_floor_y_at(pos: Vector3) -> float:
 	## Get approximate floor Y at a world XZ position.

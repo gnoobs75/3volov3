@@ -24,6 +24,13 @@ const PREY_SPAWN_RADIUS: float = 45.0
 const PREY_DESPAWN_RADIUS: float = 65.0
 var _prey_check_timer: float = 0.0
 
+# White Blood Cell spawning
+const WBC_TARGET_COUNT: int = 8
+const WBC_SPAWN_RADIUS: float = 50.0
+const WBC_DESPAWN_RADIUS: float = 70.0
+var _wbc_check_timer: float = 0.0
+var _wbc_container: Node3D = null
+
 # --- HUD references ---
 var _energy_bar: ProgressBar = null
 var _health_bar: ProgressBar = null
@@ -141,9 +148,16 @@ func _on_cave_ready() -> void:
 	# Initial spawns
 	call_deferred("_spawn_initial_nutrients")
 	call_deferred("_spawn_initial_prey")
+	call_deferred("_spawn_initial_wbc")
 
 	# Add player light for cave visibility
 	_add_player_light()
+
+	# Connect combat signals
+	if _player.has_signal("bite_performed"):
+		_player.bite_performed.connect(_on_player_bite)
+	if _player.has_signal("stun_burst_fired"):
+		_player.stun_burst_fired.connect(_on_player_stun_burst)
 
 	# Setup sonar contour point system
 	call_deferred("_setup_sonar")
@@ -181,6 +195,10 @@ func _setup_containers() -> void:
 	_nutrients_container = Node3D.new()
 	_nutrients_container.name = "Nutrients"
 	add_child(_nutrients_container)
+
+	_wbc_container = Node3D.new()
+	_wbc_container.name = "WhiteBloodCells"
+	add_child(_wbc_container)
 
 func _setup_hud() -> void:
 	var hud: CanvasLayer = CanvasLayer.new()
@@ -230,7 +248,7 @@ func _setup_hud() -> void:
 
 	# Controls label
 	_controls_label = Label.new()
-	_controls_label.text = "WASD: Move | Shift: Sprint | Space: Creep | ESC: Menu"
+	_controls_label.text = "WASD: Move | Shift: Sprint | Space: Creep | LMB: Bite | E: Stun | ESC: Menu"
 	_controls_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	_controls_label.position = Vector2(20, -30)
 	_controls_label.add_theme_font_size_override("font_size", 12)
@@ -239,7 +257,7 @@ func _setup_hud() -> void:
 
 	# Stage title
 	var title: Label = Label.new()
-	title.text = "CAVE STAGE - Deep Earth Exploration"
+	title.text = "PARASITE MODE - Inside the Host"
 	title.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	title.position = Vector2(-140, 8)
 	title.add_theme_font_size_override("font_size", 14)
@@ -321,6 +339,18 @@ func _process(delta: float) -> void:
 	if _prey_check_timer >= 3.0:
 		_prey_check_timer = 0.0
 		_manage_prey()
+
+	# WBC management
+	_wbc_check_timer += delta
+	if _wbc_check_timer >= 3.0:
+		_wbc_check_timer = 0.0
+		_manage_wbc()
+
+	# Update stun burst VFX
+	_update_stun_vfx(delta)
+
+	# Update bite flash VFX
+	_update_bite_flash(delta)
 
 	# Scan pulse + sonar
 	_scan_timer += delta
@@ -501,6 +531,129 @@ func _on_player_damaged(_amount: float) -> void:
 
 func _on_player_died() -> void:
 	pass  # Future: death recap, respawn at last hub
+
+# --- White Blood Cell Management ---
+func _spawn_initial_wbc() -> void:
+	for i in range(WBC_TARGET_COUNT):
+		_spawn_wbc()
+
+func _manage_wbc() -> void:
+	if not _player or not _wbc_container:
+		return
+	# Despawn far WBCs
+	for child in _wbc_container.get_children():
+		if child.is_in_group("white_blood_cell") and child.global_position.distance_to(_player.global_position) > WBC_DESPAWN_RADIUS:
+			child.queue_free()
+	# Count and spawn
+	var wbc_count: int = 0
+	for child in _wbc_container.get_children():
+		if child.is_in_group("white_blood_cell"):
+			wbc_count += 1
+	if wbc_count < WBC_TARGET_COUNT:
+		_spawn_wbc()
+
+func _spawn_wbc() -> void:
+	if not _player or not _wbc_container:
+		return
+	var wbc_script = load("res://scripts/snake_stage/white_blood_cell.gd")
+	var wbc: CharacterBody3D = CharacterBody3D.new()
+	wbc.set_script(wbc_script)
+
+	var angle: float = randf() * TAU
+	var dist: float = randf_range(15.0, WBC_SPAWN_RADIUS)
+	var x: float = _player.global_position.x + cos(angle) * dist
+	var z: float = _player.global_position.z + sin(angle) * dist
+	var y: float = _player.global_position.y + 1.0
+
+	if _cave_gen and _cave_gen.has_method("get_floor_y_at"):
+		y = _cave_gen.get_floor_y_at(Vector3(x, _player.global_position.y, z)) + 0.5
+
+	wbc.position = Vector3(x, y, z)
+	_wbc_container.add_child(wbc)
+
+# --- Combat VFX ---
+var _bite_flash_alpha: float = 0.0
+var _bite_flash_overlay: ColorRect = null
+var _stun_sphere: MeshInstance3D = null
+var _stun_sphere_tween: Tween = null
+
+func _on_player_bite() -> void:
+	# White screen flash
+	_bite_flash_alpha = 0.4
+	if not _bite_flash_overlay:
+		_bite_flash_overlay = ColorRect.new()
+		_bite_flash_overlay.color = Color(1, 1, 1, 0.4)
+		_bite_flash_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_bite_flash_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var hud: Node = get_node_or_null("HUD")
+		if hud:
+			hud.add_child(_bite_flash_overlay)
+	if _bite_flash_overlay:
+		_bite_flash_overlay.visible = true
+		_bite_flash_overlay.color.a = 0.4
+	# Sound
+	if AudioManager and AudioManager.has_method("play_bite_snap"):
+		AudioManager.play_bite_snap()
+
+func _on_player_stun_burst() -> void:
+	if not _player:
+		return
+	# Expanding sphere VFX
+	if _stun_sphere_tween and _stun_sphere_tween.is_valid():
+		_stun_sphere_tween.kill()
+	if _stun_sphere:
+		_stun_sphere.queue_free()
+
+	_stun_sphere = MeshInstance3D.new()
+	var sphere: SphereMesh = SphereMesh.new()
+	sphere.radius = 1.0
+	sphere.height = 2.0
+	sphere.radial_segments = 24
+	sphere.rings = 12
+	_stun_sphere.mesh = sphere
+	var mat: StandardMaterial3D = StandardMaterial3D.new()
+	mat.albedo_color = Color(0.4, 0.6, 1.0, 0.3)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.emission_enabled = true
+	mat.emission = Color(0.3, 0.5, 1.0) * 0.5
+	mat.emission_energy_multiplier = 1.5
+	_stun_sphere.material_override = mat
+	_stun_sphere.global_position = _player.global_position + Vector3(0, 0.5, 0)
+	_stun_sphere.scale = Vector3(0.5, 0.5, 0.5)
+	add_child(_stun_sphere)
+
+	_stun_sphere_tween = create_tween()
+	_stun_sphere_tween.tween_property(_stun_sphere, "scale", Vector3(8.0, 8.0, 8.0), 0.4).set_ease(Tween.EASE_OUT)
+	_stun_sphere_tween.parallel().tween_property(mat, "albedo_color:a", 0.0, 0.4)
+	_stun_sphere_tween.tween_callback(func():
+		if _stun_sphere:
+			_stun_sphere.queue_free()
+			_stun_sphere = null
+	)
+
+	# Stun all WBCs in radius
+	for wbc in get_tree().get_nodes_in_group("white_blood_cell"):
+		if wbc.global_position.distance_to(_player.global_position) < 8.0:
+			if wbc.has_method("stun"):
+				wbc.stun()
+
+	# Sound
+	if AudioManager and AudioManager.has_method("play_stun_burst"):
+		AudioManager.play_stun_burst()
+
+func _update_stun_vfx(_delta: float) -> void:
+	pass  # Tween handles the animation
+
+func _update_bite_flash(delta: float) -> void:
+	if _bite_flash_alpha > 0:
+		_bite_flash_alpha = maxf(_bite_flash_alpha - delta * 4.0, 0.0)
+		if _bite_flash_overlay:
+			_bite_flash_overlay.color.a = _bite_flash_alpha
+			if _bite_flash_alpha <= 0.01:
+				_bite_flash_overlay.visible = false
 
 # --- Sonar heightmap pointcloud system (Moondust-style) ---
 # Points rain down from above, height-coded blue→green→yellow, expanding ring reveal

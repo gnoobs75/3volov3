@@ -759,6 +759,83 @@ static func gen_spore_release() -> PackedFloat32Array:
 		buf[i] = s * env * 0.2
 	return buf
 
+## --- PARASITE MODE COMBAT SOUNDS ---
+
+## Bite snap: sharp attack transient + bone crunch
+static func gen_bite_snap() -> PackedFloat32Array:
+	var dur: float = 0.3
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Sharp transient attack
+		var attack: float = exp(-t * 40.0) * 0.8
+		# Crunch noise burst
+		var crunch_env: float = exp(-t * 12.0) * 0.5
+		var crunch: float = noise() * crunch_env
+		# Low thud
+		var freq: float = lerpf(200.0, 60.0, minf(t * 8.0, 1.0))
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 3.0) / SAMPLE_RATE  # Bright harmonic
+		var tone: float = sine(phase) * attack + sine(phase2) * attack * 0.15
+		var s: float = tone + crunch
+		# Quick reverb
+		if i > int(0.05 * SAMPLE_RATE):
+			s += buf[i - int(0.05 * SAMPLE_RATE)] * 0.15
+		buf[i] = s * 0.6
+	return buf
+
+## Stun burst: electrical zap + bass thud
+static func gen_stun_burst() -> PackedFloat32Array:
+	var dur: float = 0.5
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Electrical zap: high freq sweep down
+		var zap_env: float = exp(-t * 8.0) * 0.5
+		var zap_freq: float = lerpf(4000.0, 200.0, minf(t * 4.0, 1.0))
+		phase += zap_freq / SAMPLE_RATE
+		var zap: float = sine(phase) * zap_env * 0.3 + noise() * zap_env * 0.2
+		# Bass thud
+		var thud_env: float = exp(-t * 6.0) * 0.7
+		phase2 += 50.0 / SAMPLE_RATE
+		var thud: float = sine(phase2) * thud_env
+		# Combine
+		var s: float = zap + thud
+		# Reverb
+		if i > int(0.07 * SAMPLE_RATE):
+			s += buf[i - int(0.07 * SAMPLE_RATE)] * 0.2
+		if i > int(0.15 * SAMPLE_RATE):
+			s += buf[i - int(0.15 * SAMPLE_RATE)] * 0.1
+		buf[i] = s * 0.5
+	return buf
+
+## WBC alert: wet squelch alarm
+static func gen_wbc_alert() -> PackedFloat32Array:
+	var dur: float = 0.4
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.01, 0.05, 0.5, 0.2, dur)
+		# Wet squelch: low freq with noise modulation
+		var freq: float = lerpf(300.0, 150.0, t / dur) + sin(t * 30.0) * 40.0
+		phase += freq / SAMPLE_RATE
+		var s: float = sine(phase) * 0.4 + noise() * 0.2 * env
+		# Gurgle effect
+		s *= 0.5 + 0.5 * sin(t * 20.0)
+		buf[i] = s * env * 0.5
+	return buf
+
 ## Creature echolocation: rapid clicks for Abyss Lurker
 static func gen_creature_echolocation() -> PackedFloat32Array:
 	var dur: float = 0.4
