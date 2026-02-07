@@ -26,7 +26,9 @@ const MUTATION_CHANCE: float = 0.05
 
 var chunk_manager: Node2D = null
 var _biome_label_timer: float = 0.0
+var _biome_label_alpha: float = 0.0
 var _current_biome_name: String = ""
+var _current_biome_color: Color = Color(0.5, 0.8, 0.9)
 
 # Sensory upgrade notification
 var _sensory_notify_text: String = ""
@@ -46,6 +48,12 @@ var _session_collections: int = 0
 var _mutation_popup_timer: float = 0.0
 var _mutation_popup_alpha: float = 0.0
 
+# Generic popup (for cleaner feedback, etc.)
+var _popup_text: String = ""
+var _popup_timer: float = 0.0
+var _popup_alpha: float = 0.0
+var _popup_color: Color = Color(0.5, 0.9, 0.7)
+
 # Low health warning
 var _low_health_pulse: float = 0.0
 var _heartbeat_timer: float = 0.0
@@ -58,6 +66,8 @@ var _paused: bool = false
 # Victory screen
 var _victory_active: bool = false
 var _victory_timer: float = 0.0
+
+var _competitor_scan_timer: float = 0.0
 
 func _ready() -> void:
 	add_to_group("cell_stage_manager")
@@ -208,12 +218,27 @@ func _process(delta: float) -> void:
 	elif energy_ratio > 0.35:
 		_energy_warning_played = false
 
+	# Generic popup fade
+	if _popup_timer > 0:
+		_popup_timer -= delta
+		_popup_alpha = clampf(_popup_timer / 2.0, 0.0, 1.0)
+		if _popup_timer < 0.5:
+			_popup_alpha = _popup_timer / 0.5
+
+	# Scan for new competitor cells to connect cleaner signal
+	_competitor_scan_timer -= delta
+	if _competitor_scan_timer <= 0:
+		_competitor_scan_timer = 2.0
+		for comp in get_tree().get_nodes_in_group("competitors"):
+			if comp.has_signal("parasite_cleaned") and not comp.parasite_cleaned.is_connected(_on_parasite_cleaned):
+				comp.parasite_cleaned.connect(_on_parasite_cleaned)
+
 	# Victory timer
 	if _victory_active:
 		_victory_timer -= delta
 
 	# Request overlay redraw only when an effect is active
-	if _overlay and (_low_health_pulse > 0 or _sensory_notify_timer > 0 or _death_recap_active or _victory_active or _mutation_popup_timer > 0):
+	if _overlay and (_low_health_pulse > 0 or _sensory_notify_timer > 0 or _death_recap_active or _victory_active or _mutation_popup_timer > 0 or _popup_timer > 0 or _biome_label_timer > 0):
 		_overlay.queue_redraw()
 
 	# Keep background centered on player for infinite world feel
@@ -230,24 +255,31 @@ func _process(delta: float) -> void:
 	if player.is_energy_depleted:
 		energy_status = " [DEPLETED - 50% THRUST]"
 
-	# Show biome name
-	var biome_text: String = ""
+	# Biome name detection & fade
 	if chunk_manager:
 		var biome: int = chunk_manager.get_biome_at(player.global_position)
 		var biome_name: String = chunk_manager.get_biome_name(biome)
 		if biome_name != _current_biome_name:
 			_current_biome_name = biome_name
-			_biome_label_timer = 3.0
-		if _biome_label_timer > 0:
-			_biome_label_timer -= delta
-			biome_text = " | " + _current_biome_name
+			_biome_label_timer = 4.0
+			_biome_label_alpha = 1.0
+			match biome_name:
+				"Open Waters": _current_biome_color = Color(0.4, 0.7, 0.9)
+				"Thermal Vent": _current_biome_color = Color(1.0, 0.5, 0.2)
+				"Deep Abyss": _current_biome_color = Color(0.3, 0.2, 0.6)
+				"Shallows": _current_biome_color = Color(0.4, 0.9, 0.7)
+				"Nutrient Garden": _current_biome_color = Color(0.5, 0.9, 0.3)
+				_: _current_biome_color = Color(0.5, 0.8, 0.9)
+	if _biome_label_timer > 0:
+		_biome_label_timer -= delta
+		if _biome_label_timer < 1.0:
+			_biome_label_alpha = clampf(_biome_label_timer, 0.0, 1.0)
 
-	stats_label.text = "Repros: %d/10 | Organelles: %d/5 | Collected: %d%s%s" % [
+	stats_label.text = "Repros: %d/10 | Organelles: %d/5 | Collected: %d%s" % [
 		GameManager.player_stats.reproductions,
 		GameManager.player_stats.organelles_collected,
 		GameManager.get_total_collected(),
 		energy_status,
-		biome_text,
 	]
 
 	# Pause toggle (ESC)
@@ -305,6 +337,13 @@ func _on_evolution_applied(mutation: Dictionary) -> void:
 		AudioManager.play_sensory_upgrade()
 		_last_sensory_level = GameManager.sensory_level
 
+func _on_parasite_cleaned() -> void:
+	_popup_text = "Parasite removed!"
+	_popup_timer = 2.5
+	_popup_alpha = 1.0
+	_popup_color = Color(0.4, 0.9, 0.5)
+	AudioManager.play_ui_select()
+
 func _on_cell_stage_won() -> void:
 	if _victory_active:
 		return
@@ -345,6 +384,22 @@ func _draw_overlay(ctl: Control) -> void:
 	var vp := ctl.get_viewport_rect().size
 	var font := ThemeDB.fallback_font
 
+	# --- Biome name banner ---
+	if _biome_label_timer > 0 and _biome_label_alpha > 0.01:
+		var biome_fs: int = 24
+		var biome_size := font.get_string_size(_current_biome_name, HORIZONTAL_ALIGNMENT_CENTER, -1, biome_fs)
+		var bx: float = (vp.x - biome_size.x) * 0.5
+		var by: float = vp.y * 0.15
+		# Subtle background pill
+		var bpill_w: float = biome_size.x + 50.0
+		var bpill_h: float = 40.0
+		ctl.draw_rect(Rect2(bx - 25, by - 28, bpill_w, bpill_h), Color(0.02, 0.04, 0.06, 0.5 * _biome_label_alpha))
+		# Colored accent lines
+		ctl.draw_rect(Rect2(bx - 25, by - 29, bpill_w, 1), Color(_current_biome_color.r, _current_biome_color.g, _current_biome_color.b, 0.5 * _biome_label_alpha))
+		ctl.draw_rect(Rect2(bx - 25, by + 11, bpill_w, 1), Color(_current_biome_color.r, _current_biome_color.g, _current_biome_color.b, 0.5 * _biome_label_alpha))
+		# Biome name text
+		ctl.draw_string(font, Vector2(bx, by), _current_biome_name, HORIZONTAL_ALIGNMENT_LEFT, -1, biome_fs, Color(_current_biome_color.r, _current_biome_color.g, _current_biome_color.b, 0.9 * _biome_label_alpha))
+
 	# --- Low health red pulse vignette ---
 	if _low_health_pulse > 0:
 		var pulse: float = 0.5 + 0.5 * sin(_low_health_pulse)
@@ -355,6 +410,16 @@ func _draw_overlay(ctl: Control) -> void:
 		ctl.draw_rect(Rect2(0, vp.y - grad_h, vp.x, grad_h), Color(0.8, 0.05, 0.05, alpha * 0.6))
 		ctl.draw_rect(Rect2(0, 0, grad_w, vp.y), Color(0.8, 0.05, 0.05, alpha * 0.4))
 		ctl.draw_rect(Rect2(vp.x - grad_w, 0, grad_w, vp.y), Color(0.8, 0.05, 0.05, alpha * 0.4))
+
+	# --- Generic popup (cleaner feedback, etc.) ---
+	if _popup_timer > 0 and _popup_alpha > 0.01:
+		var pop_size := font.get_string_size(_popup_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
+		var px: float = (vp.x - pop_size.x) * 0.5
+		var py: float = vp.y * 0.6
+		var ppill_w: float = pop_size.x + 30.0
+		var ppill_h: float = 32.0
+		ctl.draw_rect(Rect2(px - 15, py - 22, ppill_w, ppill_h), Color(0.03, 0.08, 0.05, 0.7 * _popup_alpha))
+		ctl.draw_string(font, Vector2(px, py), _popup_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(_popup_color.r, _popup_color.g, _popup_color.b, _popup_alpha))
 
 	# --- Mutation popup ---
 	if _mutation_popup_timer > 0 and _mutation_popup_alpha > 0.01:

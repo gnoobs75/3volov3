@@ -87,27 +87,27 @@ func _connect_player_signals() -> void:
 
 func _on_biomolecule_collected(_item: Dictionary) -> void:
 	if randf() < 0.05:  # 5% chance
-		_queue_note()
+		_queue_note("Collection")
 
 func _on_evolution_applied(_mutation: Dictionary) -> void:
-	_queue_note()
-	_queue_note()  # Double note for evolution
+	_queue_note("Evolution")
+	_queue_note("Evolution")  # Double note for evolution
 
 func _on_player_damaged(_amount: float) -> void:
 	if randf() < 0.2:
-		_queue_note()
+		_queue_note("Damage")
 
 func _on_prey_killed() -> void:
 	if randf() < 0.25:
-		_queue_note()
+		_queue_note("Kill")
 
 func _on_reproduction() -> void:
-	_queue_note()
+	_queue_note("Reproduction")
 
-func _queue_note() -> void:
-	_pending_note_queue.append(true)
+func _queue_note(event_type: String = "Observation") -> void:
+	_pending_note_queue.append(event_type)
 
-func _generate_alien_scribble() -> Dictionary:
+func _generate_alien_scribble(event_type: String = "Observation") -> Dictionary:
 	# Generate a multi-line alien cursive scribble
 	var lines: Array = []
 	var num_lines: int = randi_range(2, 4)
@@ -143,10 +143,11 @@ func _generate_alien_scribble() -> Dictionary:
 		"y_position": 0.0,
 		"target_y": 0.0,
 		"ember_particles": [],
+		"event_type": event_type,
 	}
 
-func _add_note() -> void:
-	var note: Dictionary = _generate_alien_scribble()
+func _add_note(event_type: String = "Observation") -> void:
+	var note: Dictionary = _generate_alien_scribble(event_type)
 
 	# Remove oldest if at max
 	if _notes.size() >= MAX_NOTES:
@@ -166,8 +167,8 @@ func _process(delta: float) -> void:
 	if _note_cooldown > 0:
 		_note_cooldown -= delta
 	elif _pending_note_queue.size() > 0:
-		_pending_note_queue.pop_front()
-		_add_note()
+		var evt: String = _pending_note_queue.pop_front()
+		_add_note(evt)
 		_note_cooldown = 4.0
 
 	# Update notes
@@ -346,6 +347,20 @@ func _draw_note(note: Dictionary) -> void:
 			words_drawn += 1
 
 		line_y += 22
+
+	# Event type label (subtle)
+	var evt_type: String = note.get("event_type", "")
+	if evt_type != "" and alpha > 0.1:
+		var font := ThemeDB.fallback_font
+		var evt_color: Color
+		match evt_type:
+			"Evolution": evt_color = Color(0.4, 0.8, 1.0, 0.35 * alpha)
+			"Kill": evt_color = Color(1.0, 0.4, 0.3, 0.35 * alpha)
+			"Damage": evt_color = Color(0.9, 0.5, 0.2, 0.35 * alpha)
+			"Reproduction": evt_color = Color(0.5, 1.0, 0.5, 0.35 * alpha)
+			"Collection": evt_color = Color(0.8, 0.7, 0.3, 0.35 * alpha)
+			_: evt_color = Color(0.5, 0.5, 0.4, 0.25 * alpha)
+		draw_string(font, Vector2(PANE_WIDTH - 90, line_y + 4), evt_type, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, evt_color)
 
 	# Draw ember particles
 	for ember in note.ember_particles:

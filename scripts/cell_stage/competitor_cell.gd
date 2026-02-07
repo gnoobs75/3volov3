@@ -2,6 +2,8 @@ extends CharacterBody2D
 ## Competitor cell: neutral AI that hunts biomolecules, creating food rivalry.
 ## Has its own comical face that reacts to finding/losing food.
 
+signal parasite_cleaned
+
 enum State { HUNT, EATING, WANDER, STARTLED }
 
 var state: State = State.WANDER
@@ -181,6 +183,7 @@ func _do_hunt(delta: float) -> void:
 			_cleaning_player = false
 			state = State.EATING
 			eat_timer = 0.6
+			parasite_cleaned.emit()
 		return
 
 	# Hunting prey target
