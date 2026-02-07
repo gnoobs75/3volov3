@@ -45,6 +45,10 @@ theme_override_font_sizes/font_size = 18
 layout_mode = 2
 text = "Begin Observation"
 
+[node name="SnakeButton" type="Button" parent="VBoxContainer"]
+layout_mode = 2
+text = "Land Stage (Snake Mode)"
+
 [node name="MusicToggle" type="CheckButton" parent="VBoxContainer"]
 layout_mode = 2
 text = "Use Music Files"

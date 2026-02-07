@@ -77,6 +77,26 @@ var _buf_observer_distressed: PackedFloat32Array
 var _observer_cooldown: float = 0.0
 const OBSERVER_COOLDOWN_TIME: float = 4.0
 
+# Snake stage environment sound buffers
+var _buf_grass_rustle: PackedFloat32Array
+var _buf_bush_push: PackedFloat32Array
+var _buf_insect_chirp: PackedFloat32Array
+var _buf_tunnel_echo: PackedFloat32Array
+var _buf_land_collect: PackedFloat32Array
+var _buf_ambient_hum: PackedFloat32Array
+
+# Cave stage sound buffers
+var _buf_sonar_ping: PackedFloat32Array
+var _buf_sonar_return: PackedFloat32Array
+var _buf_cave_drip: PackedFloat32Array
+var _buf_crystal_resonance: PackedFloat32Array
+var _buf_lava_bubble: PackedFloat32Array
+var _buf_deep_cave_drone: PackedFloat32Array
+var _buf_cave_footstep: PackedFloat32Array
+var _buf_mode_switch: PackedFloat32Array
+var _buf_spore_release: PackedFloat32Array
+var _buf_creature_echolocation: PackedFloat32Array
+
 # Beam looping state
 var _beam_playing: bool = false
 var _beam_player: AudioStreamPlayer
@@ -136,6 +156,26 @@ func _ready() -> void:
 	_buf_observer_laugh = SynthSounds.gen_observer_laugh()
 	_buf_observer_impressed = SynthSounds.gen_observer_impressed()
 	_buf_observer_distressed = SynthSounds.gen_observer_distressed()
+
+	# Pre-generate snake stage environment sounds
+	_buf_grass_rustle = SynthSounds.gen_grass_rustle()
+	_buf_bush_push = SynthSounds.gen_bush_push()
+	_buf_insect_chirp = SynthSounds.gen_insect_chirp()
+	_buf_tunnel_echo = SynthSounds.gen_tunnel_echo()
+	_buf_land_collect = SynthSounds.gen_land_collect()
+	_buf_ambient_hum = SynthSounds.gen_ambient_hum()
+
+	# Pre-generate cave stage sounds
+	_buf_sonar_ping = SynthSounds.gen_sonar_ping()
+	_buf_sonar_return = SynthSounds.gen_sonar_return()
+	_buf_cave_drip = SynthSounds.gen_cave_drip()
+	_buf_crystal_resonance = SynthSounds.gen_crystal_resonance()
+	_buf_lava_bubble = SynthSounds.gen_lava_bubble()
+	_buf_deep_cave_drone = SynthSounds.gen_deep_cave_drone()
+	_buf_cave_footstep = SynthSounds.gen_cave_footstep()
+	_buf_mode_switch = SynthSounds.gen_mode_switch()
+	_buf_spore_release = SynthSounds.gen_spore_release()
+	_buf_creature_echolocation = SynthSounds.gen_creature_echolocation()
 
 	# Setup music players for file-based music
 	_setup_music_players()
@@ -380,6 +420,60 @@ func play_observer_impressed() -> void:
 
 func play_observer_distressed() -> void:
 	_play_observer_sound(_buf_observer_distressed, -3.0)
+
+## === SNAKE STAGE ENVIRONMENT SOUNDS ===
+
+func play_grass_rustle() -> void:
+	_play_buffer(_buf_grass_rustle, -12.0)
+
+func play_bush_push() -> void:
+	_play_buffer(_buf_bush_push, -8.0)
+
+func play_insect_chirp() -> void:
+	_play_buffer(_buf_insect_chirp, -14.0)
+
+func play_tunnel_echo() -> void:
+	_play_buffer(_buf_tunnel_echo, -6.0)
+
+func play_land_collect() -> void:
+	_play_buffer(_buf_land_collect, -4.0)
+
+func play_ambient_hum() -> void:
+	_play_buffer(_buf_ambient_hum, -16.0)
+
+## === CAVE STAGE SOUNDS ===
+
+func play_sonar_ping() -> void:
+	_play_buffer(_buf_sonar_ping, -10.0)
+
+func play_sonar_return() -> void:
+	_play_buffer(_buf_sonar_return, -12.0)
+
+func play_cave_drip() -> void:
+	# Regenerate each time for variety in pitch
+	var buf := SynthSounds.gen_cave_drip()
+	_play_buffer(buf, -10.0)
+
+func play_crystal_resonance() -> void:
+	_play_buffer(_buf_crystal_resonance, -8.0)
+
+func play_lava_bubble() -> void:
+	_play_buffer(_buf_lava_bubble, -6.0)
+
+func play_deep_cave_drone() -> void:
+	_play_buffer(_buf_deep_cave_drone, -14.0)
+
+func play_cave_footstep() -> void:
+	_play_buffer(_buf_cave_footstep, -10.0)
+
+func play_mode_switch() -> void:
+	_play_buffer(_buf_mode_switch, -4.0)
+
+func play_spore_release() -> void:
+	_play_buffer(_buf_spore_release, -8.0)
+
+func play_creature_echolocation() -> void:
+	_play_buffer(_buf_creature_echolocation, -6.0)
 
 ## === MUSIC FILE PLAYBACK ===
 

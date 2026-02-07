@@ -6,6 +6,7 @@ var _bg_cells: Array[Dictionary] = []
 
 func _ready() -> void:
 	$VBoxContainer/StartButton.pressed.connect(_on_start)
+	$VBoxContainer/SnakeButton.pressed.connect(_on_snake)
 	$VBoxContainer/QuitButton.pressed.connect(_on_quit)
 	# Music toggle
 	var music_toggle: CheckButton = $VBoxContainer/MusicToggle
@@ -49,6 +50,10 @@ func _draw() -> void:
 func _on_start() -> void:
 	GameManager.reset_stats()
 	GameManager.go_to_intro()
+
+func _on_snake() -> void:
+	GameManager.reset_stats()
+	GameManager.go_to_snake_stage()
 
 func _on_quit() -> void:
 	get_tree().quit()

@@ -15,6 +15,9 @@ static func triangle(phase: float) -> float:
 static func sawtooth(phase: float) -> float:
 	return 2.0 * fmod(phase, 1.0) - 1.0
 
+static func square(phase: float) -> float:
+	return 1.0 if fmod(phase, 1.0) < 0.5 else -1.0
+
 static func noise() -> float:
 	return randf_range(-1.0, 1.0)
 
@@ -464,4 +467,311 @@ static func gen_splice_fail() -> PackedFloat32Array:
 		phase2 += (freq * 1.06) / SAMPLE_RATE  # Minor second for dissonance
 		var s: float = square(phase) * 0.25 + sine(phase2) * 0.2 + noise() * 0.1 * env
 		buf[i] = s * env * 0.4
+	return buf
+
+## --- SNAKE STAGE ENVIRONMENT SOUNDS ---
+
+## Grass rustle: filtered noise with gentle high-pass character
+static func gen_grass_rustle() -> PackedFloat32Array:
+	var dur: float = 0.3
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var prev: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.01, 0.08, 0.3, 0.15, dur)
+		# Filtered noise (high-pass via differencing)
+		var raw: float = noise() * 0.5
+		var filtered: float = raw - prev * 0.7
+		prev = raw
+		buf[i] = filtered * env * 0.25
+	return buf
+
+## Bush push: deeper rustling swoosh
+static func gen_bush_push() -> PackedFloat32Array:
+	var dur: float = 0.4
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.02, 0.1, 0.4, 0.2, dur)
+		var freq: float = lerpf(120.0, 60.0, t / dur)
+		phase += freq / SAMPLE_RATE
+		var s: float = noise() * 0.4 + sine(phase) * 0.15
+		buf[i] = s * env * 0.3
+	return buf
+
+## Ambient insect chirp: short high-pitched trill
+static func gen_insect_chirp() -> PackedFloat32Array:
+	var dur: float = 0.15
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.005, 0.02, 0.6, 0.05, dur)
+		# Rapid chirp: high freq with AM modulation
+		var freq: float = randf_range(2800.0, 4200.0)
+		phase += freq / SAMPLE_RATE
+		var am: float = 0.5 + 0.5 * sine(t * 45.0)  # Amplitude modulation for chirp
+		var s: float = sine(phase) * am
+		buf[i] = s * env * 0.15
+	return buf
+
+## Tunnel echo: reverb-like descending tone
+static func gen_tunnel_echo() -> PackedFloat32Array:
+	var dur: float = 1.2
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.05, 0.2, 0.3, 0.6, dur)
+		var freq: float = lerpf(200.0, 80.0, t / dur)
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 1.5) / SAMPLE_RATE  # Fifth harmony
+		var s: float = sine(phase) * 0.4 + sine(phase2) * 0.2 + noise() * 0.05
+		buf[i] = s * env * 0.3
+	return buf
+
+## Nutrient land collect: bright sparkly chime (different from cell stage)
+static func gen_land_collect() -> PackedFloat32Array:
+	var dur: float = 0.35
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.01, 0.08, 0.4, 0.15, dur)
+		# Two-tone ascending sparkle
+		var freq: float = lerpf(600.0, 1200.0, t / dur)
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 1.5) / SAMPLE_RATE
+		var s: float = sine(phase) * 0.35 + triangle(phase2) * 0.15 + sine(phase * 3.0) * 0.08
+		buf[i] = s * env * 0.5
+	return buf
+
+## Ambient hum: low organic drone for background
+static func gen_ambient_hum() -> PackedFloat32Array:
+	var dur: float = 3.0
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.5, 0.3, 0.5, 1.0, dur)
+		# Slow, low organic drone
+		var freq: float = 55.0 + sin(t * 0.3) * 5.0
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 1.498) / SAMPLE_RATE  # Slightly detuned fifth
+		var s: float = sine(phase) * 0.3 + sine(phase2) * 0.2 + triangle(phase * 0.5) * 0.1
+		buf[i] = s * env * 0.15
+	return buf
+
+## --- CAVE STAGE SOUNDS ---
+
+## Sonar ping: deep bassy submarine pulse with cave reverb
+static func gen_sonar_ping() -> PackedFloat32Array:
+	var dur: float = 3.0
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	var phase3: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Slow exponential decay over 3 seconds
+		var env: float = exp(-t * 1.2) * 0.6
+		# Deep bass sweep: 65Hz down to 30Hz
+		var freq: float = lerpf(65.0, 30.0, t / dur)
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 0.5) / SAMPLE_RATE  # Sub-bass octave below
+		phase3 += (freq * 1.5) / SAMPLE_RATE  # Fifth harmonic for warmth
+		# Rich bass tone
+		var s: float = sine(phase) * 0.45 + sine(phase2) * 0.3 + sine(phase3) * 0.06
+		# Subtle organic texture
+		s += noise() * 0.015 * env
+		# Cave reverb: multiple reflections
+		var reverb: float = 0.0
+		if i > int(0.09 * SAMPLE_RATE):
+			reverb += buf[i - int(0.09 * SAMPLE_RATE)] * 0.18
+		if i > int(0.2 * SAMPLE_RATE):
+			reverb += buf[i - int(0.2 * SAMPLE_RATE)] * 0.1
+		if i > int(0.4 * SAMPLE_RATE):
+			reverb += buf[i - int(0.4 * SAMPLE_RATE)] * 0.05
+		buf[i] = (s + reverb) * env
+	return buf
+
+## Sonar return: soft tink when contour points appear
+static func gen_sonar_return() -> PackedFloat32Array:
+	var dur: float = 0.1
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = exp(-t * 35.0)
+		phase += 3200.0 / SAMPLE_RATE
+		buf[i] = sine(phase) * env * 0.15
+	return buf
+
+## Cave drip: single water drip with cave reverb
+static func gen_cave_drip() -> PackedFloat32Array:
+	var dur: float = 0.6
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Sharp initial drip
+		var drip_env: float = exp(-t * 40.0) * 0.7
+		var drip_freq: float = lerpf(3500.0, 1800.0, minf(t * 20.0, 1.0))
+		phase += drip_freq / SAMPLE_RATE
+		var drip: float = sine(phase) * drip_env
+		# Reverb tail
+		var reverb: float = 0.0
+		if i > int(0.08 * SAMPLE_RATE):
+			reverb = buf[i - int(0.08 * SAMPLE_RATE)] * 0.25
+		if i > int(0.18 * SAMPLE_RATE):
+			reverb += buf[i - int(0.18 * SAMPLE_RATE)] * 0.15
+		if i > int(0.32 * SAMPLE_RATE):
+			reverb += buf[i - int(0.32 * SAMPLE_RATE)] * 0.08
+		buf[i] = drip + reverb
+	return buf
+
+## Crystal resonance: sustained harmonic drone near crystals
+static func gen_crystal_resonance() -> PackedFloat32Array:
+	var dur: float = 1.5
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	var phase3: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.2, 0.3, 0.6, 0.5, dur)
+		# Pure harmonics for crystal-like tone
+		var freq: float = 440.0 + sin(t * 2.0) * 10.0
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 2.0) / SAMPLE_RATE  # Octave
+		phase3 += (freq * 3.0) / SAMPLE_RATE  # Fifth above octave
+		var s: float = sine(phase) * 0.25 + sine(phase2) * 0.15 + sine(phase3) * 0.08
+		buf[i] = s * env * 0.3
+	return buf
+
+## Lava bubble: deep gurgling pop
+static func gen_lava_bubble() -> PackedFloat32Array:
+	var dur: float = 0.4
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.02, 0.08, 0.3, 0.2, dur)
+		# Low frequency bubble with noise
+		var freq: float = lerpf(100.0, 50.0, t / dur) + sin(t * 20.0) * 15.0
+		phase += freq / SAMPLE_RATE
+		var s: float = sine(phase) * 0.5 + noise() * 0.15 * env
+		buf[i] = s * env * 0.4
+	return buf
+
+## Deep cave drone: sub-bass rumble for deep caves
+static func gen_deep_cave_drone() -> PackedFloat32Array:
+	var dur: float = 4.0
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 1.0, 0.5, 0.6, 1.5, dur)
+		# Sub-bass with slow modulation
+		var freq: float = 35.0 + sin(t * 0.2) * 5.0
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 1.5) / SAMPLE_RATE
+		var s: float = sine(phase) * 0.4 + sine(phase2) * 0.15 + noise() * 0.02
+		buf[i] = s * env * 0.12
+	return buf
+
+## Cave footstep: impact + echo, pitch varies with cave size
+static func gen_cave_footstep() -> PackedFloat32Array:
+	var dur: float = 0.35
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Sharp impact
+		var impact: float = exp(-t * 30.0) * 0.5
+		var freq: float = lerpf(200.0, 80.0, minf(t * 10.0, 1.0))
+		phase += freq / SAMPLE_RATE
+		var s: float = sine(phase) * impact + noise() * impact * 0.3
+		# Echo
+		if i > int(0.1 * SAMPLE_RATE):
+			s += buf[i - int(0.1 * SAMPLE_RATE)] * 0.2
+		buf[i] = s * 0.4
+	return buf
+
+## Mode switch: whoosh with rising pitch per mode
+static func gen_mode_switch() -> PackedFloat32Array:
+	var dur: float = 0.3
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.02, 0.05, 0.5, 0.15, dur)
+		var freq: float = lerpf(200.0, 800.0, t / dur)
+		phase += freq / SAMPLE_RATE
+		var s: float = sine(phase) * 0.3 + noise() * 0.15 * exp(-t * 8.0)
+		buf[i] = s * env * 0.4
+	return buf
+
+## Spore release: soft breath-like puff
+static func gen_spore_release() -> PackedFloat32Array:
+	var dur: float = 0.5
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.05, 0.1, 0.4, 0.25, dur)
+		# Breathy noise
+		var s: float = noise() * 0.3 + sin(t * 300.0 * TAU) * 0.05
+		buf[i] = s * env * 0.2
+	return buf
+
+## Creature echolocation: rapid clicks for Abyss Lurker
+static func gen_creature_echolocation() -> PackedFloat32Array:
+	var dur: float = 0.4
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Rapid clicks
+		var click_rate: float = 40.0
+		var click_phase: float = fmod(t * click_rate, 1.0)
+		var click: float = exp(-click_phase * 50.0) * 0.6
+		var freq: float = 4000.0 + sin(t * 8.0) * 500.0
+		var s: float = sin(t * freq * TAU) * click
+		buf[i] = s * 0.3
 	return buf

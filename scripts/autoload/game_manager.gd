@@ -7,8 +7,9 @@ signal biomolecule_collected(item: Dictionary)
 signal evolution_triggered(category: String)
 signal evolution_applied(mutation: Dictionary)
 signal cell_stage_won
+signal safe_zone_ended
 
-enum Stage { MENU, INTRO, CELL, OCEAN_STUB }
+enum Stage { MENU, INTRO, CELL, SNAKE, OCEAN_STUB }
 
 var current_stage: Stage = Stage.MENU
 
@@ -25,7 +26,9 @@ var evolution_level: int = 0
 var active_mutations: Array[Dictionary] = []
 var sensory_level: int = 0
 var tutorial_shown: bool = false
+var safe_zone_active: bool = true  # No enemies until player collects a few items
 const MAX_VIAL: int = 10
+const SAFE_ZONE_THRESHOLD: int = 3  # Collections before enemies appear
 
 const SENSORY_TIERS: Array = [
 	{"visibility_range": 0.35, "color_perception": 0.0, "name": "Chemoreception"},
@@ -71,6 +74,11 @@ func go_to_cell_stage() -> void:
 	get_tree().change_scene_to_file("res://scenes/cell_stage.tscn")
 	stage_changed.emit("cell")
 
+func go_to_snake_stage() -> void:
+	current_stage = Stage.SNAKE
+	get_tree().change_scene_to_file("res://scenes/snake_stage.tscn")
+	stage_changed.emit("snake")
+
 func go_to_ocean_stub() -> void:
 	current_stage = Stage.OCEAN_STUB
 	print("GameManager: Ocean stage not yet implemented - you've completed the Cell Stage!")
@@ -110,6 +118,10 @@ func collect_biomolecule(item: Dictionary) -> void:
 		inventory[inv_key].append(item.get("id", ""))
 	biomolecule_collected.emit(item)
 	inventory_changed.emit()
+	# End safe zone after enough collections
+	if safe_zone_active and get_total_collected() >= SAFE_ZONE_THRESHOLD:
+		safe_zone_active = false
+		safe_zone_ended.emit()
 	# Check if any vial is full → trigger evolution
 	if inv_key != "" and inventory[inv_key].size() >= MAX_VIAL:
 		evolution_triggered.emit(inv_key)
