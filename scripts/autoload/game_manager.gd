@@ -6,6 +6,7 @@ signal inventory_changed()
 signal biomolecule_collected(item: Dictionary)
 signal evolution_triggered(category: String)
 signal evolution_applied(mutation: Dictionary)
+signal cell_stage_won
 
 enum Stage { MENU, INTRO, CELL, OCEAN_STUB }
 
@@ -23,6 +24,7 @@ var player_stats: Dictionary = {
 var evolution_level: int = 0
 var active_mutations: Array[Dictionary] = []
 var sensory_level: int = 0
+var tutorial_shown: bool = false
 const MAX_VIAL: int = 10
 
 const SENSORY_TIERS: Array = [
@@ -86,7 +88,7 @@ func check_cell_win() -> bool:
 func add_reproduction() -> void:
 	player_stats.reproductions += 1
 	if check_cell_win():
-		go_to_ocean_stub()
+		cell_stage_won.emit()
 
 func add_organelle() -> void:
 	player_stats.organelles_collected += 1
