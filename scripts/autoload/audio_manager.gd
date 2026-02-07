@@ -62,6 +62,10 @@ var _buf_ui_select: PackedFloat32Array
 var _buf_ui_open: PackedFloat32Array
 var _buf_energy_warning: PackedFloat32Array
 
+# CRISPR splice sound buffers
+var _buf_splice_success: PackedFloat32Array
+var _buf_splice_fail: PackedFloat32Array
+
 # Observer vocalization buffers
 var _buf_observer_gasp: PackedFloat32Array
 var _buf_observer_hmm: PackedFloat32Array
@@ -121,6 +125,10 @@ func _ready() -> void:
 	_buf_ui_select = SynthSounds.gen_ui_select()
 	_buf_ui_open = SynthSounds.gen_ui_open()
 	_buf_energy_warning = SynthSounds.gen_energy_warning()
+
+	# Pre-generate CRISPR splice sounds
+	_buf_splice_success = SynthSounds.gen_splice_success()
+	_buf_splice_fail = SynthSounds.gen_splice_fail()
 
 	# Pre-generate observer vocalization buffers
 	_buf_observer_gasp = SynthSounds.gen_observer_gasp()
@@ -322,6 +330,12 @@ func play_ui_open() -> void:
 
 func play_energy_warning() -> void:
 	_play_buffer(_buf_energy_warning, -3.0)
+
+func play_splice_success() -> void:
+	_play_buffer(_buf_splice_success, -2.0)
+
+func play_splice_fail() -> void:
+	_play_buffer(_buf_splice_fail, -2.0)
 
 ## Beam sound (looping while active)
 func start_beam() -> void:

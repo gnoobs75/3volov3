@@ -425,3 +425,43 @@ static func gen_observer_distressed() -> PackedFloat32Array:
 		var s: float = sine(phase) * 0.35 + sine(phase2) * 0.2 + noise() * 0.05 * env
 		buf[i] = s * env * 0.45
 	return buf
+
+static func gen_splice_success() -> PackedFloat32Array:
+	var dur: float = 0.6
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.02, 0.05, 0.6, 0.4, dur)
+		# Rising arpeggio: C5 → E5 → G5
+		var freq: float = 523.0
+		if t > 0.15:
+			freq = 659.0
+		if t > 0.3:
+			freq = 784.0
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 2.0) / SAMPLE_RATE  # Octave sparkle
+		var s: float = sine(phase) * 0.4 + sine(phase2) * 0.15 + triangle(phase * 0.5) * 0.1
+		buf[i] = s * env * 0.5
+	return buf
+
+static func gen_splice_fail() -> PackedFloat32Array:
+	var dur: float = 0.5
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.01, 0.05, 0.5, 0.3, dur)
+		# Descending dissonant buzz
+		var freq: float = lerpf(300.0, 120.0, t / dur)
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 1.06) / SAMPLE_RATE  # Minor second for dissonance
+		var s: float = square(phase) * 0.25 + sine(phase2) * 0.2 + noise() * 0.1 * env
+		buf[i] = s * env * 0.4
+	return buf
