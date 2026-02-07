@@ -6,13 +6,15 @@ var _hub_data = null  # HubData from cave_generator
 var _floor_heightmap: Array = []  # 2D array of floor heights for queries
 var _grid_size: int = 0
 var _noise: FastNoiseLite = null
-var _tunnel_connection_points: Array[Vector3] = []  # Local-space XZ of tunnel mouths
+var _tunnel_connection_points: Array[Vector3] = []  # World-space tunnel mouth positions (at wall boundary)
+var _tunnel_mouth_widths: Array[float] = []  # Width of each tunnel for wall opening calculation
 
 func setup(hub_data) -> void:
 	_hub_data = hub_data
 
-func add_tunnel_connection(world_pos: Vector3) -> void:
+func add_tunnel_connection(world_pos: Vector3, width: float = 4.0) -> void:
 	_tunnel_connection_points.append(world_pos)
+	_tunnel_mouth_widths.append(width)
 
 func _ready() -> void:
 	if _hub_data:
@@ -24,7 +26,7 @@ func _build_hub() -> void:
 	# Noise for floor/ceiling variation
 	_noise = FastNoiseLite.new()
 	_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	_noise.frequency = 0.04
+	_noise.frequency = 0.025
 	_noise.seed = _hub_data.id * 137 + 42
 
 	var biome_colors: Dictionary = _get_biome_colors()
@@ -43,11 +45,11 @@ func _add_tunnel_mouth_lights(colors: Dictionary) -> void:
 		var light: OmniLight3D = OmniLight3D.new()
 		light.name = "TunnelMouthLight"
 		light.light_color = colors.emission.lightened(0.3)
-		light.light_energy = 0.3
-		light.omni_range = 5.0
-		light.omni_attenuation = 1.5
+		light.light_energy = 0.6
+		light.omni_range = 10.0
+		light.omni_attenuation = 1.2
 		light.shadow_enabled = false
-		light.position = local_pos + Vector3(0, 1.5, 0)
+		light.position = local_pos + Vector3(0, 2.5, 0)
 		add_child(light)
 
 func _get_biome_colors() -> Dictionary:
@@ -68,7 +70,7 @@ func _get_biome_colors() -> Dictionary:
 
 func _build_floor(colors: Dictionary) -> void:
 	var radius: float = _hub_data.radius
-	var subdivs: int = clampi(int(radius * 0.5), 12, 40)
+	var subdivs: int = clampi(int(radius * 1.0), 20, 60)
 	_grid_size = subdivs + 1
 
 	# Generate heightmap
@@ -80,15 +82,26 @@ func _build_floor(colors: Dictionary) -> void:
 			var wx: float = (float(gx) / subdivs - 0.5) * radius * 2.0
 			var wz: float = (float(gz) / subdivs - 0.5) * radius * 2.0
 			var dist_from_center: float = Vector2(wx, wz).length()
-			var height_noise: float = _noise.get_noise_2d(wx, wz) * 2.0
+			var height_noise: float = _noise.get_noise_2d(wx, wz) * 0.8
 
 			# Floor rises toward edges (bowl shape)
 			var edge_factor: float = clampf(dist_from_center / radius, 0.0, 1.0)
-			var edge_rise: float = edge_factor * edge_factor * edge_factor * _hub_data.height * 0.4
+			var edge_rise: float = edge_factor * edge_factor * edge_factor * _hub_data.height * 0.25
 
 			_floor_heightmap[gx][gz] = height_noise + edge_rise
 
-	# Flatten floor in 5-unit radius around tunnel connection points
+	# Flatten an 8-unit radius circle at hub center (safe spawn zone)
+	for gx2 in range(_grid_size):
+		for gz2 in range(_grid_size):
+			var wx2: float = (float(gx2) / subdivs - 0.5) * radius * 2.0
+			var wz2: float = (float(gz2) / subdivs - 0.5) * radius * 2.0
+			var center_dist: float = Vector2(wx2, wz2).length()
+			if center_dist < 8.0:
+				var blend: float = center_dist / 8.0
+				blend = blend * blend * blend  # Cubic ease
+				_floor_heightmap[gx2][gz2] = lerpf(0.0, _floor_heightmap[gx2][gz2], blend)
+
+	# Flatten floor in 12-unit radius around tunnel connection points (gentle ramp)
 	for conn_world_pos in _tunnel_connection_points:
 		var local_x: float = conn_world_pos.x - _hub_data.position.x
 		var local_z: float = conn_world_pos.z - _hub_data.position.z
@@ -97,12 +110,61 @@ func _build_floor(colors: Dictionary) -> void:
 				var wx2: float = (float(gx2) / subdivs - 0.5) * radius * 2.0
 				var wz2: float = (float(gz2) / subdivs - 0.5) * radius * 2.0
 				var d: float = Vector2(wx2 - local_x, wz2 - local_z).length()
-				if d < 5.0:
-					var blend: float = d / 5.0
-					blend = blend * blend  # Smooth falloff
-					_floor_heightmap[gx2][gz2] = lerpf(0.0, _floor_heightmap[gx2][gz2], blend)
+				if d < 12.0:
+					var blend: float = d / 12.0
+					blend = blend * blend * blend  # Cubic smooth falloff
+					_floor_heightmap[gx2][gz2] = lerpf(-1.0, _floor_heightmap[gx2][gz2], blend)
 
-	# Build mesh
+	# Heightmap smoothing pass (3x3 box blur to eliminate sharp seams)
+	_smooth_heightmap(subdivs)
+
+	# Compute smooth per-vertex normals by accumulating face normals
+	var vertex_normals: Array = []
+	vertex_normals.resize(_grid_size)
+	for gx in range(_grid_size):
+		vertex_normals[gx] = []
+		vertex_normals[gx].resize(_grid_size)
+		for gz in range(_grid_size):
+			vertex_normals[gx][gz] = Vector3.ZERO
+
+	# First pass: accumulate face normals to vertices
+	for gx in range(subdivs):
+		for gz in range(subdivs):
+			var x0: float = (float(gx) / subdivs - 0.5) * radius * 2.0
+			var x1: float = (float(gx + 1) / subdivs - 0.5) * radius * 2.0
+			var z0: float = (float(gz) / subdivs - 0.5) * radius * 2.0
+			var z1: float = (float(gz + 1) / subdivs - 0.5) * radius * 2.0
+			var v00: Vector3 = Vector3(x0, _floor_heightmap[gx][gz], z0)
+			var v10: Vector3 = Vector3(x1, _floor_heightmap[gx + 1][gz], z0)
+			var v01: Vector3 = Vector3(x0, _floor_heightmap[gx][gz + 1], z1)
+			var v11: Vector3 = Vector3(x1, _floor_heightmap[gx + 1][gz + 1], z1)
+			var fn0: Vector3 = (v01 - v00).cross(v10 - v00)
+			var fn1: Vector3 = (v10 - v11).cross(v01 - v11)
+			vertex_normals[gx][gz] += fn0
+			vertex_normals[gx][gz + 1] += fn0 + fn1
+			vertex_normals[gx + 1][gz] += fn0 + fn1
+			vertex_normals[gx + 1][gz + 1] += fn1
+
+	# Normalize all vertex normals
+	for gx in range(_grid_size):
+		for gz in range(_grid_size):
+			if vertex_normals[gx][gz].length_squared() > 0.0001:
+				vertex_normals[gx][gz] = vertex_normals[gx][gz].normalized()
+			else:
+				vertex_normals[gx][gz] = Vector3.UP
+
+	# Pre-compute tunnel mouth angles for floor gap at hub edge
+	var floor_tunnel_angles: Array[float] = []
+	var floor_tunnel_half_angles: Array[float] = []
+	for i in range(_tunnel_connection_points.size()):
+		var conn_pos: Vector3 = _tunnel_connection_points[i]
+		var local_x: float = conn_pos.x - _hub_data.position.x
+		var local_z: float = conn_pos.z - _hub_data.position.z
+		floor_tunnel_angles.append(atan2(local_z, local_x))
+		var w: float = _tunnel_mouth_widths[i] if i < _tunnel_mouth_widths.size() else 4.0
+		floor_tunnel_half_angles.append(atan2(w * 0.8, radius) + 0.15)
+
+	# Build mesh with smooth per-vertex normals
 	var st: SurfaceTool = SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 
@@ -119,6 +181,19 @@ func _build_floor(colors: Dictionary) -> void:
 			if Vector2(cx, cz).length() > radius * 1.05:
 				continue
 
+			# Skip edge floor cells at tunnel mouths (tunnel tube provides floor there)
+			var cell_dist: float = Vector2(cx, cz).length()
+			if cell_dist > radius * 0.8:
+				var cell_angle: float = atan2(cz, cx)
+				var skip_for_tunnel: bool = false
+				for t_idx in range(floor_tunnel_angles.size()):
+					var diff: float = fmod(cell_angle - floor_tunnel_angles[t_idx] + PI + TAU, TAU) - PI
+					if absf(diff) < floor_tunnel_half_angles[t_idx]:
+						skip_for_tunnel = true
+						break
+				if skip_for_tunnel:
+					continue
+
 			var y00: float = _floor_heightmap[gx][gz]
 			var y10: float = _floor_heightmap[gx + 1][gz]
 			var y01: float = _floor_heightmap[gx][gz + 1]
@@ -129,9 +204,11 @@ func _build_floor(colors: Dictionary) -> void:
 			var v01: Vector3 = Vector3(x0, y01, z1)
 			var v11: Vector3 = Vector3(x1, y11, z1)
 
-			# Normals via cross product (CCW winding from above = upward normals)
-			var n0: Vector3 = (v01 - v00).cross(v10 - v00).normalized()
-			var n1: Vector3 = (v10 - v11).cross(v01 - v11).normalized()
+			# Smooth per-vertex normals
+			var n00: Vector3 = vertex_normals[gx][gz]
+			var n10: Vector3 = vertex_normals[gx + 1][gz]
+			var n01: Vector3 = vertex_normals[gx][gz + 1]
+			var n11: Vector3 = vertex_normals[gx + 1][gz + 1]
 
 			# Vertex colors based on height
 			var col_base: Color = colors.floor
@@ -139,20 +216,24 @@ func _build_floor(colors: Dictionary) -> void:
 			var col_high: Color = col_base.darkened(0.2)
 
 			# Triangle 1 (v00, v01, v10 — CCW from above)
-			st.set_normal(n0)
+			st.set_normal(n00)
 			st.set_color(col_low.lerp(col_high, clampf(y00 / 3.0, 0.0, 1.0)))
 			st.add_vertex(v00)
+			st.set_normal(n01)
 			st.set_color(col_low.lerp(col_high, clampf(y01 / 3.0, 0.0, 1.0)))
 			st.add_vertex(v01)
+			st.set_normal(n10)
 			st.set_color(col_low.lerp(col_high, clampf(y10 / 3.0, 0.0, 1.0)))
 			st.add_vertex(v10)
 
 			# Triangle 2 (v01, v11, v10 — CCW from above)
-			st.set_normal(n1)
+			st.set_normal(n01)
 			st.set_color(col_low.lerp(col_high, clampf(y01 / 3.0, 0.0, 1.0)))
 			st.add_vertex(v01)
+			st.set_normal(n11)
 			st.set_color(col_low.lerp(col_high, clampf(y11 / 3.0, 0.0, 1.0)))
 			st.add_vertex(v11)
+			st.set_normal(n10)
 			st.set_color(col_low.lerp(col_high, clampf(y10 / 3.0, 0.0, 1.0)))
 			st.add_vertex(v10)
 
@@ -184,10 +265,41 @@ func _build_floor(colors: Dictionary) -> void:
 	static_body.add_child(col_shape)
 	add_child(static_body)
 
+func _smooth_heightmap(subdivs: int) -> void:
+	## 3x3 box blur on the floor heightmap to eliminate sharp seams
+	var smoothed: Array = []
+	smoothed.resize(_grid_size)
+	for gx in range(_grid_size):
+		smoothed[gx] = []
+		smoothed[gx].resize(_grid_size)
+		for gz in range(_grid_size):
+			var sum: float = 0.0
+			var count: int = 0
+			for dx in range(-1, 2):
+				for dz in range(-1, 2):
+					var nx: int = gx + dx
+					var nz: int = gz + dz
+					if nx >= 0 and nx < _grid_size and nz >= 0 and nz < _grid_size:
+						sum += _floor_heightmap[nx][nz]
+						count += 1
+			smoothed[gx][gz] = sum / count
+	_floor_heightmap = smoothed
+
 func _build_ceiling(colors: Dictionary) -> void:
 	var radius: float = _hub_data.radius
 	var height: float = _hub_data.height
 	var subdivs: int = clampi(int(radius * 0.4), 10, 30)
+
+	# Pre-compute tunnel mouth angles for ceiling gaps
+	var ceil_tunnel_angles: Array[float] = []
+	var ceil_tunnel_half_angles: Array[float] = []
+	for i in range(_tunnel_connection_points.size()):
+		var conn_pos: Vector3 = _tunnel_connection_points[i]
+		var local_x: float = conn_pos.x - _hub_data.position.x
+		var local_z: float = conn_pos.z - _hub_data.position.z
+		ceil_tunnel_angles.append(atan2(local_z, local_x))
+		var w: float = _tunnel_mouth_widths[i] if i < _tunnel_mouth_widths.size() else 4.0
+		ceil_tunnel_half_angles.append(atan2(w * 0.8, radius) + 0.15)
 
 	var ceiling_noise: FastNoiseLite = FastNoiseLite.new()
 	ceiling_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
@@ -208,6 +320,18 @@ func _build_ceiling(colors: Dictionary) -> void:
 			var cz: float = (z0 + z1) * 0.5
 			if Vector2(cx, cz).length() > radius * 1.05:
 				continue
+
+			# Skip edge ceiling cells at tunnel mouths
+			if Vector2(cx, cz).length() > radius * 0.8:
+				var cell_angle: float = atan2(cz, cx)
+				var skip_for_tunnel: bool = false
+				for t_idx in range(ceil_tunnel_angles.size()):
+					var diff: float = fmod(cell_angle - ceil_tunnel_angles[t_idx] + PI + TAU, TAU) - PI
+					if absf(diff) < ceil_tunnel_half_angles[t_idx]:
+						skip_for_tunnel = true
+						break
+				if skip_for_tunnel:
+					continue
 
 			# Ceiling height: base height - stalactite noise - edge droop
 			var edge00: float = clampf(Vector2(x0, z0).length() / radius, 0.0, 1.0)
@@ -284,12 +408,37 @@ func _build_walls(colors: Dictionary) -> void:
 	var segments: int = clampi(int(radius * 0.8), 16, 48)
 	var rings: int = clampi(int(height * 0.5), 4, 12)
 
+	# Pre-compute tunnel mouth angles and angular widths for wall openings
+	var tunnel_angles: Array[float] = []
+	var tunnel_half_angles: Array[float] = []
+	for i in range(_tunnel_connection_points.size()):
+		var conn_pos: Vector3 = _tunnel_connection_points[i]
+		var local_x: float = conn_pos.x - _hub_data.position.x
+		var local_z: float = conn_pos.z - _hub_data.position.z
+		var angle: float = atan2(local_z, local_x)
+		tunnel_angles.append(angle)
+		var w: float = _tunnel_mouth_widths[i] if i < _tunnel_mouth_widths.size() else 4.0
+		# Angular half-width: generous opening based on tunnel width + margin
+		var half_angle: float = atan2(w * 0.8, radius) + 0.15
+		tunnel_half_angles.append(half_angle)
+
 	var st: SurfaceTool = SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 
 	for seg in range(segments):
 		var angle0: float = TAU * seg / segments
 		var angle1: float = TAU * (seg + 1) / segments
+
+		# Check if this wall segment overlaps any tunnel mouth — skip if so
+		var mid_angle: float = (angle0 + angle1) * 0.5
+		var skip_segment: bool = false
+		for t_idx in range(tunnel_angles.size()):
+			var diff: float = fmod(mid_angle - tunnel_angles[t_idx] + PI + TAU, TAU) - PI
+			if absf(diff) < tunnel_half_angles[t_idx]:
+				skip_segment = true
+				break
+		if skip_segment:
+			continue
 
 		for ring in range(rings):
 			var t0: float = float(ring) / rings

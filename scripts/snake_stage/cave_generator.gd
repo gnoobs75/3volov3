@@ -391,15 +391,29 @@ func _instantiate_geometry() -> void:
 		hub.node_3d = hub_node
 		hub.is_active = true
 
-	# Register tunnel mouth positions with hubs BEFORE they build geometry
+	# Register tunnel mouth positions at wall boundary (NOT hub center)
 	for tunnel in tunnels:
 		if tunnel.path.size() >= 2:
 			var hub_a = hubs[tunnel.hub_a]
 			var hub_b = hubs[tunnel.hub_b]
+			# Compute direction from hub A toward hub B (XZ plane)
+			var dir_ab: Vector3 = hub_b.position - hub_a.position
+			dir_ab.y = 0
+			if dir_ab.length() > 0.1:
+				dir_ab = dir_ab.normalized()
+			else:
+				dir_ab = Vector3.FORWARD
+			# Wall intersection point for hub A (just inside wall boundary)
+			var wall_pos_a: Vector3 = hub_a.position + dir_ab * hub_a.radius * 0.95
+			wall_pos_a.y = hub_a.position.y
 			if hub_a.node_3d and hub_a.node_3d.has_method("add_tunnel_connection"):
-				hub_a.node_3d.add_tunnel_connection(tunnel.path[0])
+				hub_a.node_3d.add_tunnel_connection(wall_pos_a, tunnel.width)
+			# Wall intersection point for hub B (reverse direction)
+			var dir_ba: Vector3 = -dir_ab
+			var wall_pos_b: Vector3 = hub_b.position + dir_ba * hub_b.radius * 0.95
+			wall_pos_b.y = hub_b.position.y
 			if hub_b.node_3d and hub_b.node_3d.has_method("add_tunnel_connection"):
-				hub_b.node_3d.add_tunnel_connection(tunnel.path[-1])
+				hub_b.node_3d.add_tunnel_connection(wall_pos_b, tunnel.width)
 
 	# Now add hubs to tree (triggers _ready → _build_hub with tunnel info)
 	for hub in hubs:
@@ -480,7 +494,7 @@ func get_spawn_position() -> Vector3:
 		# Query actual floor height to avoid spawning inside geometry
 		if hub.node_3d and hub.node_3d.has_method("get_floor_y"):
 			var floor_y: float = hub.node_3d.get_floor_y(center.x, center.z)
-			return Vector3(center.x, floor_y + 3.0, center.z)
+			return Vector3(center.x, floor_y + 2.0, center.z)
 		return center + Vector3(0, 5.0, 0)
 	return Vector3(0, SPAWN_Y + 5.0, 0)
 

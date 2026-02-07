@@ -14,7 +14,7 @@ const BASE_SPEED: float = 8.0
 const SPRINT_SPEED: float = 14.0
 const CREEP_SPEED: float = 3.0
 const TURN_SPEED: float = 3.0
-const GRAVITY: float = 20.0
+const GRAVITY: float = 12.0
 
 var _heading: float = 0.0  # Y-axis rotation in radians
 var _vertical_velocity: float = 0.0
@@ -66,6 +66,7 @@ const STUN_COOLDOWN_TIME: float = 4.0
 const STUN_ENERGY_COST: float = 15.0
 
 # --- Visuals ---
+var _eye_light: SpotLight3D = null
 var _time: float = 0.0
 var _body_color: Color = Color(0.55, 0.35, 0.45)  # Pink-brown worm
 var _belly_color: Color = Color(0.7, 0.55, 0.5)
@@ -73,6 +74,11 @@ var _damage_flash: float = 0.0
 
 func _ready() -> void:
 	add_to_group("player_worm")
+	# Smoother traversal over cave geometry
+	floor_max_angle = deg_to_rad(60.0)
+	floor_snap_length = 0.5
+	floor_stop_on_slope = true
+	max_slides = 6
 	_build_head()
 	_build_face()
 	_build_segments()
@@ -190,10 +196,15 @@ func _trigger_bite() -> void:
 	if _bite_tween and _bite_tween.is_valid():
 		_bite_tween.kill()
 	_bite_tween = create_tween()
-	# Open wide
-	_bite_tween.tween_property(self, "_jaw_open_amount", 1.0, 0.1)
-	# Snap shut + deal damage at snap
+	# Rip open wide (fast, aggressive)
+	_bite_tween.tween_property(self, "_jaw_open_amount", 1.0, 0.08).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+	# Brief hold at full open
+	_bite_tween.tween_interval(0.04)
+	# SNAP shut — deal damage at the snap moment
 	_bite_tween.tween_callback(do_bite_damage)
+	_bite_tween.tween_property(self, "_jaw_open_amount", 0.0, 0.06).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
+	# Slight rebound — jaw bounces open a tiny bit from impact
+	_bite_tween.tween_property(self, "_jaw_open_amount", 0.08, 0.08)
 	_bite_tween.tween_property(self, "_jaw_open_amount", 0.0, 0.15)
 	_bite_tween.tween_callback(func(): _jaw_state = 0)
 	# Noise spike from bite
@@ -202,11 +213,16 @@ func _trigger_bite() -> void:
 	bite_performed.emit()
 
 func _update_jaw() -> void:
+	# Idle breathing: gentle open/close when not biting
+	if _jaw_state == 0:
+		var breath_cycle: float = sin(_time * 1.8) * 0.5 + 0.5  # 0-1 smooth
+		_jaw_open_amount = breath_cycle * 0.12  # Subtle 12% max open during breathing
+
 	# Apply jaw_open_amount to petal rotations
 	for i in range(_jaw_petals.size()):
 		var pivot: Node3D = _jaw_petals[i]
-		# When closed: petals together. When open: splay outward 60 degrees
-		var splay_angle: float = _jaw_open_amount * deg_to_rad(60.0)
+		# When closed: petals together. When open: splay outward 70 degrees
+		var splay_angle: float = _jaw_open_amount * deg_to_rad(70.0)
 		# Each petal rotates outward from center on X axis (away from forward)
 		pivot.rotation.x = splay_angle
 
@@ -227,12 +243,24 @@ func _build_face() -> void:
 	_face_billboard.texture = _face_viewport.get_texture()
 	_face_billboard.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	_face_billboard.pixel_size = 0.02
-	_face_billboard.position = Vector3(0, 0.75, 0.65)
+	_face_billboard.position = Vector3(0, 0.9, 0.85)  # Further forward + higher — visible above jaw
 	_face_billboard.modulate = Color(1, 1, 1, 0.95)
 	_face_billboard.no_depth_test = false
 	_face_billboard.render_priority = 1
 	_face_billboard.transparent = true
 	add_child(_face_billboard)
+
+	# Eye flashlight: dim neon glow pointing forward, stomach-colored
+	_eye_light = SpotLight3D.new()
+	_eye_light.light_color = Color(0.35, 0.55, 0.15)  # Stomach green-yellow neon
+	_eye_light.light_energy = 0.6
+	_eye_light.spot_range = 8.0  # Short range initially
+	_eye_light.spot_angle = 55.0  # Wide angle cone
+	_eye_light.spot_attenuation = 1.5
+	_eye_light.shadow_enabled = false
+	_eye_light.position = Vector3(0, 0.85, 0.7)  # From the eye area
+	_eye_light.rotation.x = deg_to_rad(-15.0)  # Angled slightly downward to illuminate floor ahead
+	add_child(_eye_light)
 
 func _build_segments() -> void:
 	for i in range(INITIAL_SEGMENTS):
@@ -332,13 +360,19 @@ func _physics_process(delta: float) -> void:
 	var forward: Vector3 = Vector3(sin(_heading), 0, cos(_heading))
 	var move_vel: Vector3 = forward * _current_speed
 
+	# --- Slope-aligned movement: project onto floor plane when grounded ---
+	if is_on_floor() and move_vel.length() > 0.1:
+		var floor_normal: Vector3 = get_floor_normal()
+		# Project horizontal velocity onto the floor plane
+		move_vel = move_vel - floor_normal * move_vel.dot(floor_normal)
+
 	# --- Gravity (pure physics, no terrain snapping) ---
 	if not is_on_floor():
 		_vertical_velocity -= GRAVITY * delta
 	else:
 		_vertical_velocity = -0.5  # Small downward to stay grounded
 
-	velocity = Vector3(move_vel.x, _vertical_velocity, move_vel.z)
+	velocity = Vector3(move_vel.x, move_vel.y + _vertical_velocity, move_vel.z)
 	move_and_slide()
 
 	# --- Rotation ---
@@ -417,6 +451,14 @@ func _physics_process(delta: float) -> void:
 	# --- Head bob ---
 	var bob: float = sin(_time * 8.0) * 0.05 * clampf(absf(_current_speed) / BASE_SPEED, 0.0, 1.0)
 	_head_mesh.position.y = 0.6 + bob
+
+	# --- Eye flashlight pulse (organic flicker) ---
+	if _eye_light:
+		var pulse: float = sin(_time * 2.5) * 0.15 + sin(_time * 7.3) * 0.05  # Slow breath + fast flicker
+		_eye_light.light_energy = 0.6 + pulse
+		# Dim during creep for stealth
+		if _is_creeping:
+			_eye_light.light_energy *= 0.3
 
 func _update_segments(delta: float) -> void:
 	var prev_pos: Vector3 = _head_mesh.position

@@ -99,8 +99,8 @@ func _setup_player() -> void:
 	# Collision shape for the worm head
 	var col_shape: CollisionShape3D = CollisionShape3D.new()
 	var capsule: CapsuleShape3D = CapsuleShape3D.new()
-	capsule.radius = 0.5
-	capsule.height = 1.2
+	capsule.radius = 0.6
+	capsule.height = 1.4
 	col_shape.shape = capsule
 	_player.add_child(col_shape)
 
@@ -796,6 +796,42 @@ func _trigger_sonar_pulse() -> void:
 		_sonar_ring.scale = Vector3(0.1, 1.0, 0.1)
 		_sonar_ring.visible = true
 
+func _get_tunnel_mouth_positions() -> Array[Vector3]:
+	## Collect tunnel mouth positions at wall boundaries for sonar highlighting
+	var positions: Array[Vector3] = []
+	if not _cave_gen or not _cave_gen.tunnels:
+		return positions
+	for tunnel in _cave_gen.tunnels:
+		if tunnel.path.size() < 2:
+			continue
+		var hub_a = _cave_gen.hubs[tunnel.hub_a]
+		var hub_b = _cave_gen.hubs[tunnel.hub_b]
+		# Compute wall intersection for hub A
+		var dir_ab: Vector3 = hub_b.position - hub_a.position
+		dir_ab.y = 0
+		if dir_ab.length() > 0.1:
+			dir_ab = dir_ab.normalized()
+			var wall_a: Vector3 = hub_a.position + dir_ab * hub_a.radius * 0.95
+			wall_a.y = hub_a.position.y
+			positions.append(wall_a)
+		# Compute wall intersection for hub B
+		var dir_ba: Vector3 = hub_a.position - hub_b.position
+		dir_ba.y = 0
+		if dir_ba.length() > 0.1:
+			dir_ba = dir_ba.normalized()
+			var wall_b: Vector3 = hub_b.position + dir_ba * hub_b.radius * 0.95
+			wall_b.y = hub_b.position.y
+			positions.append(wall_b)
+	return positions
+
+func _is_near_tunnel_mouth(pos: Vector3, tunnel_mouths: Array[Vector3]) -> bool:
+	for mouth_pos in tunnel_mouths:
+		if pos.distance_to(mouth_pos) < 6.0:
+			return true
+	return false
+
+const SONAR_TUNNEL_COLOR: Color = Color(0.3, 1.0, 0.9)  # Bright cyan for tunnel exits
+
 func _cast_all_sonar_rays() -> void:
 	var space_state = get_world_3d().direct_space_state
 	if not space_state:
@@ -805,6 +841,8 @@ func _cast_all_sonar_rays() -> void:
 	var exclude_rids: Array = []
 	if _player:
 		exclude_rids = [_player.get_rid()]
+
+	var tunnel_mouths: Array[Vector3] = _get_tunnel_mouth_positions()
 
 	# Dense ray pattern: 64 horizontal × 20 elevations = 1280 structured rays
 	var h_count: int = 64
@@ -829,6 +867,9 @@ func _cast_all_sonar_rays() -> void:
 				var hit_pos: Vector3 = result.position
 				var hit_dist: float = origin.distance_to(hit_pos)
 				var col: Color = _height_color(hit_pos.y, player_y)
+				# Override color to bright cyan near tunnel mouths
+				if _is_near_tunnel_mouth(hit_pos, tunnel_mouths):
+					col = SONAR_TUNNEL_COLOR
 				_sonar_pending_hits.append({
 					"position": hit_pos,
 					"distance": hit_dist,
@@ -852,11 +893,36 @@ func _cast_all_sonar_rays() -> void:
 			var hit_pos: Vector3 = result.position
 			var hit_dist: float = origin.distance_to(hit_pos)
 			var col: Color = _height_color(hit_pos.y, player_y)
+			if _is_near_tunnel_mouth(hit_pos, tunnel_mouths):
+				col = SONAR_TUNNEL_COLOR
 			_sonar_pending_hits.append({
 				"position": hit_pos,
 				"distance": hit_dist,
 				"color": col,
 			})
+
+	# Targeted rays aimed at nearby tunnel mouths (guaranteed visibility)
+	for mouth_pos in tunnel_mouths:
+		var mouth_dist: float = origin.distance_to(mouth_pos)
+		if mouth_dist > SONAR_RANGE or mouth_dist < 0.5:
+			continue
+		# Fire 4 rays toward each nearby tunnel mouth with slight jitter
+		for _t in range(4):
+			var jitter: Vector3 = Vector3(randf_range(-1.5, 1.5), randf_range(-0.5, 1.0), randf_range(-1.5, 1.5))
+			var target: Vector3 = mouth_pos + jitter
+			var dir: Vector3 = (target - origin).normalized()
+			var ray_end: Vector3 = origin + dir * SONAR_RANGE
+			var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, ray_end)
+			query.exclude = exclude_rids
+			var result: Dictionary = space_state.intersect_ray(query)
+			if result:
+				var hit_pos: Vector3 = result.position
+				var hit_dist: float = origin.distance_to(hit_pos)
+				_sonar_pending_hits.append({
+					"position": hit_pos,
+					"distance": hit_dist,
+					"color": SONAR_TUNNEL_COLOR,
+				})
 
 func _height_color(world_y: float, player_y: float) -> Color:
 	# Normalize relative height: -10 to +10 maps to 0..1

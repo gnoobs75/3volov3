@@ -80,8 +80,8 @@ func _build_tube(path: Array, base_width: float, colors_a: Dictionary, colors_b:
 		var t1: float = seg_lengths[s + 1] / maxf(path_length, 0.01)
 
 		# Width narrows at endpoints, widens in middle
-		var width_mult0: float = 0.85 + sin(t0 * PI) * 0.15 + sin(t0 * 8.0) * 0.04
-		var width_mult1: float = 0.85 + sin(t1 * PI) * 0.15 + sin(t1 * 8.0) * 0.04
+		var width_mult0: float = 1.0 + sin(t0 * PI) * 0.1 + sin(t0 * 8.0) * 0.02
+		var width_mult1: float = 1.0 + sin(t1 * PI) * 0.1 + sin(t1 * 8.0) * 0.02
 
 		var r0: float = base_width * 0.5 * width_mult0
 		var r1: float = base_width * 0.5 * width_mult1
