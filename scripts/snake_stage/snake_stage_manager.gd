@@ -14,22 +14,21 @@ var _drip_timer: float = 0.0
 var _drone_timer: float = 0.0
 
 # Nutrient spawning
-const NUTRIENT_TARGET_COUNT: int = 20
-const NUTRIENT_SPAWN_RADIUS: float = 50.0
-const NUTRIENT_DESPAWN_RADIUS: float = 70.0
+const NUTRIENT_TARGET_COUNT: int = 30
+const NUTRIENT_DESPAWN_RADIUS: float = 350.0
 
 # Prey spawning
-const PREY_TARGET_COUNT: int = 6
-const PREY_SPAWN_RADIUS: float = 45.0
-const PREY_DESPAWN_RADIUS: float = 65.0
+const PREY_TARGET_COUNT: int = 10
+const PREY_DESPAWN_RADIUS: float = 350.0
 var _prey_check_timer: float = 0.0
 
 # White Blood Cell spawning
-const WBC_TARGET_COUNT: int = 8
-const WBC_SPAWN_RADIUS: float = 50.0
-const WBC_DESPAWN_RADIUS: float = 70.0
+const WBC_TARGET_COUNT: int = 10
+const WBC_DESPAWN_RADIUS: float = 350.0
 var _wbc_check_timer: float = 0.0
 var _wbc_container: Node3D = null
+var _spawn_floor_y: float = -10.0  # Expected floor Y for safety check
+var _cave_check_timer: float = 0.0  # Timer for cave boundary validation
 
 # --- HUD references ---
 var _energy_bar: ProgressBar = null
@@ -68,7 +67,7 @@ func _setup_environment() -> void:
 	# Dense fog for claustrophobic feel
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.01, 0.015, 0.01)
-	env.fog_density = 0.04
+	env.fog_density = 0.02
 	env.fog_aerial_perspective = 0.8
 
 	# Strong glow (makes emissions pop in darkness)
@@ -119,7 +118,7 @@ func _setup_camera() -> void:
 	_camera.set_script(cam_script)
 	_camera.fov = 75.0
 	_camera.near = 0.05
-	_camera.far = 200.0  # Shorter far plane for caves
+	_camera.far = 600.0  # Large far plane for big caverns
 	add_child(_camera)
 	_camera.setup(_player)
 	_camera.current = true
@@ -140,15 +139,27 @@ func _on_cave_ready() -> void:
 	if _cave_gen.has_method("get_spawn_position"):
 		var spawn_pos: Vector3 = _cave_gen.get_spawn_position()
 		_player.global_position = spawn_pos
+		_player.velocity = Vector3.ZERO
+		if _player.has_method("reset_position_history"):
+			_player.reset_position_history()
+		print("[CAVE] Player placed at: %s" % str(spawn_pos))
+		# Record expected floor Y for safety check
+		var hub = _cave_gen.hubs[_cave_gen.spawn_hub_id]
+		if hub.node_3d and hub.node_3d.has_method("get_floor_y"):
+			_spawn_floor_y = hub.node_3d.get_floor_y(hub.position.x, hub.position.z)
 		if _camera and _camera.has_method("snap_to_target"):
 			_camera.snap_to_target()
-	# Always re-enable physics (must not be inside conditional)
-	_player.set_physics_process(true)
+	# Defer physics enable by one frame so collision shapes are fully registered
+	call_deferred("_enable_player_physics")
 
 	# Initial spawns
 	call_deferred("_spawn_initial_nutrients")
 	call_deferred("_spawn_initial_prey")
 	call_deferred("_spawn_initial_wbc")
+
+	# Wire minimap to cave system
+	if _minimap and _minimap.has_method("setup"):
+		_minimap.setup(_cave_gen, _player)
 
 	# Add player light for cave visibility
 	_add_player_light()
@@ -162,6 +173,17 @@ func _on_cave_ready() -> void:
 	# Setup sonar contour point system
 	call_deferred("_setup_sonar")
 
+func _enable_player_physics() -> void:
+	_player.set_physics_process(true)
+	# Schedule a safety check after 1 second
+	get_tree().create_timer(1.0).timeout.connect(_safety_check_position)
+
+func _safety_check_position() -> void:
+	if not _player or not _cave_gen:
+		return
+	# Use cave-aware validation
+	_validate_player_inside_cave()
+
 func _add_player_light() -> void:
 	if not _player:
 		return
@@ -170,7 +192,7 @@ func _add_player_light() -> void:
 	heat_light.name = "PlayerLight"
 	heat_light.light_color = Color(0.2, 0.5, 0.35)  # Green-teal
 	heat_light.light_energy = 0.8
-	heat_light.omni_range = 10.0
+	heat_light.omni_range = 25.0
 	heat_light.omni_attenuation = 1.5
 	heat_light.shadow_enabled = true
 	heat_light.position = Vector3(0, 0.8, 0)
@@ -181,7 +203,7 @@ func _add_player_light() -> void:
 	scan_light.name = "ScanLight"
 	scan_light.light_color = Color(0.15, 0.6, 0.3)  # Bright green scan
 	scan_light.light_energy = 0.0
-	scan_light.omni_range = 20.0
+	scan_light.omni_range = 40.0
 	scan_light.omni_attenuation = 0.8
 	scan_light.shadow_enabled = false
 	scan_light.position = Vector3(0, 0.8, 0)
@@ -200,110 +222,170 @@ func _setup_containers() -> void:
 	_wbc_container.name = "WhiteBloodCells"
 	add_child(_wbc_container)
 
+var _minimap: Control = null
+
 func _setup_hud() -> void:
 	var hud: CanvasLayer = CanvasLayer.new()
 	hud.layer = 5
 	hud.name = "HUD"
 	add_child(hud)
 
-	# Semi-transparent top bar
-	var top_bar: ColorRect = ColorRect.new()
-	top_bar.color = Color(0.01, 0.02, 0.04, 0.75)
-	top_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	top_bar.offset_bottom = 85.0
-	top_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hud.add_child(top_bar)
+	# --- Three-pane layout (matching cell stage) ---
+	var layout: HBoxContainer = HBoxContainer.new()
+	layout.name = "ThreePaneLayout"
+	layout.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layout.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(layout)
 
-	# Energy label
+	# === LEFT PANE (280px) ===
+	var left_panel: Panel = Panel.new()
+	left_panel.name = "LeftPane"
+	left_panel.custom_minimum_size = Vector2(280, 0)
+	left_panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	left_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var left_style: StyleBoxFlat = StyleBoxFlat.new()
+	left_style.bg_color = Color(0.015, 0.025, 0.04, 1.0)
+	left_style.border_width_right = 2
+	left_style.border_color = Color(0.12, 0.25, 0.35, 0.7)
+	left_panel.add_theme_stylebox_override("panel", left_style)
+	layout.add_child(left_panel)
+
+	var left_vbox: VBoxContainer = VBoxContainer.new()
+	left_vbox.name = "LeftVBox"
+	left_vbox.set_anchors_preset(Control.PRESET_FULL_RECT)
+	left_vbox.add_theme_constant_override("separation", 0)
+	left_panel.add_child(left_vbox)
+
+	# OrganismCard (top of left pane)
+	var org_card_script = load("res://scripts/cell_stage/organism_card.gd")
+	var organism_card: Control = Control.new()
+	organism_card.set_script(org_card_script)
+	organism_card.name = "OrganismCard"
+	organism_card.custom_minimum_size = Vector2(280, 620)
+	organism_card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	left_vbox.add_child(organism_card)
+
+	# HelixHUD (bottom of left pane, fills remaining space)
+	var helix_script = load("res://scripts/cell_stage/test_tube_hud.gd")
+	var helix_hud: Control = Control.new()
+	helix_hud.set_script(helix_script)
+	helix_hud.name = "HelixHUD"
+	helix_hud.custom_minimum_size = Vector2(280, 460)
+	helix_hud.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	helix_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	left_vbox.add_child(helix_hud)
+
+	# === MIDDLE PANE (flex) ===
+	var middle_pane: Control = Control.new()
+	middle_pane.name = "MiddlePane"
+	middle_pane.custom_minimum_size = Vector2(1320, 0)
+	middle_pane.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	middle_pane.size_flags_stretch_ratio = 70.0
+	middle_pane.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layout.add_child(middle_pane)
+
+	# Top bar in middle pane
+	var top_bar: ColorRect = ColorRect.new()
+	top_bar.color = Color(0.02, 0.05, 0.1, 0.7)
+	top_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	top_bar.offset_bottom = 80.0
+	top_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	middle_pane.add_child(top_bar)
+
+	# Energy label + bar
 	var energy_label: Label = Label.new()
 	energy_label.text = "ENERGY"
-	energy_label.position = Vector2(20, 6)
-	energy_label.add_theme_font_size_override("font_size", 11)
+	energy_label.position = Vector2(20, 4)
+	energy_label.add_theme_font_size_override("font_size", 10)
 	energy_label.add_theme_color_override("font_color", Color(0.2, 0.7, 0.5, 0.8))
-	hud.add_child(energy_label)
+	middle_pane.add_child(energy_label)
 
-	# Energy bar
 	_energy_bar = ProgressBar.new()
-	_energy_bar.position = Vector2(20, 22)
+	_energy_bar.position = Vector2(20, 20)
 	_energy_bar.size = Vector2(200, 16)
 	_energy_bar.value = 100
 	_energy_bar.show_percentage = false
-	hud.add_child(_energy_bar)
+	middle_pane.add_child(_energy_bar)
 
-	# Health label
+	# Health label + bar
 	var health_label: Label = Label.new()
 	health_label.text = "HEALTH"
-	health_label.position = Vector2(20, 40)
-	health_label.add_theme_font_size_override("font_size", 11)
+	health_label.position = Vector2(20, 38)
+	health_label.add_theme_font_size_override("font_size", 10)
 	health_label.add_theme_color_override("font_color", Color(1.0, 0.4, 0.3, 0.8))
-	hud.add_child(health_label)
+	middle_pane.add_child(health_label)
 
-	# Health bar
 	_health_bar = ProgressBar.new()
-	_health_bar.position = Vector2(20, 56)
+	_health_bar.position = Vector2(20, 54)
 	_health_bar.size = Vector2(200, 16)
 	_health_bar.value = 100
 	_health_bar.show_percentage = false
-	hud.add_child(_health_bar)
+	middle_pane.add_child(_health_bar)
 
-	# Controls label
-	_controls_label = Label.new()
-	_controls_label.text = "WASD: Move | Shift: Sprint | Space: Creep | LMB: Bite | E: Stun | ESC: Menu"
-	_controls_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	_controls_label.position = Vector2(20, -30)
-	_controls_label.add_theme_font_size_override("font_size", 12)
-	_controls_label.add_theme_color_override("font_color", Color(0.2, 0.5, 0.4, 0.5))
-	hud.add_child(_controls_label)
-
-	# Stage title
+	# Stage title (center top)
 	var title: Label = Label.new()
 	title.text = "PARASITE MODE - Inside the Host"
 	title.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	title.position = Vector2(-140, 8)
 	title.add_theme_font_size_override("font_size", 14)
 	title.add_theme_color_override("font_color", Color(0.3, 0.6, 0.5, 0.7))
-	hud.add_child(title)
+	middle_pane.add_child(title)
 
 	# Depth indicator
 	var depth_label: Label = Label.new()
 	depth_label.name = "DepthLabel"
 	depth_label.text = "DEPTH: 10m"
-	depth_label.position = Vector2(240, 6)
-	depth_label.add_theme_font_size_override("font_size", 11)
+	depth_label.position = Vector2(240, 4)
+	depth_label.add_theme_font_size_override("font_size", 10)
 	depth_label.add_theme_color_override("font_color", Color(0.4, 0.6, 0.8, 0.7))
-	hud.add_child(depth_label)
+	middle_pane.add_child(depth_label)
 
-	# DNA helix HUD panel (right side of screen)
-	var helix_panel: PanelContainer = PanelContainer.new()
-	helix_panel.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
-	helix_panel.offset_left = -180.0
-	helix_panel.offset_top = 10.0
-	helix_panel.offset_bottom = -10.0
-	helix_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var panel_style: StyleBoxFlat = StyleBoxFlat.new()
-	panel_style.bg_color = Color(0.015, 0.025, 0.04, 0.6)
-	panel_style.corner_radius_top_left = 6
-	panel_style.corner_radius_bottom_left = 6
-	panel_style.corner_radius_top_right = 6
-	panel_style.corner_radius_bottom_right = 6
-	panel_style.border_width_left = 1
-	panel_style.border_width_top = 1
-	panel_style.border_width_right = 1
-	panel_style.border_width_bottom = 1
-	panel_style.border_color = Color(0.12, 0.25, 0.35, 0.4)
-	helix_panel.add_theme_stylebox_override("panel", panel_style)
-	hud.add_child(helix_panel)
+	# Controls label (bottom of middle pane)
+	_controls_label = Label.new()
+	_controls_label.text = "WASD: Move | Shift: Sprint | Space: Creep | LMB: Bite | E: Stun | ESC: Menu"
+	_controls_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_controls_label.position = Vector2(20, -30)
+	_controls_label.add_theme_font_size_override("font_size", 12)
+	_controls_label.add_theme_color_override("font_color", Color(0.2, 0.5, 0.4, 0.5))
+	middle_pane.add_child(_controls_label)
 
-	# Load and add the DNA helix HUD control
-	var helix_script = load("res://scripts/cell_stage/test_tube_hud.gd")
-	var helix_hud: Control = Control.new()
-	helix_hud.set_script(helix_script)
-	helix_hud.name = "HelixHUD"
-	helix_hud.custom_minimum_size = Vector2(160, 400)
-	helix_hud.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	helix_hud.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	helix_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	helix_panel.add_child(helix_hud)
+	# === RIGHT PANE (320px) ===
+	var right_panel: Panel = Panel.new()
+	right_panel.name = "RightPane"
+	right_panel.custom_minimum_size = Vector2(320, 0)
+	right_panel.size_flags_horizontal = Control.SIZE_SHRINK_END
+	right_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var right_style: StyleBoxFlat = StyleBoxFlat.new()
+	right_style.bg_color = Color(0.015, 0.025, 0.04, 1.0)
+	right_style.border_width_left = 2
+	right_style.border_color = Color(0.12, 0.25, 0.35, 0.7)
+	right_panel.add_theme_stylebox_override("panel", right_style)
+	layout.add_child(right_panel)
+
+	var right_vbox: VBoxContainer = VBoxContainer.new()
+	right_vbox.name = "RightVBox"
+	right_vbox.set_anchors_preset(Control.PRESET_FULL_RECT)
+	right_vbox.add_theme_constant_override("separation", 0)
+	right_panel.add_child(right_vbox)
+
+	# Cave Minimap (top of right pane)
+	var minimap_script = load("res://scripts/snake_stage/cave_minimap.gd")
+	_minimap = Control.new()
+	_minimap.set_script(minimap_script)
+	_minimap.name = "CaveMinimap"
+	_minimap.custom_minimum_size = Vector2(320, 400)
+	_minimap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	right_vbox.add_child(_minimap)
+
+	# ObserverNotes (bottom of right pane, fills remaining space)
+	var notes_script = load("res://scripts/cell_stage/observer_notes.gd")
+	var observer_notes: Control = Control.new()
+	observer_notes.set_script(notes_script)
+	observer_notes.name = "ObserverNotes"
+	observer_notes.custom_minimum_size = Vector2(320, 400)
+	observer_notes.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	observer_notes.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	right_vbox.add_child(observer_notes)
 
 # --- Scan pulse timer ---
 var _scan_timer: float = 0.0
@@ -313,7 +395,7 @@ const SCAN_DURATION: float = 1.5
 
 # --- Sonar heightmap pointcloud system (Moondust-style) ---
 const SONAR_POINT_COUNT: int = 5000
-const SONAR_RANGE: float = 35.0
+const SONAR_RANGE: float = 60.0
 const SONAR_FADE_TIME: float = 8.0
 const SONAR_EXPAND_SPEED: float = 18.0  # units/sec ring expansion
 const SONAR_RAIN_HEIGHT: float = 2.5  # subtle drop into position
@@ -346,6 +428,13 @@ func _process(delta: float) -> void:
 		_wbc_check_timer = 0.0
 		_manage_wbc()
 
+	# Safety: full cave validation every 1 second (player + creatures)
+	_cave_check_timer += delta
+	if _cave_check_timer >= 1.0:
+		_cave_check_timer = 0.0
+		_validate_player_inside_cave()
+		_cleanup_out_of_bounds_creatures()
+
 	# Update stun burst VFX
 	_update_stun_vfx(delta)
 
@@ -374,6 +463,9 @@ func _process(delta: float) -> void:
 	# Update sonar contour points
 	_update_sonar(delta)
 
+	# Update camera based on hub/tunnel context
+	_update_camera_context()
+
 	# Ambient cave sounds
 	_drip_timer += delta
 	if _drip_timer > randf_range(2.0, 6.0):
@@ -386,12 +478,52 @@ func _update_hud() -> void:
 		_energy_bar.value = (_player.energy / _player.max_energy) * 100.0
 	if _player and _health_bar:
 		_health_bar.value = (_player.health / _player.max_health) * 100.0
-	# Update depth label
+	# Update depth label (now inside ThreePaneLayout/MiddlePane)
 	if _player:
-		var depth_label: Label = get_node_or_null("HUD/DepthLabel")
+		var depth_label: Label = get_node_or_null("HUD/ThreePaneLayout/MiddlePane/DepthLabel")
 		if depth_label:
 			var depth: float = absf(_player.global_position.y)
 			depth_label.text = "DEPTH: %dm" % int(depth)
+
+func _update_camera_context() -> void:
+	if not _player or not _camera or not _cave_gen:
+		return
+	if not _camera.has_method("set_cave_size"):
+		return
+	var hub = _cave_gen.get_hub_at_position(_player.global_position)
+	if hub:
+		_camera.set_cave_size(clampf(hub.radius / 120.0, 0.3, 1.0))
+	else:
+		# In tunnel: use moderate camera
+		_camera.set_cave_size(0.15)
+
+func _validate_player_inside_cave() -> void:
+	if not _player or not _cave_gen:
+		return
+	if not _cave_gen.is_inside_cave(_player.global_position):
+		# Player is outside cave geometry — teleport to nearest hub center
+		var safe_pos: Vector3 = _cave_gen.get_nearest_hub_center_on_floor(_player.global_position)
+		print("[SAFETY] Player outside cave at %s — teleporting to %s" % [str(_player.global_position), str(safe_pos)])
+		_player.global_position = safe_pos
+		_player.velocity = Vector3.ZERO
+		if _player.has_method("reset_position_history"):
+			_player.reset_position_history()
+		if _camera and _camera.has_method("snap_to_target"):
+			_camera.snap_to_target()
+
+func _cleanup_out_of_bounds_creatures() -> void:
+	if not _cave_gen:
+		return
+	# Remove any creatures that ended up outside cave geometry
+	for child in _creatures_container.get_children():
+		if not _cave_gen.is_inside_cave(child.global_position):
+			child.queue_free()
+	for child in _wbc_container.get_children():
+		if not _cave_gen.is_inside_cave(child.global_position):
+			child.queue_free()
+	for child in _nutrients_container.get_children():
+		if not _cave_gen.is_inside_cave(child.global_position):
+			child.queue_free()
 
 func _manage_nutrients() -> void:
 	if not _player:
@@ -406,22 +538,12 @@ func _manage_nutrients() -> void:
 		_spawn_nutrient()
 
 func _spawn_nutrient() -> void:
-	if not _player:
+	if not _player or not _cave_gen:
 		return
 	var nutrient: Node3D = _create_nutrient()
-	# Random position around player on cave floor
-	var angle: float = randf() * TAU
-	var dist: float = randf_range(10.0, NUTRIENT_SPAWN_RADIUS)
-	var x: float = _player.global_position.x + cos(angle) * dist
-	var z: float = _player.global_position.z + sin(angle) * dist
-	# Approximate floor Y: use player Y - small offset (gravity will settle it)
-	var y: float = _player.global_position.y + randf_range(-2.0, 1.0)
-
-	# Try to get floor Y from cave system
-	if _cave_gen and _cave_gen.has_method("get_floor_y_at"):
-		y = _cave_gen.get_floor_y_at(Vector3(x, _player.global_position.y, z)) + 0.8
-
-	nutrient.position = Vector3(x, y, z)
+	# Spawn inside a nearby hub — guaranteed to be inside cave geometry
+	var pos: Vector3 = _cave_gen.get_random_position_in_hub(_player.global_position)
+	nutrient.position = pos
 	_nutrients_container.add_child(nutrient)
 
 func _create_nutrient() -> Node3D:
@@ -507,24 +629,16 @@ func _spawn_initial_prey() -> void:
 		_spawn_prey()
 
 func _spawn_prey() -> void:
-	if not _player:
+	if not _player or not _cave_gen:
 		return
 	var bug_script = load("res://scripts/snake_stage/prey_bug.gd")
 	var bug: CharacterBody3D = CharacterBody3D.new()
 	bug.set_script(bug_script)
 
-	var angle: float = randf() * TAU
-	var dist: float = randf_range(12.0, PREY_SPAWN_RADIUS)
-	var x: float = _player.global_position.x + cos(angle) * dist
-	var z: float = _player.global_position.z + sin(angle) * dist
-	var y: float = _player.global_position.y + 1.0
-
-	if _cave_gen and _cave_gen.has_method("get_floor_y_at"):
-		y = _cave_gen.get_floor_y_at(Vector3(x, _player.global_position.y, z)) + 0.5
-
-	bug.position = Vector3(x, y, z)
+	# Spawn inside a nearby hub — guaranteed inside cave geometry
+	var pos: Vector3 = _cave_gen.get_random_position_in_hub(_player.global_position)
+	bug.position = pos
 	_creatures_container.add_child(bug)
-	# No terrain ref needed - bugs use gravity + collision
 
 func _on_player_damaged(_amount: float) -> void:
 	pass  # Future: screen shake, observer notes
@@ -553,22 +667,15 @@ func _manage_wbc() -> void:
 		_spawn_wbc()
 
 func _spawn_wbc() -> void:
-	if not _player or not _wbc_container:
+	if not _player or not _wbc_container or not _cave_gen:
 		return
 	var wbc_script = load("res://scripts/snake_stage/white_blood_cell.gd")
 	var wbc: CharacterBody3D = CharacterBody3D.new()
 	wbc.set_script(wbc_script)
 
-	var angle: float = randf() * TAU
-	var dist: float = randf_range(15.0, WBC_SPAWN_RADIUS)
-	var x: float = _player.global_position.x + cos(angle) * dist
-	var z: float = _player.global_position.z + sin(angle) * dist
-	var y: float = _player.global_position.y + 1.0
-
-	if _cave_gen and _cave_gen.has_method("get_floor_y_at"):
-		y = _cave_gen.get_floor_y_at(Vector3(x, _player.global_position.y, z)) + 0.5
-
-	wbc.position = Vector3(x, y, z)
+	# Spawn inside a nearby hub — guaranteed inside cave geometry
+	var pos: Vector3 = _cave_gen.get_random_position_in_hub(_player.global_position)
+	wbc.position = pos
 	_wbc_container.add_child(wbc)
 
 # --- Combat VFX ---

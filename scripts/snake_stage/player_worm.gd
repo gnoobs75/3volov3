@@ -14,7 +14,7 @@ const BASE_SPEED: float = 8.0
 const SPRINT_SPEED: float = 14.0
 const CREEP_SPEED: float = 3.0
 const TURN_SPEED: float = 3.0
-const GRAVITY: float = 12.0
+const GRAVITY: float = 6.0
 
 var _heading: float = 0.0  # Y-axis rotation in radians
 var _vertical_velocity: float = 0.0
@@ -76,7 +76,7 @@ func _ready() -> void:
 	add_to_group("player_worm")
 	# Smoother traversal over cave geometry
 	floor_max_angle = deg_to_rad(60.0)
-	floor_snap_length = 0.5
+	floor_snap_length = 1.0
 	floor_stop_on_slope = true
 	max_slides = 6
 	_build_head()
@@ -86,6 +86,13 @@ func _ready() -> void:
 	for i in range(INITIAL_SEGMENTS * 10):
 		_position_history.append(global_position)
 		_rotation_history.append(_heading)
+	_last_record_pos = global_position
+
+func reset_position_history() -> void:
+	## Re-fill position history with current position (call after teleporting)
+	for i in range(_position_history.size()):
+		_position_history[i] = global_position
+		_rotation_history[i] = _heading
 	_last_record_pos = global_position
 
 func _build_head() -> void:
@@ -128,8 +135,8 @@ func _build_head() -> void:
 	_build_trifold_jaw()
 
 func _build_trifold_jaw() -> void:
-	var petal_color: Color = _body_color.lightened(0.05)
-	var tooth_color: Color = Color(0.9, 0.85, 0.7)  # Yellowish white
+	var petal_color: Color = _body_color.lightened(0.1)
+	var tooth_color: Color = Color(0.95, 0.9, 0.75)  # Yellowish white
 
 	for i in range(3):
 		var angle_offset: float = TAU / 3.0 * i  # 0, 120, 240 degrees
@@ -137,51 +144,51 @@ func _build_trifold_jaw() -> void:
 		# Pivot node at the base of the jaw, at the front of the head
 		var pivot: Node3D = Node3D.new()
 		pivot.name = "JawPetal_%d" % i
-		pivot.position = Vector3(0, 0.6, 0.4)
+		pivot.position = Vector3(0, 0.6, 0.55)  # Further forward so petals extend past head
 		# Rotate pivot around Z (forward) axis to space petals
 		pivot.rotation.z = angle_offset
 		add_child(pivot)
 
-		# Jaw petal: tapered cone
+		# Jaw petal: tapered cone — bigger and more prominent
 		var petal: MeshInstance3D = MeshInstance3D.new()
 		var cone: CylinderMesh = CylinderMesh.new()
-		cone.top_radius = 0.02
-		cone.bottom_radius = 0.15
-		cone.height = 0.4
-		cone.radial_segments = 6
+		cone.top_radius = 0.03
+		cone.bottom_radius = 0.25
+		cone.height = 0.6
+		cone.radial_segments = 8
 		petal.mesh = cone
 		var petal_mat: StandardMaterial3D = StandardMaterial3D.new()
 		petal_mat.albedo_color = petal_color
 		petal_mat.roughness = 0.5
 		petal_mat.emission_enabled = true
-		petal_mat.emission = petal_color * 0.2
-		petal_mat.emission_energy_multiplier = 0.4
+		petal_mat.emission = petal_color * 0.3
+		petal_mat.emission_energy_multiplier = 0.6
 		petal.material_override = petal_mat
-		# Cone points forward (+Z), oriented along the petal direction
-		petal.position = Vector3(0, 0.15, 0.15)
+		# Cone points forward, oriented along the petal direction
+		petal.position = Vector3(0, 0.25, 0.2)
 		petal.rotation.x = -PI * 0.35  # Angled forward
 		pivot.add_child(petal)
 
-		# Jagged teeth: 3-4 small spikes along inner edge
+		# Jagged teeth: 3-4 spikes along inner edge — bigger and more visible
 		var tooth_count: int = randi_range(3, 4)
 		for t in range(tooth_count):
 			var tooth: MeshInstance3D = MeshInstance3D.new()
 			var spike: CylinderMesh = CylinderMesh.new()
-			spike.top_radius = 0.005
-			spike.bottom_radius = 0.02 + randf() * 0.01
-			spike.height = 0.08 + randf() * 0.06
+			spike.top_radius = 0.008
+			spike.bottom_radius = 0.035 + randf() * 0.015
+			spike.height = 0.14 + randf() * 0.08
 			spike.radial_segments = 4
 			tooth.mesh = spike
 			var tooth_mat: StandardMaterial3D = StandardMaterial3D.new()
 			tooth_mat.albedo_color = tooth_color
 			tooth_mat.roughness = 0.3
 			tooth_mat.emission_enabled = true
-			tooth_mat.emission = tooth_color * 0.3
-			tooth_mat.emission_energy_multiplier = 0.6
+			tooth_mat.emission = tooth_color * 0.4
+			tooth_mat.emission_energy_multiplier = 0.8
 			tooth.material_override = tooth_mat
 			# Place teeth along inner edge of petal
-			var tz: float = 0.05 + float(t) / tooth_count * 0.25
-			tooth.position = Vector3(0, 0.05, tz)
+			var tz: float = 0.08 + float(t) / tooth_count * 0.35
+			tooth.position = Vector3(0, 0.08, tz)
 			tooth.rotation.x = -PI * 0.2 + randf() * 0.3
 			pivot.add_child(tooth)
 
@@ -221,8 +228,8 @@ func _update_jaw() -> void:
 	# Apply jaw_open_amount to petal rotations
 	for i in range(_jaw_petals.size()):
 		var pivot: Node3D = _jaw_petals[i]
-		# When closed: petals together. When open: splay outward 70 degrees
-		var splay_angle: float = _jaw_open_amount * deg_to_rad(70.0)
+		# When closed: petals together. When open: splay outward 90 degrees
+		var splay_angle: float = _jaw_open_amount * deg_to_rad(90.0)
 		# Each petal rotates outward from center on X axis (away from forward)
 		pivot.rotation.x = splay_angle
 
@@ -354,7 +361,7 @@ func _physics_process(delta: float) -> void:
 			target_speed = CREEP_SPEED * input_forward
 		else:
 			target_speed = BASE_SPEED * input_forward
-	_current_speed = lerpf(_current_speed, target_speed, delta * 8.0)
+	_current_speed = lerpf(_current_speed, target_speed * _hazard_slow, delta * 8.0)
 
 	# --- Direction ---
 	var forward: Vector3 = Vector3(sin(_heading), 0, cos(_heading))
@@ -391,6 +398,9 @@ func _physics_process(delta: float) -> void:
 
 	# --- Update segments ---
 	_update_segments(delta)
+
+	# --- Hazard damage ---
+	_check_hazards(delta)
 
 	# --- Energy / Health ---
 	if _is_sprinting:
@@ -583,6 +593,36 @@ func get_bite_targets() -> Array:
 		if dot > 0.7:
 			targets.append(wbc)
 	return targets
+
+var _hazard_slow: float = 1.0  # Multiplied into speed (1.0 = normal, <1 = slowed)
+
+func _check_hazards(delta: float) -> void:
+	_hazard_slow = 1.0  # Reset each frame
+	for node in get_tree().get_nodes_in_group("biome_hazard"):
+		var dist: float = global_position.distance_to(node.global_position)
+		var hz_radius: float = node.get_meta("radius", 2.0)
+		if dist > hz_radius:
+			continue
+		var hz_type: String = node.get_meta("hazard_type", "")
+		match hz_type:
+			"acid":
+				take_damage(node.get_meta("dps", 5.0) * delta)
+			"bile":
+				_hazard_slow = minf(_hazard_slow, node.get_meta("slow_factor", 0.4))
+			"nerve":
+				if randf() < node.get_meta("zap_chance", 0.015):
+					take_damage(node.get_meta("zap_damage", 8.0))
+			"pulse":
+				var period: float = node.get_meta("period", 1.4)
+				var cycle: float = fmod(Time.get_ticks_msec() / 1000.0, period) / period
+				if cycle < 0.08:  # Brief knockback window
+					var push_dir: Vector3 = (global_position - node.global_position)
+					push_dir.y = 0
+					if push_dir.length() > 0.1:
+						push_dir = push_dir.normalized()
+					else:
+						push_dir = Vector3.FORWARD
+					velocity += push_dir * node.get_meta("force", 6.0)
 
 func do_bite_damage() -> void:
 	## Called during bite snap — deals damage to WBCs in range

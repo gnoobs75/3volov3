@@ -35,6 +35,21 @@ func _build_hub() -> void:
 	_build_ceiling(biome_colors)
 	_build_walls(biome_colors)
 
+	# Environmental enhancements (decorations, lighting, fog, hazards, animation)
+	BiomeDecorator.decorate_hub(self, _hub_data, biome_colors)
+	BiolumLighting.add_lights(self, _hub_data, biome_colors)
+	BiomeFog.add_fog(self, _hub_data, biome_colors)
+	BiomeHazards.add_hazards(self, _hub_data, biome_colors)
+	BiomeParticles.add_particles(self, _hub_data, biome_colors)
+
+	# Biome animator (pulsing lights, heartbeat, breathing, sparks)
+	var animator_script = load("res://scripts/snake_stage/biome_animator.gd")
+	var animator: Node3D = Node3D.new()
+	animator.set_script(animator_script)
+	animator.name = "BiomeAnimator"
+	animator.setup(_hub_data.biome, biome_colors)
+	add_child(animator)
+
 	# Add tunnel mouth lights (deferred so tunnel connections are registered)
 	call_deferred("_add_tunnel_mouth_lights", biome_colors)
 
@@ -45,8 +60,8 @@ func _add_tunnel_mouth_lights(colors: Dictionary) -> void:
 		var light: OmniLight3D = OmniLight3D.new()
 		light.name = "TunnelMouthLight"
 		light.light_color = colors.emission.lightened(0.3)
-		light.light_energy = 0.6
-		light.omni_range = 10.0
+		light.light_energy = 1.0
+		light.omni_range = 30.0
 		light.omni_attenuation = 1.2
 		light.shadow_enabled = false
 		light.position = local_pos + Vector3(0, 2.5, 0)
@@ -82,11 +97,11 @@ func _build_floor(colors: Dictionary) -> void:
 			var wx: float = (float(gx) / subdivs - 0.5) * radius * 2.0
 			var wz: float = (float(gz) / subdivs - 0.5) * radius * 2.0
 			var dist_from_center: float = Vector2(wx, wz).length()
-			var height_noise: float = _noise.get_noise_2d(wx, wz) * 0.8
+			var height_noise: float = _noise.get_noise_2d(wx, wz) * 0.15  # Very subtle undulation
 
-			# Floor rises toward edges (bowl shape)
+			# Gentle rise at very edge only (mostly flat floor)
 			var edge_factor: float = clampf(dist_from_center / radius, 0.0, 1.0)
-			var edge_rise: float = edge_factor * edge_factor * edge_factor * _hub_data.height * 0.25
+			var edge_rise: float = edge_factor * edge_factor * edge_factor * edge_factor * _hub_data.height * 0.08
 
 			_floor_heightmap[gx][gz] = height_noise + edge_rise
 
@@ -101,8 +116,11 @@ func _build_floor(colors: Dictionary) -> void:
 				blend = blend * blend * blend  # Cubic ease
 				_floor_heightmap[gx2][gz2] = lerpf(0.0, _floor_heightmap[gx2][gz2], blend)
 
-	# Flatten floor in 12-unit radius around tunnel connection points (gentle ramp)
-	for conn_world_pos in _tunnel_connection_points:
+	# Flatten floor around tunnel connection points (wide gentle ramp for big hallways)
+	for ti in range(_tunnel_connection_points.size()):
+		var conn_world_pos: Vector3 = _tunnel_connection_points[ti]
+		var mouth_w: float = _tunnel_mouth_widths[ti] if ti < _tunnel_mouth_widths.size() else 4.0
+		var flatten_radius: float = maxf(mouth_w * 0.8, 20.0)  # Scale with hallway width
 		var local_x: float = conn_world_pos.x - _hub_data.position.x
 		var local_z: float = conn_world_pos.z - _hub_data.position.z
 		for gx2 in range(_grid_size):
@@ -110,13 +128,31 @@ func _build_floor(colors: Dictionary) -> void:
 				var wx2: float = (float(gx2) / subdivs - 0.5) * radius * 2.0
 				var wz2: float = (float(gz2) / subdivs - 0.5) * radius * 2.0
 				var d: float = Vector2(wx2 - local_x, wz2 - local_z).length()
-				if d < 12.0:
-					var blend: float = d / 12.0
+				if d < flatten_radius:
+					var blend: float = d / flatten_radius
 					blend = blend * blend * blend  # Cubic smooth falloff
-					_floor_heightmap[gx2][gz2] = lerpf(-1.0, _floor_heightmap[gx2][gz2], blend)
+					_floor_heightmap[gx2][gz2] = lerpf(-0.5, _floor_heightmap[gx2][gz2], blend)
 
 	# Heightmap smoothing pass (3x3 box blur to eliminate sharp seams)
 	_smooth_heightmap(subdivs)
+
+	# POST-SMOOTH flatten: hard-set center area to y=0 so spawn is always safe.
+	# This runs AFTER smoothing so the blur can't undo it.
+	# Inner 10 units: perfectly flat (y=0). 10-16 units: smooth blend to terrain.
+	for gx3 in range(_grid_size):
+		for gz3 in range(_grid_size):
+			var wx3: float = (float(gx3) / subdivs - 0.5) * radius * 2.0
+			var wz3: float = (float(gz3) / subdivs - 0.5) * radius * 2.0
+			var center_dist3: float = Vector2(wx3, wz3).length()
+			if center_dist3 < 16.0:
+				if center_dist3 < 10.0:
+					# Inner zone: perfectly flat
+					_floor_heightmap[gx3][gz3] = 0.0
+				else:
+					# Transition zone: blend from flat to terrain
+					var blend3: float = (center_dist3 - 10.0) / 6.0
+					blend3 = blend3 * blend3  # Quadratic ease
+					_floor_heightmap[gx3][gz3] = lerpf(0.0, _floor_heightmap[gx3][gz3], blend3)
 
 	# Compute smooth per-vertex normals by accumulating face normals
 	var vertex_normals: Array = []
@@ -162,7 +198,7 @@ func _build_floor(colors: Dictionary) -> void:
 		var local_z: float = conn_pos.z - _hub_data.position.z
 		floor_tunnel_angles.append(atan2(local_z, local_x))
 		var w: float = _tunnel_mouth_widths[i] if i < _tunnel_mouth_widths.size() else 4.0
-		floor_tunnel_half_angles.append(atan2(w * 0.8, radius) + 0.15)
+		floor_tunnel_half_angles.append(atan2(w * 1.2, radius) + 0.2)
 
 	# Build mesh with smooth per-vertex normals
 	var st: SurfaceTool = SurfaceTool.new()
@@ -255,15 +291,42 @@ func _build_floor(colors: Dictionary) -> void:
 	add_child(floor_mi)
 
 	# Floor collision
-	var static_body: StaticBody3D = StaticBody3D.new()
-	static_body.name = "FloorCollision"
-	var col_shape: CollisionShape3D = CollisionShape3D.new()
-	var concave: ConcavePolygonShape3D = ConcavePolygonShape3D.new()
-	concave.set_faces(mesh.get_faces())
-	concave.backface_collision = true
-	col_shape.shape = concave
-	static_body.add_child(col_shape)
-	add_child(static_body)
+	var faces: PackedVector3Array = mesh.get_faces()
+	if faces.size() == 0:
+		print("[CAVE_HUB] WARNING: Floor mesh has 0 faces for hub %d!" % _hub_data.id)
+		# Fallback: create a flat box collision at the hub center
+		var static_body: StaticBody3D = StaticBody3D.new()
+		static_body.name = "FloorCollision"
+		var col_shape: CollisionShape3D = CollisionShape3D.new()
+		var box: BoxShape3D = BoxShape3D.new()
+		box.size = Vector3(_hub_data.radius * 2.0, 0.5, _hub_data.radius * 2.0)
+		col_shape.shape = box
+		col_shape.position = Vector3(0, -0.25, 0)
+		static_body.add_child(col_shape)
+		add_child(static_body)
+	else:
+		print("[CAVE_HUB] Hub %d floor: %d faces" % [_hub_data.id, faces.size() / 3])
+		var static_body: StaticBody3D = StaticBody3D.new()
+		static_body.name = "FloorCollision"
+		var col_shape: CollisionShape3D = CollisionShape3D.new()
+		var concave: ConcavePolygonShape3D = ConcavePolygonShape3D.new()
+		concave.set_faces(faces)
+		concave.backface_collision = true
+		col_shape.shape = concave
+		static_body.add_child(col_shape)
+		add_child(static_body)
+
+	# Safety floor plate: invisible flat box at hub center to prevent falling through.
+	# Sits just below y=0 so the mesh floor takes priority but this catches any gaps.
+	var safety_body: StaticBody3D = StaticBody3D.new()
+	safety_body.name = "SafetyFloor"
+	var safety_shape: CollisionShape3D = CollisionShape3D.new()
+	var safety_box: BoxShape3D = BoxShape3D.new()
+	safety_box.size = Vector3(20.0, 0.5, 20.0)  # 20x20 unit safety zone at center
+	safety_shape.shape = safety_box
+	safety_shape.position = Vector3(0, -0.3, 0)  # Just below floor surface
+	safety_body.add_child(safety_shape)
+	add_child(safety_body)
 
 func _smooth_heightmap(subdivs: int) -> void:
 	## 3x3 box blur on the floor heightmap to eliminate sharp seams
@@ -299,7 +362,7 @@ func _build_ceiling(colors: Dictionary) -> void:
 		var local_z: float = conn_pos.z - _hub_data.position.z
 		ceil_tunnel_angles.append(atan2(local_z, local_x))
 		var w: float = _tunnel_mouth_widths[i] if i < _tunnel_mouth_widths.size() else 4.0
-		ceil_tunnel_half_angles.append(atan2(w * 0.8, radius) + 0.15)
+		ceil_tunnel_half_angles.append(atan2(w * 1.2, radius) + 0.2)
 
 	var ceiling_noise: FastNoiseLite = FastNoiseLite.new()
 	ceiling_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
@@ -418,8 +481,8 @@ func _build_walls(colors: Dictionary) -> void:
 		var angle: float = atan2(local_z, local_x)
 		tunnel_angles.append(angle)
 		var w: float = _tunnel_mouth_widths[i] if i < _tunnel_mouth_widths.size() else 4.0
-		# Angular half-width: generous opening based on tunnel width + margin
-		var half_angle: float = atan2(w * 0.8, radius) + 0.15
+		# Angular half-width: very generous opening for large hallways
+		var half_angle: float = atan2(w * 1.2, radius) + 0.2
 		tunnel_half_angles.append(half_angle)
 
 	var st: SurfaceTool = SurfaceTool.new()

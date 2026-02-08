@@ -100,23 +100,33 @@ class TunnelData:
 	var is_active: bool = false
 
 # --- Generation parameters ---
-const HUB_COUNT_MIN: int = 12
-const HUB_COUNT_MAX: int = 16
-const HUB_MIN_SPACING: float = 60.0
-const HUB_MAX_SPACING: float = 200.0
-const EXTRA_EDGE_RATIO: float = 0.35
-const TUNNEL_SUBDIVISIONS: int = 24
-const DEAD_END_MAX_PER_TUNNEL: int = 3
-const SPAWN_HUB_RADIUS: float = 30.0
-const SPAWN_HUB_HEIGHT: float = 18.0
+const TUNNEL_SUBDIVISIONS: int = 32
 const SPAWN_Y: float = -10.0
 
-# Chunk activation
-const ACTIVATE_DISTANCE: float = 120.0
-const DEACTIVATE_DISTANCE: float = 160.0
+# Star-pattern layout: 1 central hub + 5 biome wings
+const CENTER_RADIUS: float = 200.0   # Huge central cavern
+const CENTER_HEIGHT: float = 55.0
+const WING_RADIUS: float = 150.0     # Large biome caverns at each spoke tip
+const WING_HEIGHT: float = 45.0
+const SPOKE_LENGTH: float = 500.0    # Long distance from center to wing hub
+const HALLWAY_WIDTH: float = 50.0    # Very wide hallways between rooms
+const SPOKE_COUNT: int = 5           # 5 biome wings in star pattern
+
+# The 5 spoke biomes (one per wing, fixed order)
+const SPOKE_BIOMES: Array = [
+	Biome.HEART_CHAMBER,
+	Biome.LUNG_TISSUE,
+	Biome.INTESTINAL_TRACT,
+	Biome.BONE_MARROW,
+	Biome.BRAIN,
+]
+
+# Chunk activation (large for big layout)
+const ACTIVATE_DISTANCE: float = 600.0
+const DEACTIVATE_DISTANCE: float = 700.0
 
 # --- Runtime state ---
-var hubs: Array[HubData] = []  # Use typed array but store as variant internally
+var hubs: Array[HubData] = []
 var tunnels: Array[TunnelData] = []
 var spawn_hub_id: int = 0
 var _player: Node3D = null
@@ -129,218 +139,82 @@ func _ready() -> void:
 	call_deferred("_generate_cave_system")
 
 func _generate_cave_system() -> void:
-	_place_hubs()
-	_build_connectivity()
-	_assign_depths()
-	_assign_biomes()
+	_place_star_layout()
 	_generate_tunnel_paths()
-	_add_dead_ends()
 	_instantiate_geometry()
+	_add_valve_gates()
+	_build_containment_shell()
 	cave_ready.emit()
 
-# --- Hub Placement (Poisson-disc-like) ---
-func _place_hubs() -> void:
-	var target_count: int = randi_range(HUB_COUNT_MIN, HUB_COUNT_MAX)
-
-	# Spawn hub at origin
-	var spawn: HubData = HubData.new()
-	spawn.id = 0
-	spawn.position = Vector3(0, SPAWN_Y, 0)
-	spawn.radius = SPAWN_HUB_RADIUS
-	spawn.height = SPAWN_HUB_HEIGHT
-	spawn.biome = Biome.STOMACH
-	hubs.append(spawn)
+# --- Star-Pattern Hub Placement ---
+func _place_star_layout() -> void:
+	# Hub 0: Central spawn cavern (STOMACH)
+	var center: HubData = HubData.new()
+	center.id = 0
+	center.position = Vector3(0, SPAWN_Y, 0)
+	center.radius = CENTER_RADIUS
+	center.height = CENTER_HEIGHT
+	center.biome = Biome.STOMACH
+	center.depth_level = 0
+	hubs.append(center)
 	spawn_hub_id = 0
 
-	# Place remaining hubs via rejection sampling
-	var attempts: int = 0
-	while hubs.size() < target_count and attempts < 500:
-		attempts += 1
-		var angle: float = randf() * TAU
-		var dist: float = randf_range(HUB_MIN_SPACING, HUB_MAX_SPACING)
-		# Bias placement around existing hubs for connectivity
-		var ref_hub: HubData = hubs[randi_range(0, hubs.size() - 1)]
-		var candidate: Vector3 = ref_hub.position + Vector3(cos(angle) * dist, 0, sin(angle) * dist)
+	# Hubs 1-5: Wing caverns at star tips, evenly spaced at 72-degree intervals
+	for i in range(SPOKE_COUNT):
+		var angle: float = TAU * i / SPOKE_COUNT  # 0, 72, 144, 216, 288 degrees
+		var wing: HubData = HubData.new()
+		wing.id = i + 1
+		wing.position = Vector3(cos(angle) * SPOKE_LENGTH, SPAWN_Y, sin(angle) * SPOKE_LENGTH)
+		wing.radius = WING_RADIUS
+		wing.height = WING_HEIGHT
+		wing.biome = SPOKE_BIOMES[i]
+		wing.depth_level = 1
 
-		# Check minimum spacing
-		var too_close: bool = false
-		for existing in hubs:
-			var flat_dist: float = Vector2(candidate.x - existing.position.x, candidate.z - existing.position.z).length()
-			if flat_dist < HUB_MIN_SPACING:
-				too_close = true
-				break
-		if too_close:
-			continue
+		# Connect center <-> wing
+		center.connections.append(wing.id)
+		wing.connections.append(center.id)
 
-		var hub: HubData = HubData.new()
-		hub.id = hubs.size()
-		hub.position = candidate  # Y will be set by depth assignment
-		hub.biome = Biome.STOMACH  # Will be reassigned
+		hubs.append(wing)
 
-		# Random size category
-		var size_roll: float = randf()
-		if size_roll < 0.15:
-			# Massive cathedral
-			hub.radius = randf_range(60.0, 80.0)
-			hub.height = randf_range(35.0, 50.0)
-		elif size_roll < 0.45:
-			# Medium
-			hub.radius = randf_range(25.0, 40.0)
-			hub.height = randf_range(15.0, 25.0)
-		else:
-			# Small cozy
-			hub.radius = randf_range(15.0, 20.0)
-			hub.height = randf_range(8.0, 12.0)
-
-		hubs.append(hub)
-
-# --- Connectivity (MST + extra edges) ---
-func _build_connectivity() -> void:
-	if hubs.size() < 2:
-		return
-
-	# Build all possible edges with distances
-	var edges: Array = []  # {a: int, b: int, dist: float}
-	for i in range(hubs.size()):
-		for j in range(i + 1, hubs.size()):
-			var d: float = Vector2(
-				hubs[i].position.x - hubs[j].position.x,
-				hubs[i].position.z - hubs[j].position.z
-			).length()
-			edges.append({"a": i, "b": j, "dist": d})
-
-	# Sort by distance
-	edges.sort_custom(func(x, y): return x.dist < y.dist)
-
-	# Kruskal's MST
-	var parent: Array[int] = []
-	for i in range(hubs.size()):
-		parent.append(i)
-	var mst_edges: Array = []
-
-	for edge in edges:
-		var ra: int = _find_root(parent, edge.a)
-		var rb: int = _find_root(parent, edge.b)
-		if ra != rb:
-			parent[ra] = rb
-			mst_edges.append(edge)
-			hubs[edge.a].connections.append(edge.b)
-			hubs[edge.b].connections.append(edge.a)
-			if mst_edges.size() == hubs.size() - 1:
-				break
-
-	# Add extra edges for loops (EXTRA_EDGE_RATIO of MST count)
-	var extra_count: int = int(mst_edges.size() * EXTRA_EDGE_RATIO)
-	var added: int = 0
-	for edge in edges:
-		if added >= extra_count:
-			break
-		if edge.b not in hubs[edge.a].connections:
-			hubs[edge.a].connections.append(edge.b)
-			hubs[edge.b].connections.append(edge.a)
-			added += 1
-
-func _find_root(parent: Array[int], i: int) -> int:
-	while parent[i] != i:
-		parent[i] = parent[parent[i]]
-		i = parent[i]
-	return i
-
-# --- Depth Assignment (BFS from spawn) ---
-func _assign_depths() -> void:
-	var visited: Array[bool] = []
-	visited.resize(hubs.size())
-	for i in range(hubs.size()):
-		visited[i] = false
-
-	var queue: Array[int] = [spawn_hub_id]
-	visited[spawn_hub_id] = true
-	hubs[spawn_hub_id].depth_level = 0
-
-	while queue.size() > 0:
-		var current: int = queue.pop_front()
-		for neighbor_id in hubs[current].connections:
-			if not visited[neighbor_id]:
-				visited[neighbor_id] = true
-				hubs[neighbor_id].depth_level = hubs[current].depth_level + 1
-				queue.append(neighbor_id)
-
-	# Set Y positions based on depth (deeper = lower Y)
-	var max_depth: int = 0
-	for hub in hubs:
-		max_depth = maxi(max_depth, hub.depth_level)
-
-	for hub in hubs:
-		if hub.id == spawn_hub_id:
-			continue
-		var depth_fraction: float = float(hub.depth_level) / maxf(max_depth, 1.0)
-		hub.position.y = lerpf(SPAWN_Y - 10.0, -120.0, depth_fraction) + randf_range(-5.0, 5.0)
-
-# --- Organ Biome Assignment ---
-func _assign_biomes() -> void:
-	hubs[spawn_hub_id].biome = Biome.STOMACH
-
-	for hub in hubs:
-		if hub.id == spawn_hub_id:
-			continue
-		var depth: int = hub.depth_level
-		if depth <= 1:
-			# Near stomach: safe organs
-			hub.biome = [Biome.STOMACH, Biome.INTESTINAL_TRACT][randi_range(0, 1)]
-		elif depth <= 2:
-			hub.biome = [Biome.INTESTINAL_TRACT, Biome.LUNG_TISSUE, Biome.HEART_CHAMBER][randi_range(0, 2)]
-		elif depth <= 3:
-			hub.biome = [Biome.LUNG_TISSUE, Biome.HEART_CHAMBER, Biome.BONE_MARROW][randi_range(0, 2)]
-		elif depth <= 4:
-			hub.biome = [Biome.BONE_MARROW, Biome.LIVER][randi_range(0, 1)]
-		else:
-			hub.biome = [Biome.LIVER, Biome.BRAIN][randi_range(0, 1)]
-
-# --- Tunnel Path Generation ---
+# --- Tunnel Path Generation (straight spokes with gentle curve) ---
 func _generate_tunnel_paths() -> void:
-	var processed_pairs: Dictionary = {}
+	# One tunnel per spoke: center hub (0) to each wing hub (1-5)
+	for i in range(SPOKE_COUNT):
+		var wing_id: int = i + 1
+		var tunnel: TunnelData = TunnelData.new()
+		tunnel.id = tunnels.size()
+		tunnel.hub_a = 0
+		tunnel.hub_b = wing_id
+		tunnel.biome_a = hubs[0].biome
+		tunnel.biome_b = hubs[wing_id].biome
+		tunnel.width = HALLWAY_WIDTH
 
-	for hub in hubs:
-		for conn_id in hub.connections:
-			var key: int = mini(hub.id, conn_id) * 1000 + maxi(hub.id, conn_id)
-			if key in processed_pairs:
-				continue
-			processed_pairs[key] = true
+		var hub_a_pos: Vector3 = hubs[0].position
+		var hub_b_pos: Vector3 = hubs[wing_id].position
 
-			var tunnel: TunnelData = TunnelData.new()
-			tunnel.id = tunnels.size()
-			tunnel.hub_a = hub.id
-			tunnel.hub_b = conn_id
-			tunnel.biome_a = hub.biome
-			tunnel.biome_b = hubs[conn_id].biome
+		# Clip endpoints to wall boundaries so tunnel mesh doesn't exist inside hubs.
+		# This prevents tunnel walls from blocking movement inside hub rooms.
+		var flat_dir: Vector3 = (hub_b_pos - hub_a_pos).normalized()
+		var p0: Vector3 = hub_a_pos + flat_dir * hubs[0].radius * 0.92
+		p0.y = SPAWN_Y
+		var p3: Vector3 = hub_b_pos - flat_dir * hubs[wing_id].radius * 0.92
+		p3.y = SPAWN_Y
 
-			# Tunnel width: wider for navigability (vein/artery tubes)
-			var min_radius: float = minf(hub.radius, hubs[conn_id].radius)
-			tunnel.width = clampf(min_radius * 0.15, 3.0, 6.0)
+		# Gentle S-curve: control points offset slightly perpendicular
+		var flat_length: float = p0.distance_to(p3)
+		var perp: Vector3 = flat_dir.cross(Vector3.UP)
+		if perp.length() < 0.1:
+			perp = flat_dir.cross(Vector3.RIGHT)
+		perp = perp.normalized()
 
-			# Generate cubic Bezier path
-			var p0: Vector3 = hub.position
-			var p3: Vector3 = hubs[conn_id].position
+		var curve_amount: float = flat_length * 0.06  # Very gentle curve
+		var p1: Vector3 = p0 + flat_dir * flat_length * 0.33 + perp * randf_range(-curve_amount, curve_amount)
+		p1.y = SPAWN_Y
+		var p2: Vector3 = p0 + flat_dir * flat_length * 0.66 + perp * randf_range(-curve_amount, curve_amount)
+		p2.y = SPAWN_Y
 
-			# Control points: offset perpendicular to the line + Y variation
-			var flat_dir: Vector3 = (p3 - p0)
-			var flat_length: float = flat_dir.length()
-			flat_dir = flat_dir.normalized()
-
-			var perp: Vector3 = flat_dir.cross(Vector3.UP)
-			if perp.length() < 0.1:
-				perp = flat_dir.cross(Vector3.RIGHT)
-			perp = perp.normalized()
-
-			var curve_amount: float = flat_length * 0.15  # Gentler curves for easier navigation
-			var p1: Vector3 = p0 + flat_dir * flat_length * 0.33 + perp * randf_range(-curve_amount, curve_amount)
-			p1.y = lerpf(p0.y, p3.y, 0.33) + randf_range(-curve_amount * 0.2, curve_amount * 0.2)
-			var p2: Vector3 = p0 + flat_dir * flat_length * 0.66 + perp * randf_range(-curve_amount, curve_amount)
-			p2.y = lerpf(p0.y, p3.y, 0.66) + randf_range(-curve_amount * 0.2, curve_amount * 0.2)
-
-			# Sample cubic Bezier
-			tunnel.path = _sample_cubic_bezier(p0, p1, p2, p3, TUNNEL_SUBDIVISIONS)
-			tunnels.append(tunnel)
+		tunnel.path = _sample_cubic_bezier(p0, p1, p2, p3, TUNNEL_SUBDIVISIONS)
+		tunnels.append(tunnel)
 
 func _sample_cubic_bezier(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, subdivisions: int) -> Array[Vector3]:
 	var points: Array[Vector3] = []
@@ -350,32 +224,6 @@ func _sample_cubic_bezier(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, su
 		var pos: Vector3 = it * it * it * p0 + 3.0 * it * it * t * p1 + 3.0 * it * t * t * p2 + t * t * t * p3
 		points.append(pos)
 	return points
-
-# --- Dead-End Branches ---
-func _add_dead_ends() -> void:
-	for tunnel in tunnels:
-		var num_dead_ends: int = randi_range(0, DEAD_END_MAX_PER_TUNNEL)
-		for _d in range(num_dead_ends):
-			if tunnel.path.size() < 8:
-				continue
-			# Pick a random point along the tunnel (not at endpoints)
-			var branch_idx: int = randi_range(3, tunnel.path.size() - 5)
-			var branch_point: Vector3 = tunnel.path[branch_idx]
-
-			# Generate a short branch
-			var tunnel_dir: Vector3 = (tunnel.path[branch_idx + 1] - tunnel.path[branch_idx - 1]).normalized()
-			var perp: Vector3 = tunnel_dir.cross(Vector3.UP)
-			if perp.length() < 0.1:
-				perp = tunnel_dir.cross(Vector3.RIGHT)
-			perp = perp.normalized()
-
-			var side: float = [-1.0, 1.0][randi_range(0, 1)]
-			var branch_length: float = randf_range(8.0, 20.0)
-			var end_point: Vector3 = branch_point + perp * side * branch_length + Vector3(0, randf_range(-3.0, 1.0), 0)
-			var mid_point: Vector3 = (branch_point + end_point) * 0.5 + perp * side * randf_range(2.0, 5.0)
-
-			var branch_path: Array[Vector3] = _sample_cubic_bezier(branch_point, mid_point, mid_point, end_point, 8)
-			tunnel.dead_ends.append({"branch_idx": branch_idx, "path": branch_path})
 
 # --- Geometry Instantiation ---
 func _instantiate_geometry() -> void:
@@ -427,6 +275,82 @@ func _instantiate_geometry() -> void:
 		add_child(tunnel_node)
 		tunnel.node_3d = tunnel_node
 		tunnel.is_active = true
+
+# --- Valve Gates: fleshy iris gates on ~20% of tunnels ---
+func _add_valve_gates() -> void:
+	var gate_script = load("res://scripts/snake_stage/valve_gate.gd")
+	for tunnel in tunnels:
+		if randf() > 0.2:  # 20% chance per tunnel
+			continue
+		if tunnel.path.size() < 6:
+			continue
+		var gate: Node3D = gate_script.create_gate(tunnel, self)
+		if gate:
+			add_child(gate)
+
+# --- Containment Shell: solid rock around the entire cave system ---
+func _build_containment_shell() -> void:
+	## Computes the AABB of all hubs + tunnels and creates 6 massive box colliders
+	## forming an inward-facing shell. This IS the solid rock the caves are carved into.
+	## Nothing can exist outside this boundary.
+	var min_pos: Vector3 = Vector3(INF, INF, INF)
+	var max_pos: Vector3 = Vector3(-INF, -INF, -INF)
+
+	for hub in hubs:
+		var r: float = hub.radius + 10.0  # Padding beyond hub walls
+		var h: float = hub.height + 10.0
+		min_pos.x = minf(min_pos.x, hub.position.x - r)
+		min_pos.z = minf(min_pos.z, hub.position.z - r)
+		min_pos.y = minf(min_pos.y, hub.position.y - 10.0)
+		max_pos.x = maxf(max_pos.x, hub.position.x + r)
+		max_pos.z = maxf(max_pos.z, hub.position.z + r)
+		max_pos.y = maxf(max_pos.y, hub.position.y + h)
+
+	for tunnel in tunnels:
+		for pt in tunnel.path:
+			var w: float = tunnel.width + 5.0
+			min_pos.x = minf(min_pos.x, pt.x - w)
+			min_pos.z = minf(min_pos.z, pt.z - w)
+			min_pos.y = minf(min_pos.y, pt.y - w)
+			max_pos.x = maxf(max_pos.x, pt.x + w)
+			max_pos.z = maxf(max_pos.z, pt.z + w)
+			max_pos.y = maxf(max_pos.y, pt.y + w)
+
+	# Add generous margin
+	min_pos -= Vector3(20, 20, 20)
+	max_pos += Vector3(20, 20, 20)
+
+	var center: Vector3 = (min_pos + max_pos) * 0.5
+	var size: Vector3 = max_pos - min_pos
+	var wall_thickness: float = 10.0
+
+	# 6 walls: top, bottom, left, right, front, back
+	var walls: Array = [
+		{"pos": Vector3(center.x, max_pos.y + wall_thickness * 0.5, center.z), "size": Vector3(size.x + wall_thickness * 2, wall_thickness, size.z + wall_thickness * 2)},  # Top
+		{"pos": Vector3(center.x, min_pos.y - wall_thickness * 0.5, center.z), "size": Vector3(size.x + wall_thickness * 2, wall_thickness, size.z + wall_thickness * 2)},  # Bottom
+		{"pos": Vector3(min_pos.x - wall_thickness * 0.5, center.y, center.z), "size": Vector3(wall_thickness, size.y + wall_thickness * 2, size.z + wall_thickness * 2)},  # Left
+		{"pos": Vector3(max_pos.x + wall_thickness * 0.5, center.y, center.z), "size": Vector3(wall_thickness, size.y + wall_thickness * 2, size.z + wall_thickness * 2)},  # Right
+		{"pos": Vector3(center.x, center.y, min_pos.z - wall_thickness * 0.5), "size": Vector3(size.x + wall_thickness * 2, size.y + wall_thickness * 2, wall_thickness)},  # Front
+		{"pos": Vector3(center.x, center.y, max_pos.z + wall_thickness * 0.5), "size": Vector3(size.x + wall_thickness * 2, size.y + wall_thickness * 2, wall_thickness)},  # Back
+	]
+
+	var shell_container: Node3D = Node3D.new()
+	shell_container.name = "ContainmentShell"
+	add_child(shell_container)
+
+	for i in range(walls.size()):
+		var wall_data: Dictionary = walls[i]
+		var body: StaticBody3D = StaticBody3D.new()
+		body.name = "ShellWall_%d" % i
+		var col: CollisionShape3D = CollisionShape3D.new()
+		var box: BoxShape3D = BoxShape3D.new()
+		box.size = wall_data.size
+		col.shape = box
+		body.add_child(col)
+		body.position = wall_data.pos
+		shell_container.add_child(body)
+
+	print("[CAVE] Containment shell built: bounds [%s] to [%s]" % [str(min_pos), str(max_pos)])
 
 # --- Chunk Management ---
 func _process(delta: float) -> void:
@@ -494,9 +418,13 @@ func get_spawn_position() -> Vector3:
 		# Query actual floor height to avoid spawning inside geometry
 		if hub.node_3d and hub.node_3d.has_method("get_floor_y"):
 			var floor_y: float = hub.node_3d.get_floor_y(center.x, center.z)
-			return Vector3(center.x, floor_y + 2.0, center.z)
-		return center + Vector3(0, 5.0, 0)
-	return Vector3(0, SPAWN_Y + 5.0, 0)
+			var spawn_pos: Vector3 = Vector3(center.x, floor_y + 5.0, center.z)
+			print("[SPAWN] floor_y=%.2f  spawn_y=%.2f  hub_pos=%s  hub_global=%s" % [floor_y, spawn_pos.y, str(hub.position), str(hub.node_3d.global_position)])
+			return spawn_pos
+		print("[SPAWN] WARNING: no get_floor_y, using fallback")
+		return center + Vector3(0, 8.0, 0)
+	print("[SPAWN] WARNING: no hubs!")
+	return Vector3(0, SPAWN_Y + 8.0, 0)
 
 func get_hub_at_position(pos: Vector3) -> HubData:
 	for hub in hubs:
@@ -531,3 +459,61 @@ func get_floor_y_at(pos: Vector3) -> float:
 	if nearest:
 		return nearest.position.y
 	return SPAWN_Y
+
+func is_inside_cave(pos: Vector3) -> bool:
+	## Returns true if position is inside any hub or any tunnel tube.
+	## Checks ALL hubs/tunnels regardless of active state (geometry still exists).
+	for hub in hubs:
+		var flat_dist: float = Vector2(pos.x - hub.position.x, pos.z - hub.position.z).length()
+		if flat_dist < hub.radius and absf(pos.y - hub.position.y) < hub.height:
+			return true
+	# Check tunnels: is the position within tunnel width of any path point?
+	for tunnel in tunnels:
+		for path_point in tunnel.path:
+			var dist: float = pos.distance_to(path_point)
+			if dist < tunnel.width * 0.5:
+				return true
+	return false
+
+func get_random_position_in_hub(near_pos: Vector3, max_dist: float = 500.0) -> Vector3:
+	## Returns a random position guaranteed to be inside a nearby active hub.
+	## Used for spawning creatures/items within cave geometry.
+	var candidates: Array = []
+	for hub in hubs:
+		if not hub.is_active:
+			continue
+		var d: float = hub.position.distance_to(near_pos)
+		if d < max_dist:
+			candidates.append(hub)
+
+	if candidates.is_empty():
+		var nearest = get_nearest_hub(near_pos)
+		if nearest:
+			candidates.append(nearest)
+		else:
+			return near_pos
+
+	var hub = candidates[randi_range(0, candidates.size() - 1)]
+
+	# Random point inside hub circle (sqrt for uniform distribution, 0.7 to stay away from walls)
+	var angle: float = randf() * TAU
+	var r: float = hub.radius * 0.7 * sqrt(randf())
+	var x: float = hub.position.x + cos(angle) * r
+	var z: float = hub.position.z + sin(angle) * r
+	var y: float = hub.position.y + 1.0
+
+	# Get actual floor height
+	if hub.node_3d and hub.node_3d.has_method("get_floor_y"):
+		y = hub.node_3d.get_floor_y(x, z) + 0.5
+
+	return Vector3(x, y, z)
+
+func get_nearest_hub_center_on_floor(pos: Vector3) -> Vector3:
+	## Returns the floor-level center of the nearest hub. Safe teleport target.
+	var hub = get_nearest_hub(pos)
+	if not hub:
+		return Vector3(0, SPAWN_Y + 2.0, 0)
+	var y: float = hub.position.y + 2.0
+	if hub.node_3d and hub.node_3d.has_method("get_floor_y"):
+		y = hub.node_3d.get_floor_y(hub.position.x, hub.position.z) + 2.0
+	return Vector3(hub.position.x, y, hub.position.z)

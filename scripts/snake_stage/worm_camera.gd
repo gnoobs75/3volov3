@@ -9,17 +9,17 @@ const DEFAULT_LOOK_AHEAD: float = 3.5
 const DEFAULT_FOV: float = 80.0
 
 # Dynamic range based on cave size
-const TUNNEL_BACK: float = 2.5
-const TUNNEL_UP: float = 1.5
-const TUNNEL_FOV: float = 85.0  # Wider for claustrophobia
+const TUNNEL_BACK: float = 8.0
+const TUNNEL_UP: float = 5.0
+const TUNNEL_FOV: float = 80.0  # Wide for hallway context
 
-const HUB_SMALL_BACK: float = 6.0
-const HUB_SMALL_UP: float = 3.5
+const HUB_SMALL_BACK: float = 15.0
+const HUB_SMALL_UP: float = 8.0
 const HUB_SMALL_FOV: float = 75.0
 
-const HUB_LARGE_BACK: float = 12.0
-const HUB_LARGE_UP: float = 6.5
-const HUB_LARGE_FOV: float = 65.0  # Narrower for awe/scale
+const HUB_LARGE_BACK: float = 30.0
+const HUB_LARGE_UP: float = 15.0
+const HUB_LARGE_FOV: float = 70.0  # Wide enough to see the cavern
 
 const FOLLOW_SPEED: float = 6.0
 const ROTATION_SPEED: float = 5.0
