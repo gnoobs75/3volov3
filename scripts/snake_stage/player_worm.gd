@@ -66,12 +66,25 @@ var _stun_cooldown: float = 0.0
 const STUN_COOLDOWN_TIME: float = 4.0
 const STUN_ENERGY_COST: float = 15.0
 
+# --- Tractor Beam ---
+const TRACTOR_RANGE: float = 12.0  # Max pull distance
+const TRACTOR_FORCE: float = 15.0  # Pull speed
+const TRACTOR_CONE: float = 0.3    # Dot product threshold (wide cone)
+var _tractor_active: bool = false
+var _rmb_just_pressed: bool = false
+
 # --- Visuals ---
 var _eye_light: SpotLight3D = null
 var _time: float = 0.0
 var _body_color: Color = Color(0.55, 0.35, 0.45)  # Pink-brown worm
 var _belly_color: Color = Color(0.7, 0.55, 0.5)
 var _damage_flash: float = 0.0
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		var mb: InputEventMouseButton = event
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
+			_rmb_just_pressed = true
 
 func _ready() -> void:
 	add_to_group("player_worm")
@@ -210,14 +223,14 @@ func _update_jaw() -> void:
 		var pivot: Node3D = _jaw_petals[i]
 		# When closed: petals together. When open: splay outward 90 degrees
 		var splay_angle: float = _jaw_open_amount * deg_to_rad(90.0)
-		if _head_node:
-			# Blender model: jaw pivots splay outward via local Y rotation
-			pivot.rotation.y = splay_angle
-		else:
-			# Procedural fallback: splay via X rotation
-			pivot.rotation.x = splay_angle
+		# Splay outward from center — local X axis for both model types
+		pivot.rotation.x = splay_angle
 
 func _build_face() -> void:
+	if _head_node:
+		# Blender model has 3D eyes — skip the 2D face billboard
+		return
+
 	_face_viewport = SubViewport.new()
 	_face_viewport.size = Vector2i(128, 128)
 	_face_viewport.transparent_bg = true
@@ -234,7 +247,7 @@ func _build_face() -> void:
 	_face_billboard.texture = _face_viewport.get_texture()
 	_face_billboard.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	_face_billboard.pixel_size = 0.02
-	_face_billboard.position = Vector3(0, 0.9, 0.85)  # Further forward + higher — visible above jaw
+	_face_billboard.position = Vector3(0, 0.9, 0.85)
 	_face_billboard.modulate = Color(1, 1, 1, 0.95)
 	_face_billboard.no_depth_test = false
 	_face_billboard.render_priority = 1
@@ -416,9 +429,13 @@ func _physics_process(delta: float) -> void:
 		base_noise = 0.5
 	noise_level = maxf(base_noise, _noise_spike)
 
-	# --- Bite attack (LMB / beam_collect) ---
-	if Input.is_action_just_pressed("beam_collect"):
+	# --- Bite attack (RMB) ---
+	if _rmb_just_pressed and _bite_cooldown <= 0:
 		_trigger_bite()
+	_rmb_just_pressed = false
+
+	# --- Tractor beam (LMB / beam_collect) — pull nutrients ---
+	_update_tractor_beam(delta)
 
 	# --- Stun burst (E key) ---
 	if Input.is_action_just_pressed("stun_burst") and _stun_cooldown <= 0 and energy >= STUN_ENERGY_COST:
@@ -643,6 +660,31 @@ func _collect_meshes(node: Node, result: Array) -> void:
 		result.append(node)
 	for child in node.get_children():
 		_collect_meshes(child, result)
+
+func _update_tractor_beam(delta: float) -> void:
+	_tractor_active = Input.is_action_pressed("beam_collect")
+	if not _tractor_active:
+		return
+	# Pull nearby nutrients toward the worm (not creatures)
+	var forward: Vector3 = Vector3(sin(_heading), 0, cos(_heading))
+	for node in get_tree().get_nodes_in_group("nutrient"):
+		var to_item: Vector3 = node.global_position - global_position
+		var dist: float = to_item.length()
+		if dist > TRACTOR_RANGE or dist < 0.3:
+			continue
+		# Wide forward cone check
+		var dot: float = forward.dot(to_item.normalized())
+		if dot < TRACTOR_CONE:
+			continue
+		# Pull toward player
+		var pull_dir: Vector3 = -to_item.normalized()
+		var strength: float = TRACTOR_FORCE * (1.0 - dist / TRACTOR_RANGE)
+		if node is CharacterBody3D:
+			node.velocity += pull_dir * strength * delta * 60.0
+		elif node is RigidBody3D:
+			node.apply_central_force(pull_dir * strength * 5.0)
+		else:
+			node.global_position += pull_dir * strength * delta
 
 func do_bite_damage() -> void:
 	## Called during bite snap — deals damage to WBCs in range

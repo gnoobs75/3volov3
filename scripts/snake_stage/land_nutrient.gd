@@ -21,6 +21,7 @@ const CATEGORY_NAMES: Array = [
 ]
 
 func _ready() -> void:
+	add_to_group("nutrient")
 	_bob_offset = randf() * TAU
 	body_entered.connect(_on_body_entered)
 

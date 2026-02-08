@@ -25,6 +25,12 @@ const FOLLOW_SPEED: float = 6.0
 const ROTATION_SPEED: float = 5.0
 const CEILING_CHECK_MARGIN: float = 0.8
 
+# Zoom control
+const ZOOM_MIN: float = 0.3   # Closest zoom (30% of context distance)
+const ZOOM_MAX: float = 1.2   # Furthest zoom (120% of context distance)
+const ZOOM_STEP: float = 0.08 # Per scroll click
+const ZOOM_SMOOTH: float = 6.0
+
 var _target: Node3D = null
 var _smooth_pos: Vector3 = Vector3.ZERO
 var _smooth_look: Vector3 = Vector3.ZERO
@@ -35,6 +41,10 @@ var _current_back: float = DEFAULT_BACK
 var _current_up: float = DEFAULT_UP
 var _current_fov: float = DEFAULT_FOV
 var _current_look_ahead: float = DEFAULT_LOOK_AHEAD
+
+# Zoom
+var _zoom_factor: float = 1.0  # User-controlled zoom multiplier
+var _zoom_target: float = 1.0
 
 # Raycast for ceiling detection
 var _ray_query: PhysicsRayQueryParameters3D = null
@@ -54,17 +64,31 @@ func snap_to_target() -> void:
 	global_position = _smooth_pos
 	look_at(_smooth_look, Vector3.UP)
 
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		var mb: InputEventMouseButton = event
+		if mb.pressed:
+			if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+				_zoom_target = clampf(_zoom_target - ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
+			elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				_zoom_target = clampf(_zoom_target + ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
+
 func _physics_process(delta: float) -> void:
 	if not _target:
 		return
 
 	_time += delta
 
+	# Smooth zoom interpolation
+	_zoom_factor = lerpf(_zoom_factor, _zoom_target, delta * ZOOM_SMOOTH)
+
 	var heading: float = _target.rotation.y
 
-	# Desired camera position
+	# Desired camera position (zoom applied to back distance and height)
 	var back_dir: Vector3 = Vector3(-sin(heading), 0, -cos(heading))
-	var desired_pos: Vector3 = _target.global_position + back_dir * _current_back + Vector3(0, _current_up, 0)
+	var zoomed_back: float = _current_back * _zoom_factor
+	var zoomed_up: float = _current_up * _zoom_factor
+	var desired_pos: Vector3 = _target.global_position + back_dir * zoomed_back + Vector3(0, zoomed_up, 0)
 	var desired_look: Vector3 = _target.global_position + Vector3(sin(heading), 0, cos(heading)) * _current_look_ahead + Vector3(0, 0.5, 0)
 
 	# Smooth interpolation
