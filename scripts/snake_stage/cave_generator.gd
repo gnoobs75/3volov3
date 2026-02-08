@@ -193,11 +193,12 @@ func _generate_tunnel_paths() -> void:
 		var hub_b_pos: Vector3 = hubs[wing_id].position
 
 		# Clip endpoints to wall boundaries so tunnel mesh doesn't exist inside hubs.
-		# This prevents tunnel walls from blocking movement inside hub rooms.
+		# Start at 0.85*radius to overlap with hub floor (which is skipped at 0.9*radius).
+		# This ensures continuous floor coverage at tunnel mouths.
 		var flat_dir: Vector3 = (hub_b_pos - hub_a_pos).normalized()
-		var p0: Vector3 = hub_a_pos + flat_dir * hubs[0].radius * 0.92
+		var p0: Vector3 = hub_a_pos + flat_dir * hubs[0].radius * 0.85
 		p0.y = SPAWN_Y
-		var p3: Vector3 = hub_b_pos - flat_dir * hubs[wing_id].radius * 0.92
+		var p3: Vector3 = hub_b_pos - flat_dir * hubs[wing_id].radius * 0.85
 		p3.y = SPAWN_Y
 
 		# Gentle S-curve: control points offset slightly perpendicular

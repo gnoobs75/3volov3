@@ -48,6 +48,7 @@ var _face_viewport: SubViewport = null
 var _face_billboard: Sprite3D = null
 var _face_canvas: Control = null
 var _head_mesh: MeshInstance3D = null
+var _head_node: Node3D = null  # Root of imported Blender head model
 
 # --- Trifold Jaw ---
 var _jaw_petals: Array[Node3D] = []  # 3 pivot nodes holding jaw cone + teeth
@@ -96,6 +97,37 @@ func reset_position_history() -> void:
 	_last_record_pos = global_position
 
 func _build_head() -> void:
+	# Load the Blender head model with trifold jaw
+	var head_scene: PackedScene = load("res://models/worm_head.glb")
+	if head_scene:
+		_head_node = head_scene.instantiate()
+		_head_node.name = "HeadModel"
+		# Blender Z-up export to Y-up: jaw (Blender +Z) becomes +Y in Godot
+		# Rotate -90° around X to point jaw forward (-Z in Godot = forward)
+		_head_node.position = Vector3(0, 0.6, 0)
+		_head_node.rotation.x = -PI * 0.5
+		add_child(_head_node)
+
+		# Find the WormHead MeshInstance3D for material/transparency control
+		_head_mesh = _head_node.find_child("WormHead", true, false) as MeshInstance3D
+		if not _head_mesh:
+			# Fallback: first MeshInstance3D child
+			for child in _head_node.get_children():
+				if child is MeshInstance3D:
+					_head_mesh = child
+					break
+
+		# Find jaw pivots for animation
+		_jaw_petals.clear()
+		for i in range(3):
+			var pivot: Node3D = _head_node.find_child("JawPivot_%d" % i, true, false)
+			if pivot:
+				_jaw_petals.append(pivot)
+	else:
+		# Fallback: procedural head if GLB not found
+		_build_head_procedural()
+
+func _build_head_procedural() -> void:
 	_head_mesh = MeshInstance3D.new()
 	var sphere: SphereMesh = SphereMesh.new()
 	sphere.radius = 0.65
@@ -116,40 +148,16 @@ func _build_head() -> void:
 	_head_mesh.rotation.x = PI * 0.5
 	add_child(_head_mesh)
 
-	# Dark mouth interior (visible when jaw opens)
-	var mouth_interior: MeshInstance3D = MeshInstance3D.new()
-	var mouth_sphere: SphereMesh = SphereMesh.new()
-	mouth_sphere.radius = 0.2
-	mouth_sphere.height = 0.35
-	mouth_sphere.radial_segments = 8
-	mouth_sphere.rings = 4
-	mouth_interior.mesh = mouth_sphere
-	var mouth_mat: StandardMaterial3D = StandardMaterial3D.new()
-	mouth_mat.albedo_color = Color(0.08, 0.02, 0.03)
-	mouth_mat.roughness = 0.9
-	mouth_interior.material_override = mouth_mat
-	mouth_interior.position = Vector3(0, 0.6, 0.45)
-	add_child(mouth_interior)
-
-	# Trifold jaw: 3 petals at 120° intervals
-	_build_trifold_jaw()
-
-func _build_trifold_jaw() -> void:
+	# Trifold jaw: 3 petals at 120° intervals (procedural fallback)
 	var petal_color: Color = _body_color.lightened(0.1)
-	var tooth_color: Color = Color(0.95, 0.9, 0.75)  # Yellowish white
-
+	var tooth_color: Color = Color(0.95, 0.9, 0.75)
 	for i in range(3):
-		var angle_offset: float = TAU / 3.0 * i  # 0, 120, 240 degrees
-
-		# Pivot node at the base of the jaw, at the front of the head
+		var angle_offset: float = TAU / 3.0 * i
 		var pivot: Node3D = Node3D.new()
 		pivot.name = "JawPetal_%d" % i
-		pivot.position = Vector3(0, 0.6, 0.55)  # Further forward so petals extend past head
-		# Rotate pivot around Z (forward) axis to space petals
+		pivot.position = Vector3(0, 0.6, 0.55)
 		pivot.rotation.z = angle_offset
 		add_child(pivot)
-
-		# Jaw petal: tapered cone — bigger and more prominent
 		var petal: MeshInstance3D = MeshInstance3D.new()
 		var cone: CylinderMesh = CylinderMesh.new()
 		cone.top_radius = 0.03
@@ -160,38 +168,10 @@ func _build_trifold_jaw() -> void:
 		var petal_mat: StandardMaterial3D = StandardMaterial3D.new()
 		petal_mat.albedo_color = petal_color
 		petal_mat.roughness = 0.5
-		petal_mat.emission_enabled = true
-		petal_mat.emission = petal_color * 0.3
-		petal_mat.emission_energy_multiplier = 0.6
 		petal.material_override = petal_mat
-		# Cone points forward, oriented along the petal direction
 		petal.position = Vector3(0, 0.25, 0.2)
-		petal.rotation.x = -PI * 0.35  # Angled forward
+		petal.rotation.x = -PI * 0.35
 		pivot.add_child(petal)
-
-		# Jagged teeth: 3-4 spikes along inner edge — bigger and more visible
-		var tooth_count: int = randi_range(3, 4)
-		for t in range(tooth_count):
-			var tooth: MeshInstance3D = MeshInstance3D.new()
-			var spike: CylinderMesh = CylinderMesh.new()
-			spike.top_radius = 0.008
-			spike.bottom_radius = 0.035 + randf() * 0.015
-			spike.height = 0.14 + randf() * 0.08
-			spike.radial_segments = 4
-			tooth.mesh = spike
-			var tooth_mat: StandardMaterial3D = StandardMaterial3D.new()
-			tooth_mat.albedo_color = tooth_color
-			tooth_mat.roughness = 0.3
-			tooth_mat.emission_enabled = true
-			tooth_mat.emission = tooth_color * 0.4
-			tooth_mat.emission_energy_multiplier = 0.8
-			tooth.material_override = tooth_mat
-			# Place teeth along inner edge of petal
-			var tz: float = 0.08 + float(t) / tooth_count * 0.35
-			tooth.position = Vector3(0, 0.08, tz)
-			tooth.rotation.x = -PI * 0.2 + randf() * 0.3
-			pivot.add_child(tooth)
-
 		_jaw_petals.append(pivot)
 
 func _trigger_bite() -> void:
@@ -230,8 +210,12 @@ func _update_jaw() -> void:
 		var pivot: Node3D = _jaw_petals[i]
 		# When closed: petals together. When open: splay outward 90 degrees
 		var splay_angle: float = _jaw_open_amount * deg_to_rad(90.0)
-		# Each petal rotates outward from center on X axis (away from forward)
-		pivot.rotation.x = splay_angle
+		if _head_node:
+			# Blender model: jaw pivots splay outward via local Y rotation
+			pivot.rotation.y = splay_angle
+		else:
+			# Procedural fallback: splay via X rotation
+			pivot.rotation.x = splay_angle
 
 func _build_face() -> void:
 	_face_viewport = SubViewport.new()
@@ -444,8 +428,12 @@ func _physics_process(delta: float) -> void:
 	_update_jaw()
 
 	# --- Creep opacity ---
-	if _head_mesh:
+	if _head_node:
+		# Blender model: modulate the whole head node for transparency
 		var target_alpha: float = 0.7 if _is_creeping else 1.0
+		# Smoothly adjust transparency on all mesh children
+		_set_head_transparency(_is_creeping)
+	elif _head_mesh:
 		var head_mat: StandardMaterial3D = _head_mesh.material_override
 		if head_mat:
 			if _is_creeping and head_mat.transparency != BaseMaterial3D.TRANSPARENCY_ALPHA:
@@ -460,7 +448,10 @@ func _physics_process(delta: float) -> void:
 
 	# --- Head bob ---
 	var bob: float = sin(_time * 8.0) * 0.05 * clampf(absf(_current_speed) / BASE_SPEED, 0.0, 1.0)
-	_head_mesh.position.y = 0.6 + bob
+	if _head_node:
+		_head_node.position.y = 0.6 + bob
+	elif _head_mesh:
+		_head_mesh.position.y = 0.6 + bob
 
 	# --- Eye flashlight pulse (organic flicker) ---
 	if _eye_light:
@@ -471,7 +462,7 @@ func _physics_process(delta: float) -> void:
 			_eye_light.light_energy *= 0.3
 
 func _update_segments(delta: float) -> void:
-	var prev_pos: Vector3 = _head_mesh.position
+	var prev_pos: Vector3 = _head_node.position if _head_node else _head_mesh.position
 	for i in range(_segments.size()):
 		var seg: MeshInstance3D = _segments[i]
 		var desired_dist: float = (i + 1) * SEGMENT_SPACING
@@ -623,6 +614,35 @@ func _check_hazards(delta: float) -> void:
 					else:
 						push_dir = Vector3.FORWARD
 					velocity += push_dir * node.get_meta("force", 6.0)
+
+var _creep_transparent: bool = false
+
+func _set_head_transparency(creeping: bool) -> void:
+	if creeping == _creep_transparent:
+		return
+	_creep_transparent = creeping
+	if not _head_node:
+		return
+	# Walk all MeshInstance3D children and adjust transparency
+	var meshes: Array = []
+	_collect_meshes(_head_node, meshes)
+	for mesh_inst: MeshInstance3D in meshes:
+		var mat: Material = mesh_inst.get_active_material(0)
+		if mat is StandardMaterial3D:
+			var smat: StandardMaterial3D = mat.duplicate() as StandardMaterial3D
+			if creeping:
+				smat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				smat.albedo_color.a = 0.5
+			else:
+				smat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+				smat.albedo_color.a = 1.0
+			mesh_inst.material_override = smat
+
+func _collect_meshes(node: Node, result: Array) -> void:
+	if node is MeshInstance3D:
+		result.append(node)
+	for child in node.get_children():
+		_collect_meshes(child, result)
 
 func do_bite_damage() -> void:
 	## Called during bite snap — deals damage to WBCs in range

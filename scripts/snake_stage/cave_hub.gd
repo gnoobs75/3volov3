@@ -219,7 +219,7 @@ func _build_floor(colors: Dictionary) -> void:
 
 			# Skip edge floor cells at tunnel mouths (tunnel tube provides floor there)
 			var cell_dist: float = Vector2(cx, cz).length()
-			if cell_dist > radius * 0.8:
+			if cell_dist > radius * 0.9:
 				var cell_angle: float = atan2(cz, cx)
 				var skip_for_tunnel: bool = false
 				for t_idx in range(floor_tunnel_angles.size()):
@@ -385,7 +385,7 @@ func _build_ceiling(colors: Dictionary) -> void:
 				continue
 
 			# Skip edge ceiling cells at tunnel mouths
-			if Vector2(cx, cz).length() > radius * 0.8:
+			if Vector2(cx, cz).length() > radius * 0.9:
 				var cell_angle: float = atan2(cz, cx)
 				var skip_for_tunnel: bool = false
 				for t_idx in range(ceil_tunnel_angles.size()):
@@ -468,7 +468,7 @@ func _build_ceiling(colors: Dictionary) -> void:
 func _build_walls(colors: Dictionary) -> void:
 	var radius: float = _hub_data.radius
 	var height: float = _hub_data.height
-	var segments: int = clampi(int(radius * 0.8), 16, 48)
+	var segments: int = clampi(int(radius * 0.8), 16, 96)
 	var rings: int = clampi(int(height * 0.5), 4, 12)
 
 	# Pre-compute tunnel mouth angles and angular widths for wall openings
