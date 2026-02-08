@@ -342,7 +342,7 @@ func _setup_hud() -> void:
 
 	# Controls label (bottom of middle pane)
 	_controls_label = Label.new()
-	_controls_label.text = "WASD: Move | Shift: Sprint | Space: Creep | LMB: Bite | E: Stun | ESC: Menu"
+	_controls_label.text = "WASD: Move | Shift: Sprint | Space: Creep | RMB: Bite | LMB: Pull | E: Stun | ESC: Menu"
 	_controls_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	_controls_label.position = Vector2(20, -30)
 	_controls_label.add_theme_font_size_override("font_size", 12)
