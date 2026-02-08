@@ -29,6 +29,7 @@ var _alert_target_pos: Vector3 = Vector3.ZERO
 
 # Visual refs
 var _body_mesh: MeshInstance3D = null
+var _model_node: Node3D = null  # Root of imported Blender model
 var _eye_l: MeshInstance3D = null
 var _eye_r: MeshInstance3D = null
 var _iris_l: MeshInstance3D = null
@@ -60,7 +61,71 @@ func _ready() -> void:
 	_build_body()
 
 func _build_body() -> void:
-	# Main body: translucent white-pink sphere
+	# Try to load Blender model
+	var wbc_scene: PackedScene = load("res://models/white_blood_cell.glb")
+	if wbc_scene:
+		_model_node = wbc_scene.instantiate()
+		_model_node.name = "WBCModel"
+		# Rotate model to face forward (Blender Y-up export conversion)
+		_model_node.position = Vector3(0, 0.8, 0)
+		_model_node.rotation.x = -PI * 0.5
+		add_child(_model_node)
+
+		# Find body mesh for color animation
+		_body_mesh = _model_node.find_child("WBCBody", true, false) as MeshInstance3D
+
+		# Find eye nodes from Blender model
+		_eye_l = _model_node.find_child("EyeL", true, false) as MeshInstance3D
+		_eye_r = _model_node.find_child("EyeR", true, false) as MeshInstance3D
+		_pupil_l = _model_node.find_child("EyeL_Pupil", true, false) as MeshInstance3D
+		_pupil_r = _model_node.find_child("EyeR_Pupil", true, false) as MeshInstance3D
+		_highlight_l = _model_node.find_child("EyeL_Highlight", true, false) as MeshInstance3D
+		_highlight_r = _model_node.find_child("EyeR_Highlight", true, false) as MeshInstance3D
+		# Blender model has no iris — use pupil for iris animation too
+		_iris_l = _pupil_l
+		_iris_r = _pupil_r
+
+		# Find pseudopods
+		for i in range(5):
+			var pod: MeshInstance3D = _model_node.find_child("Pseudopod_%d" % i, true, false) as MeshInstance3D
+			if pod:
+				_pseudopods.append(pod)
+
+		# Add eye lights (not in Blender model)
+		_eye_light_l = OmniLight3D.new()
+		_eye_light_l.light_color = Color(0.9, 0.9, 1.0)
+		_eye_light_l.light_energy = 0.5
+		_eye_light_l.omni_range = 3.0
+		_eye_light_l.shadow_enabled = false
+		if _eye_l:
+			_eye_l.add_child(_eye_light_l)
+		else:
+			add_child(_eye_light_l)
+
+		_eye_light_r = OmniLight3D.new()
+		_eye_light_r.light_color = Color(0.9, 0.9, 1.0)
+		_eye_light_r.light_energy = 0.5
+		_eye_light_r.omni_range = 3.0
+		_eye_light_r.shadow_enabled = false
+		if _eye_r:
+			_eye_r.add_child(_eye_light_r)
+		else:
+			add_child(_eye_light_r)
+	else:
+		# Fallback: procedural body
+		_build_body_procedural()
+
+	# Collision shape (always needed)
+	var col_shape: CollisionShape3D = CollisionShape3D.new()
+	var capsule: CapsuleShape3D = CapsuleShape3D.new()
+	capsule.radius = 0.7
+	capsule.height = 1.6
+	col_shape.shape = capsule
+	col_shape.position = Vector3(0, 0.8, 0)
+	add_child(col_shape)
+
+func _build_body_procedural() -> void:
+	# Procedural fallback if GLB not found
 	_body_mesh = MeshInstance3D.new()
 	var sphere: SphereMesh = SphereMesh.new()
 	sphere.radius = 0.8
@@ -80,7 +145,7 @@ func _build_body() -> void:
 	_body_mesh.position = Vector3(0, 0.8, 0)
 	add_child(_body_mesh)
 
-	# 2-4 pseudopod wobble spheres
+	# Pseudopod wobble spheres
 	var pod_count: int = randi_range(2, 4)
 	for i in range(pod_count):
 		var pod: MeshInstance3D = MeshInstance3D.new()
@@ -94,33 +159,20 @@ func _build_body() -> void:
 		pod_mat.albedo_color = Color(0.85, 0.8, 0.83, 0.6)
 		pod_mat.roughness = 0.3
 		pod_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		pod_mat.emission_enabled = true
-		pod_mat.emission = Color(0.6, 0.55, 0.6) * 0.1
-		pod_mat.emission_energy_multiplier = 0.2
 		pod.material_override = pod_mat
 		var angle: float = TAU * i / pod_count
 		pod.position = Vector3(cos(angle) * 0.5, 0.6 + randf_range(-0.2, 0.2), sin(angle) * 0.5)
 		add_child(pod)
 		_pseudopods.append(pod)
 
-	# --- HUGE GOOGLY EYES ---
-	_build_eye(true)   # Left
-	_build_eye(false)  # Right
-
-	# Collision shape
-	var col_shape: CollisionShape3D = CollisionShape3D.new()
-	var capsule: CapsuleShape3D = CapsuleShape3D.new()
-	capsule.radius = 0.7
-	capsule.height = 1.6
-	col_shape.shape = capsule
-	col_shape.position = Vector3(0, 0.8, 0)
-	add_child(col_shape)
+	# Googly eyes
+	_build_eye(true)
+	_build_eye(false)
 
 func _build_eye(is_left: bool) -> void:
 	var side: float = 0.3 if is_left else -0.3
 	var base_pos: Vector3 = Vector3(side, 1.2, 0.5)
 
-	# Sclera (white of eye) — BIG
 	var sclera: MeshInstance3D = MeshInstance3D.new()
 	var s_sphere: SphereMesh = SphereMesh.new()
 	s_sphere.radius = 0.35
@@ -138,7 +190,6 @@ func _build_eye(is_left: bool) -> void:
 	sclera.position = base_pos
 	add_child(sclera)
 
-	# Iris disc
 	var iris: MeshInstance3D = MeshInstance3D.new()
 	var i_sphere: SphereMesh = SphereMesh.new()
 	i_sphere.radius = 0.25
@@ -156,7 +207,6 @@ func _build_eye(is_left: bool) -> void:
 	iris.position = base_pos + Vector3(0, 0, 0.18)
 	add_child(iris)
 
-	# Pupil disc
 	var pupil: MeshInstance3D = MeshInstance3D.new()
 	var p_sphere: SphereMesh = SphereMesh.new()
 	p_sphere.radius = 0.12
@@ -171,7 +221,6 @@ func _build_eye(is_left: bool) -> void:
 	pupil.position = base_pos + Vector3(0, 0, 0.22)
 	add_child(pupil)
 
-	# Highlight
 	var highlight: MeshInstance3D = MeshInstance3D.new()
 	var h_sphere: SphereMesh = SphereMesh.new()
 	h_sphere.radius = 0.06
@@ -189,7 +238,6 @@ func _build_eye(is_left: bool) -> void:
 	highlight.position = base_pos + Vector3(-0.08, 0.1, 0.26)
 	add_child(highlight)
 
-	# OmniLight per eye for visibility in dark
 	var eye_light: OmniLight3D = OmniLight3D.new()
 	eye_light.light_color = Color(0.9, 0.9, 1.0)
 	eye_light.light_energy = 0.5
@@ -375,34 +423,43 @@ func _update_eyes(delta: float, player: Node3D) -> void:
 		_eye_light_r.light_energy = lerpf(_eye_light_r.light_energy, light_energy, delta * 5.0)
 
 func _update_pseudopods(delta: float) -> void:
-	for i in range(_pseudopods.size()):
-		var pod: MeshInstance3D = _pseudopods[i]
-		var angle: float = TAU * i / _pseudopods.size()
-		var wobble: float = sin(_time * 2.5 + i * 1.8) * 0.15
-		var wobble_y: float = sin(_time * 1.8 + i * 2.3) * 0.1
-		pod.position = Vector3(
-			cos(angle + wobble) * 0.55,
-			0.6 + wobble_y,
-			sin(angle + wobble) * 0.55
-		)
+	if _model_node:
+		# Blender model: pseudopods are already positioned, just add wobble rotation
+		for i in range(_pseudopods.size()):
+			var pod: MeshInstance3D = _pseudopods[i]
+			var wobble: float = sin(_time * 2.5 + i * 1.8) * 0.1
+			pod.rotation.x += wobble * delta * 2.0
+			pod.rotation.z += sin(_time * 1.8 + i * 2.3) * delta * 1.5
+	else:
+		for i in range(_pseudopods.size()):
+			var pod: MeshInstance3D = _pseudopods[i]
+			var angle: float = TAU * i / _pseudopods.size()
+			var wobble: float = sin(_time * 2.5 + i * 1.8) * 0.15
+			var wobble_y: float = sin(_time * 1.8 + i * 2.3) * 0.1
+			pod.position = Vector3(
+				cos(angle + wobble) * 0.55,
+				0.6 + wobble_y,
+				sin(angle + wobble) * 0.55
+			)
 
 func _update_body_visual(delta: float) -> void:
-	if not _body_mesh:
-		return
-	# Pulse body slightly
-	var pulse: float = 1.0 + sin(_time * 3.0) * 0.03
-	_body_mesh.scale = Vector3(pulse, pulse * 0.95, pulse)
-
-	# Color shifts by state
-	var body_mat: StandardMaterial3D = _body_mesh.material_override
-	if body_mat:
-		match state:
-			State.CHASE:
-				body_mat.albedo_color = body_mat.albedo_color.lerp(Color(1.0, 0.7, 0.7, 0.75), delta * 3.0)
-			State.STUNNED:
-				body_mat.albedo_color = body_mat.albedo_color.lerp(Color(0.6, 0.6, 0.8, 0.5), delta * 3.0)
-			_:
-				body_mat.albedo_color = body_mat.albedo_color.lerp(Color(0.9, 0.85, 0.88, 0.75), delta * 2.0)
+	if _model_node:
+		# Blender model: pulse the whole model node
+		var pulse: float = 1.0 + sin(_time * 3.0) * 0.03
+		_model_node.scale = Vector3(pulse, pulse * 0.95, pulse)
+	elif _body_mesh:
+		var pulse: float = 1.0 + sin(_time * 3.0) * 0.03
+		_body_mesh.scale = Vector3(pulse, pulse * 0.95, pulse)
+		# Color shifts by state (procedural only - Blender model has baked materials)
+		var body_mat: StandardMaterial3D = _body_mesh.material_override
+		if body_mat:
+			match state:
+				State.CHASE:
+					body_mat.albedo_color = body_mat.albedo_color.lerp(Color(1.0, 0.7, 0.7, 0.75), delta * 3.0)
+				State.STUNNED:
+					body_mat.albedo_color = body_mat.albedo_color.lerp(Color(0.6, 0.6, 0.8, 0.5), delta * 3.0)
+				_:
+					body_mat.albedo_color = body_mat.albedo_color.lerp(Color(0.9, 0.85, 0.88, 0.75), delta * 2.0)
 
 func stun(duration: float = STUN_DURATION) -> void:
 	state = State.STUNNED
