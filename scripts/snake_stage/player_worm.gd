@@ -77,6 +77,9 @@ const TRACTOR_CONE: float = 0.3    # Dot product threshold (wide cone)
 var _tractor_active: bool = false
 var _rmb_just_pressed: bool = false
 
+# --- Head direction ---
+var _head_flip: float = 0.0  # 0 = facing forward, PI = facing backward (smooth)
+
 # --- Visuals ---
 var _eye_light: SpotLight3D = null
 var _time: float = 0.0
@@ -214,9 +217,10 @@ func _trigger_bite() -> void:
 	_jaw_state = 2
 	_bite_cooldown = BITE_COOLDOWN_TIME
 
-	# --- LUNGE: immediate forward thrust ---
-	var forward: Vector3 = Vector3(sin(_heading), 0, cos(_heading))
-	velocity += forward * LUNGE_VELOCITY
+	# --- LUNGE: thrust in direction the head is facing ---
+	var head_dir: float = _heading + _head_flip
+	var lunge_dir: Vector3 = Vector3(sin(head_dir), 0, cos(head_dir))
+	velocity += lunge_dir * LUNGE_VELOCITY
 
 	# Head lunge animation (offset head forward then back)
 	if _lunge_tween and _lunge_tween.is_valid():
@@ -415,6 +419,14 @@ func _physics_process(delta: float) -> void:
 	# --- Rotation ---
 	rotation.y = _heading
 
+	# --- Head faces movement direction (flip when going backward) ---
+	var head_flip_target: float = 0.0
+	if input_forward < -0.1:
+		head_flip_target = PI  # Moving backward: head faces camera
+	elif input_forward > 0.1:
+		head_flip_target = 0.0  # Moving forward: head faces ahead
+	_head_flip = lerp_angle(_head_flip, head_flip_target, delta * 8.0)
+
 	# --- Record position history ---
 	var dist_from_last: float = global_position.distance_to(_last_record_pos)
 	if dist_from_last >= HISTORY_RESOLUTION:
@@ -496,11 +508,12 @@ func _physics_process(delta: float) -> void:
 	# --- Update face ---
 	_update_face(delta)
 
-	# --- Head bob + lunge offset ---
+	# --- Head bob + lunge offset + direction flip ---
 	var bob: float = sin(_time * 8.0) * 0.05 * clampf(absf(_current_speed) / BASE_SPEED, 0.0, 1.0)
 	if _head_wrapper:
 		_head_wrapper.position.y = 0.6 + bob
-		_head_wrapper.position.z = _lunge_offset  # Forward lunge during bite
+		_head_wrapper.position.z = _lunge_offset
+		_head_wrapper.rotation.y = PI + _head_flip  # PI = base forward flip, + _head_flip for backward
 	elif _head_node:
 		_head_node.position.y = 0.6 + bob
 	elif _head_mesh:
@@ -631,9 +644,10 @@ func _trigger_stun_burst() -> void:
 	stun_burst_fired.emit()
 
 func get_bite_targets() -> Array:
-	## Returns WBCs within bite range and forward cone
+	## Returns WBCs within bite range and head-facing cone
 	var targets: Array = []
-	var forward: Vector3 = Vector3(sin(_heading), 0, cos(_heading))
+	var head_dir: float = _heading + _head_flip
+	var forward: Vector3 = Vector3(sin(head_dir), 0, cos(head_dir))
 	for wbc in get_tree().get_nodes_in_group("white_blood_cell"):
 		var to_target: Vector3 = wbc.global_position - global_position
 		var dist: float = to_target.length()
@@ -707,8 +721,9 @@ func _update_tractor_beam(delta: float) -> void:
 	_tractor_active = Input.is_action_pressed("beam_collect")
 	if not _tractor_active:
 		return
-	# Pull nearby nutrients toward the worm (not creatures)
-	var forward: Vector3 = Vector3(sin(_heading), 0, cos(_heading))
+	# Pull nearby nutrients toward the worm (in head-facing direction)
+	var head_dir: float = _heading + _head_flip
+	var forward: Vector3 = Vector3(sin(head_dir), 0, cos(head_dir))
 	for node in get_tree().get_nodes_in_group("nutrient"):
 		var to_item: Vector3 = node.global_position - global_position
 		var dist: float = to_item.length()
