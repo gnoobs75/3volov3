@@ -45,6 +45,10 @@ var _health_bar: ProgressBar = null
 var _controls_label: Label = null
 var _vitals_hud: Control = null  # Curved arc bars
 
+# --- Pause menu ---
+var _pause_menu: Control = null
+var _paused: bool = false
+
 func _ready() -> void:
 	_setup_environment()
 	_setup_player()
@@ -407,6 +411,17 @@ func _setup_hud() -> void:
 	observer_notes.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	right_vbox.add_child(observer_notes)
 
+	# Pause menu (on HUD layer, hidden until ESC)
+	var pause_script = load("res://scripts/snake_stage/pause_menu.gd")
+	_pause_menu = Control.new()
+	_pause_menu.set_script(pause_script)
+	_pause_menu.name = "PauseMenu"
+	_pause_menu.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_pause_menu.visible = false
+	_pause_menu.resumed.connect(_unpause)
+	_pause_menu.quit_to_menu.connect(_quit_to_menu)
+	hud.add_child(_pause_menu)
+
 # --- Scan pulse timer ---
 var _scan_timer: float = 0.0
 var _scan_intensity: float = 0.0
@@ -433,6 +448,13 @@ var _sonar_ring_mat: StandardMaterial3D = null
 var _sonar_next_free: int = 0  # fast free-slot search
 
 func _process(delta: float) -> void:
+	# Pause toggle (ESC)
+	if Input.is_action_just_pressed("ui_cancel"):
+		if _paused:
+			_unpause()
+		else:
+			_pause()
+
 	_update_hud()
 	_manage_nutrients()
 
@@ -1322,3 +1344,21 @@ func _trigger_hallucination_flash() -> void:
 		# Purple-tinted flash
 		_hallucination_overlay.color = Color(0.4, 0.1, 0.5, 0.25)
 		_hallucination_overlay.visible = true
+
+# --- Pause menu functions ---
+func _pause() -> void:
+	_paused = true
+	get_tree().paused = true
+	_pause_menu.visible = true
+	_pause_menu.process_mode = Node.PROCESS_MODE_ALWAYS
+	AudioManager.play_ui_open()
+
+func _unpause() -> void:
+	_paused = false
+	get_tree().paused = false
+	_pause_menu.visible = false
+
+func _quit_to_menu() -> void:
+	_paused = false
+	get_tree().paused = false
+	GameManager.go_to_menu()
