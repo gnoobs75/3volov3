@@ -29,6 +29,7 @@ var _alert_target_pos: Vector3 = Vector3.ZERO
 
 # Visual refs
 var _body_mesh: MeshInstance3D = null
+var _model_wrapper: Node3D = null  # Orientation wrapper (rotation.y=PI to face forward)
 var _model_node: Node3D = null  # Root of imported Blender model
 var _eye_l: MeshInstance3D = null
 var _eye_r: MeshInstance3D = null
@@ -42,6 +43,8 @@ var _eye_light_l: OmniLight3D = null
 var _eye_light_r: OmniLight3D = null
 var _pseudopods: Array[MeshInstance3D] = []
 var _iris_color: Color = Color.WHITE
+var _damage_flash: float = 0.0
+var _body_mat: StandardMaterial3D = null  # Cached for damage flash
 
 # Googly eye jiggle state
 var _eye_jiggle_l: Vector3 = Vector3.ZERO
@@ -64,12 +67,19 @@ func _build_body() -> void:
 	# Try to load Blender model
 	var wbc_scene: PackedScene = load("res://models/white_blood_cell.glb")
 	if wbc_scene:
+		# Wrapper node: rotation.y=PI flips model so eyes/face point forward
+		# Same pattern as player HeadWrapper — without this, face points backward
+		_model_wrapper = Node3D.new()
+		_model_wrapper.name = "WBCWrapper"
+		_model_wrapper.position = Vector3(0, 0.8, 0)
+		_model_wrapper.rotation.y = PI
+		add_child(_model_wrapper)
+
 		_model_node = wbc_scene.instantiate()
 		_model_node.name = "WBCModel"
-		# Rotate model to face forward (Blender Y-up export conversion)
-		_model_node.position = Vector3(0, 0.8, 0)
+		_model_node.position = Vector3.ZERO
 		_model_node.rotation.x = -PI * 0.5
-		add_child(_model_node)
+		_model_wrapper.add_child(_model_node)
 
 		# Find body mesh for color animation
 		_body_mesh = _model_node.find_child("WBCBody", true, false) as MeshInstance3D
@@ -354,6 +364,15 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	rotation.y = _heading
 
+	# Damage flash decay
+	if _damage_flash > 0:
+		_damage_flash = maxf(_damage_flash - delta * 4.0, 0.0)
+		if _body_mat:
+			_body_mat.emission_energy_multiplier = 0.3 + _damage_flash * 5.0
+			_body_mat.emission = Color(1.0, 0.2, 0.1).lerp(_iris_color * 0.15, 1.0 - _damage_flash)
+		elif _body_mesh and _body_mesh.material_override is StandardMaterial3D:
+			_body_mat = _body_mesh.material_override as StandardMaterial3D
+
 	# Update visuals
 	_update_eyes(delta, player)
 	_update_pseudopods(delta)
@@ -443,10 +462,10 @@ func _update_pseudopods(delta: float) -> void:
 			)
 
 func _update_body_visual(delta: float) -> void:
-	if _model_node:
-		# Blender model: pulse the whole model node
+	if _model_wrapper:
+		# Blender model: pulse the wrapper node
 		var pulse: float = 1.0 + sin(_time * 3.0) * 0.03
-		_model_node.scale = Vector3(pulse, pulse * 0.95, pulse)
+		_model_wrapper.scale = Vector3(pulse, pulse * 0.95, pulse)
 	elif _body_mesh:
 		var pulse: float = 1.0 + sin(_time * 3.0) * 0.03
 		_body_mesh.scale = Vector3(pulse, pulse * 0.95, pulse)
@@ -466,13 +485,16 @@ func stun(duration: float = STUN_DURATION) -> void:
 	_stun_timer = duration
 	_speed = 0.0
 
+signal died(pos: Vector3)
+
 func take_damage(amount: float) -> void:
 	health -= amount
+	_damage_flash = 1.0
 	if state != State.STUNNED:
 		state = State.CHASE  # Getting hit makes them aggressive
 	if health <= 0:
 		_die()
 
 func _die() -> void:
-	# Death particles could be added by stage manager
+	died.emit(global_position)
 	queue_free()

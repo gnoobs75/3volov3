@@ -1,68 +1,86 @@
 extends Control
-## First-play tutorial: animated key prompts that fade in, hold, then fade out.
-## Shown once per session via GameManager.tutorial_shown flag.
+## Tutorial overlay: controls panel anchored at bottom-right of the play area.
+## Large, translucent, and easy to read. Stays visible for 20 seconds then fades.
 
 var _time: float = 0.0
-var _total_duration: float = 25.0
-var _fade_in: float = 1.5
-var _hold_until: float = 20.0  # Start fading out here
-var _fade_out: float = 5.0  # Duration of fade-out
+var _alpha: float = 0.0
+
+const HOLD_DURATION: float = 20.0
+const FADE_DURATION: float = 2.0
 
 var _prompts: Array = [
-	{"keys": "WASD", "label": "Move / Thrust", "delay": 0.0},
-	{"keys": "SHIFT", "label": "Sprint (costs more energy)", "delay": 2.0},
-	{"keys": "LMB", "label": "Tractor Beam (collect)", "delay": 4.0},
-	{"keys": "RMB", "label": "Jet Stream (push away)", "delay": 6.0},
-	{"keys": "E", "label": "Fire Toxin (attack)", "delay": 8.0},
-	{"keys": "Q", "label": "Reproduce (costs energy)", "delay": 10.0},
-	{"keys": "F", "label": "Metabolize (restore energy)", "delay": 12.0},
-	{"keys": "TAB", "label": "CRISPR Gene Editor", "delay": 14.0},
+	{"keys": "WASD", "label": "Move / Thrust"},
+	{"keys": "SHIFT", "label": "Sprint (costs energy)"},
+	{"keys": "LMB", "label": "Tractor Beam (collect)"},
+	{"keys": "RMB", "label": "Jet Stream (push away)"},
+	{"keys": "E", "label": "Fire Toxin (attack)"},
+	{"keys": "Q", "label": "Reproduce (costs energy)"},
+	{"keys": "F", "label": "Metabolize (restore energy)"},
+	{"keys": "TAB", "label": "CRISPR Gene Editor"},
 ]
 
 func _process(delta: float) -> void:
 	_time += delta
-	if _time > _total_duration:
+
+	# Fade in quickly
+	if _time < 1.0:
+		_alpha = move_toward(_alpha, 1.0, delta * 2.5)
+	# Hold
+	elif _time < HOLD_DURATION:
+		_alpha = 1.0
+	# Fade out
+	elif _time < HOLD_DURATION + FADE_DURATION:
+		_alpha = move_toward(_alpha, 0.0, delta / FADE_DURATION)
+	else:
 		queue_free()
 		return
+
 	queue_redraw()
 
 func _draw() -> void:
+	if _alpha <= 0.01:
+		return
+
 	var vp := get_viewport_rect().size
 	var font := ThemeDB.fallback_font
 
-	# Global alpha: fade in then fade out
-	var global_alpha: float = 1.0
-	if _time < _fade_in:
-		global_alpha = _time / _fade_in
-	elif _time > _hold_until:
-		global_alpha = clampf(1.0 - (_time - _hold_until) / _fade_out, 0.0, 1.0)
+	# Panel sizing — generous and readable
+	var panel_w: float = 380.0
+	var line_h: float = 32.0
+	var panel_h: float = _prompts.size() * line_h + 52.0
+	var margin: float = 16.0
+
+	# Anchor bottom-right of the viewport
+	var px: float = vp.x - panel_w - margin
+	var py: float = vp.y - panel_h - margin
+
+	# Background — translucent dark
+	draw_rect(Rect2(px, py, panel_w, panel_h), Color(0.02, 0.04, 0.08, 0.55 * _alpha))
+	# Top/bottom accent borders
+	draw_rect(Rect2(px, py, panel_w, 1), Color(0.4, 0.7, 1.0, 0.35 * _alpha))
+	draw_rect(Rect2(px, py + panel_h - 1, panel_w, 1), Color(0.4, 0.7, 1.0, 0.35 * _alpha))
 
 	# Title
-	var title := "CONTROLS"
-	var title_size := font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 20)
-	var base_x: float = vp.x * 0.5 - 140.0
-	var base_y: float = vp.y * 0.55
+	var title_fs: int = 22
+	draw_string(font, Vector2(px + 14, py + 28), "CONTROLS", HORIZONTAL_ALIGNMENT_LEFT, -1, title_fs, Color(0.4, 0.8, 1.0, 0.95 * _alpha))
 
-	# Dim pill behind all prompts
-	var pill_h: float = _prompts.size() * 28.0 + 50.0
-	draw_rect(Rect2(base_x - 20, base_y - 35, 320, pill_h), Color(0.02, 0.04, 0.08, 0.6 * global_alpha))
-
-	draw_string(font, Vector2(base_x, base_y), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.4, 0.8, 1.0, 0.9 * global_alpha))
-
-	# Draw each prompt with staggered fade-in
+	# Each prompt row
+	var key_fs: int = 16
+	var label_fs: int = 15
 	for i in range(_prompts.size()):
 		var p: Dictionary = _prompts[i]
-		var prompt_alpha: float = clampf((_time - p.delay) / 0.8, 0.0, 1.0) * global_alpha
-		if prompt_alpha <= 0.01:
+		# Stagger fade-in on first appearance
+		var row_alpha: float = clampf((_time - 0.2 - i * 0.15) / 0.5, 0.0, 1.0) * _alpha
+		if row_alpha <= 0.01:
 			continue
 
-		var y: float = base_y + 30.0 + i * 28.0
+		var ry: float = py + 46.0 + i * line_h
 
 		# Key box
 		var key_text: String = p.keys
-		var key_w: float = font.get_string_size(key_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 12.0
-		draw_rect(Rect2(base_x, y - 14, key_w, 20), Color(0.15, 0.3, 0.5, 0.7 * prompt_alpha))
-		draw_string(font, Vector2(base_x + 6, y), key_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.7, 0.95, 1.0, prompt_alpha))
+		var key_w: float = font.get_string_size(key_text, HORIZONTAL_ALIGNMENT_LEFT, -1, key_fs).x + 14.0
+		draw_rect(Rect2(px + 14, ry - 16, key_w, 24), Color(0.15, 0.3, 0.5, 0.7 * row_alpha))
+		draw_string(font, Vector2(px + 21, ry + 2), key_text, HORIZONTAL_ALIGNMENT_LEFT, -1, key_fs, Color(0.7, 0.95, 1.0, row_alpha))
 
 		# Label
-		draw_string(font, Vector2(base_x + key_w + 10, y), p.label, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.5, 0.75, 0.85, 0.8 * prompt_alpha))
+		draw_string(font, Vector2(px + 21 + key_w + 10, ry + 2), p.label, HORIZONTAL_ALIGNMENT_LEFT, -1, label_fs, Color(0.5, 0.75, 0.85, 0.85 * row_alpha))

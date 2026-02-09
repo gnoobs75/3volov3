@@ -121,7 +121,14 @@ func _find_player() -> Node2D:
 	var players := get_tree().get_nodes_in_group("player")
 	if players.is_empty():
 		return null
-	return players[0]
+	var nearest: Node2D = null
+	var best_dist: float = INF
+	for p in players:
+		var d: float = global_position.distance_squared_to(p.global_position)
+		if d < best_dist:
+			best_dist = d
+			nearest = p
+	return nearest
 
 func _draw() -> void:
 	# Wormy segmented body

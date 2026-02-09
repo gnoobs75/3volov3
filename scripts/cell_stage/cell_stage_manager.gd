@@ -58,6 +58,7 @@ var _popup_color: Color = Color(0.5, 0.9, 0.7)
 var _low_health_pulse: float = 0.0
 var _heartbeat_timer: float = 0.0
 var _energy_warning_played: bool = false
+var _energy_bar_pulse: float = 0.0  # Pulsing timer for energy bar flash
 
 var _overlay: Control = null  # For drawing screen-space effects
 var _pause_menu: Control = null
@@ -81,6 +82,7 @@ func _ready() -> void:
 	# Connect evolution signals
 	GameManager.evolution_applied.connect(_on_evolution_applied)
 	GameManager.cell_stage_won.connect(_on_cell_stage_won)
+	GameManager.safe_zone_ended.connect(_on_safe_zone_ended)
 	_last_sensory_level = GameManager.sensory_level
 
 	# Create overlay for screen-space effects (health pulse, sensory popup, death recap)
@@ -108,16 +110,18 @@ func _ready() -> void:
 	_pause_menu.quit_to_menu.connect(_quit_to_menu)
 	overlay_layer.add_child(_pause_menu)
 
-	# Tutorial overlay (once per session)
+	# Creature showcase cinematic + tutorial (once per session)
 	if not GameManager.get("tutorial_shown"):
-		var TutorialScript := preload("res://scripts/cell_stage/tutorial_overlay.gd")
-		var tut := Control.new()
-		tut.set_script(TutorialScript)
-		tut.name = "TutorialOverlay"
-		tut.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		tut.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		overlay_layer.add_child(tut)
-		GameManager.tutorial_shown = true
+		var ShowcaseScript := preload("res://scripts/cell_stage/creature_showcase.gd")
+		var showcase := Node2D.new()
+		showcase.set_script(ShowcaseScript)
+		showcase.name = "CreatureShowcase"
+		add_child(showcase)
+		showcase.setup(player)
+		showcase.showcase_finished.connect(_on_showcase_finished.bind(overlay_layer))
+	else:
+		# Returning player — no showcase or tutorial needed
+		pass
 
 	# Create and setup chunk manager
 	var ChunkManagerScript := preload("res://scripts/cell_stage/world_chunk_manager.gd")
@@ -217,6 +221,17 @@ func _process(delta: float) -> void:
 		AudioManager.play_energy_warning()
 	elif energy_ratio > 0.35:
 		_energy_warning_played = false
+
+	# Energy bar flash pulse when below 25%
+	if energy_ratio < 0.25:
+		_energy_bar_pulse += delta * 5.0
+		var pulse: float = 0.5 + 0.5 * sin(_energy_bar_pulse)
+		var flash_color := Color(1.0, 0.3, 0.1).lerp(Color(1.0, 0.8, 0.2), pulse)
+		energy_bar.add_theme_color_override("font_color", flash_color)
+		energy_bar.modulate = Color(1.0, 1.0, 1.0).lerp(Color(1.0, 0.6, 0.4), pulse * 0.5)
+	else:
+		_energy_bar_pulse = 0.0
+		energy_bar.modulate = Color.WHITE
 
 	# Generic popup fade
 	if _popup_timer > 0:
@@ -336,6 +351,31 @@ func _on_evolution_applied(mutation: Dictionary) -> void:
 		_sensory_notify_alpha = 1.0
 		AudioManager.play_sensory_upgrade()
 		_last_sensory_level = GameManager.sensory_level
+
+func _on_showcase_finished(overlay_layer: CanvasLayer) -> void:
+	# Show HUD now that showcase is done
+	hud.visible = true
+
+	# Showcase done — now start the tutorial
+	var TutorialScript := preload("res://scripts/cell_stage/tutorial_overlay.gd")
+	var tut := Control.new()
+	tut.set_script(TutorialScript)
+	tut.name = "TutorialOverlay"
+	tut.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	tut.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay_layer.add_child(tut)
+	GameManager.tutorial_shown = true
+
+func _on_safe_zone_ended() -> void:
+	_popup_text = "Safe zone fading... organisms incoming!"
+	_popup_timer = 3.5
+	_popup_alpha = 1.0
+	_popup_color = Color(1.0, 0.7, 0.3)
+	AudioManager.play_sensory_upgrade()
+	# Shake camera gently to signal the shift
+	var cam := player.get_node_or_null("Camera2D")
+	if cam and cam.has_method("shake"):
+		cam.shake(3.0, 0.3)
 
 func _on_parasite_cleaned() -> void:
 	_popup_text = "Parasite removed!"

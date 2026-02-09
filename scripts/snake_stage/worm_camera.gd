@@ -35,6 +35,8 @@ var _target: Node3D = null
 var _smooth_pos: Vector3 = Vector3.ZERO
 var _smooth_look: Vector3 = Vector3.ZERO
 var _time: float = 0.0
+var _shake_intensity: float = 0.0
+var _shake_offset: Vector3 = Vector3.ZERO
 
 # Current interpolated camera parameters
 var _current_back: float = DEFAULT_BACK
@@ -103,7 +105,19 @@ func _physics_process(delta: float) -> void:
 	var bob_intensity: float = clampf(worm_speed / 8.0, 0.0, 1.0) * 0.04
 	var bob: Vector3 = Vector3(0, sin(_time * 4.0) * bob_intensity, 0)
 
-	global_position = _smooth_pos + bob
+	# Screen shake decay
+	if _shake_intensity > 0.01:
+		_shake_offset = Vector3(
+			randf_range(-1.0, 1.0) * _shake_intensity,
+			randf_range(-1.0, 1.0) * _shake_intensity * 0.6,
+			randf_range(-0.5, 0.5) * _shake_intensity * 0.3
+		)
+		_shake_intensity = lerpf(_shake_intensity, 0.0, delta * 8.0)
+	else:
+		_shake_offset = Vector3.ZERO
+		_shake_intensity = 0.0
+
+	global_position = _smooth_pos + bob + _shake_offset
 	look_at(_smooth_look, Vector3.UP)
 
 	# Smooth FOV transitions
@@ -172,3 +186,6 @@ func set_cave_size(cave_size: float) -> void:
 		_current_up = lerpf(HUB_SMALL_UP, HUB_LARGE_UP, (cave_size - 0.5) / 0.5)
 		_current_fov = lerpf(HUB_SMALL_FOV, HUB_LARGE_FOV, (cave_size - 0.5) / 0.5)
 		_current_look_ahead = lerpf(3.5, 5.0, (cave_size - 0.5) / 0.5)
+
+func add_shake(intensity: float) -> void:
+	_shake_intensity = maxf(_shake_intensity, intensity)

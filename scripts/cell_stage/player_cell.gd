@@ -31,7 +31,7 @@ const SPRINT_SPEED_MULT: float = 1.8
 const SPRINT_ENERGY_MULT: float = 3.0  # Energy drains 3x faster while sprinting
 const METABOLIZE_COOLDOWN: float = 1.0
 const METABOLIZE_ENERGY_GAIN: float = 20.0  # Energy restored per metabolize
-const EAT_RANGE: float = 25.0  # Distance to eat prey
+const EAT_RANGE: float = 35.0  # Distance to eat prey (generous — touching body = easy eat)
 
 var is_sprinting: bool = false
 var metabolize_timer: float = 0.0
@@ -40,7 +40,7 @@ var toxin_timer: float = 0.0
 
 # Tractor beam system
 const BEAM_RANGE: float = 250.0  # Max distance to lock on
-const BEAM_COLLECT_DIST: float = 18.0  # Distance at which item is consumed
+const BEAM_COLLECT_DIST: float = 30.0  # Distance at which item is consumed (generous for easy absorption)
 const BEAM_ENERGY_COST: float = 2.0  # Energy per second while beaming
 var _beam_target: Node2D = null  # Currently beamed node
 var _beam_active: bool = false
@@ -76,6 +76,7 @@ var _was_sprinting: bool = false
 var _was_beaming: bool = false
 var collected_components: Array = []
 var is_energy_depleted: bool = false  # True when energy critically low
+var input_disabled: bool = false  # Disable during cinematic showcase
 
 # Parasite system
 var attached_parasites: Array = []  # Array of parasite node refs
@@ -93,6 +94,7 @@ var _damage_flash: float = 0.0
 const NUM_MEMBRANE_PTS: int = 32
 const NUM_CILIA: int = 12
 const NUM_ORGANELLES: int = 5
+var _elongation: float = 1.0  # X-axis stretch factor, grows with evolution level
 
 # Camera zoom (sensory-based)
 const ZOOM_LEVELS: Array = [1.6, 1.4, 1.23, 1.07, 0.93, 0.8]  # Sensory 0-5 (zoomed out 50% more)
@@ -132,6 +134,7 @@ var _spiral_angle: float = 0.0  # For sick/confused spiral eyes
 func _ready() -> void:
 	_apply_gene_traits()
 	_apply_mutation_stats()
+	_compute_elongation()
 	_init_procedural_shape()
 	_randomize_face()
 	add_to_group("player")
@@ -148,13 +151,15 @@ func _init_procedural_shape() -> void:
 	_membrane_points.clear()
 	for i in range(NUM_MEMBRANE_PTS):
 		var angle: float = TAU * i / NUM_MEMBRANE_PTS
-		var r: float = _cell_radius + randf_range(-2.0, 2.0)
-		_membrane_points.append(Vector2(cos(angle) * r, sin(angle) * r))
+		var rx: float = _cell_radius * _elongation + randf_range(-2.0, 2.0)
+		var ry: float = _cell_radius + randf_range(-2.0, 2.0)
+		_membrane_points.append(Vector2(cos(angle) * rx, sin(angle) * ry))
 	_organelle_positions.clear()
 	for i in range(NUM_ORGANELLES):
 		var a: float = randf() * TAU
-		var d: float = randf_range(3.0, _cell_radius * 0.6)
-		_organelle_positions.append(Vector2(cos(a) * d, sin(a) * d))
+		var dx: float = randf_range(3.0, _cell_radius * _elongation * 0.6)
+		var dy: float = randf_range(3.0, _cell_radius * 0.6)
+		_organelle_positions.append(Vector2(cos(a) * dx, sin(a) * dy))
 	_cilia_angles.clear()
 	for i in range(NUM_CILIA):
 		_cilia_angles.append(TAU * i / NUM_CILIA + randf_range(-0.1, 0.1))
@@ -187,6 +192,11 @@ func _physics_process(delta: float) -> void:
 	if camera and abs(_current_zoom - _target_zoom) > 0.01:
 		_current_zoom = lerpf(_current_zoom, _target_zoom, delta * 2.0)
 		camera.zoom = Vector2(_current_zoom, _current_zoom)
+
+	if input_disabled:
+		_time += delta
+		queue_redraw()
+		return
 
 	var input_dir := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 
@@ -347,12 +357,12 @@ func _draw() -> void:
 	var energy_ratio: float = energy / max_energy
 	var health_ratio: float = health / max_health
 
-	# Outer glow (dims when depleted)
+	# Outer glow (dims when depleted) — elliptical when elongated
 	var glow_base: float = 0.08 if not is_energy_depleted else 0.03
 	var glow_alpha: float = glow_base + 0.06 * sin(_time * 2.0)
 	var glow_color := Color(0.3, 0.7, 1.0) if not is_energy_depleted else Color(0.3, 0.3, 0.4)
-	draw_circle(Vector2.ZERO, _cell_radius * 2.2, Color(glow_color.r, glow_color.g, glow_color.b, glow_alpha))
-	draw_circle(Vector2.ZERO, _cell_radius * 1.6, Color(glow_color.r, glow_color.g, glow_color.b, glow_alpha * 1.5))
+	_draw_ellipse(Vector2.ZERO, _cell_radius * _elongation * 2.2, _cell_radius * 2.2, Color(glow_color.r, glow_color.g, glow_color.b, glow_alpha))
+	_draw_ellipse(Vector2.ZERO, _cell_radius * _elongation * 1.6, _cell_radius * 1.6, Color(glow_color.r, glow_color.g, glow_color.b, glow_alpha * 1.5))
 
 	# Cilia (sluggish when depleted)
 	var is_moving: bool = velocity.length() > 10.0
@@ -362,7 +372,7 @@ func _draw() -> void:
 		var base_angle: float = _cilia_angles[i]
 		var wave: float = sin(_time * cilia_speed + i * 1.3) * cilia_amp
 		var angle: float = base_angle + wave
-		var base_pt := Vector2(cos(base_angle) * _cell_radius, sin(base_angle) * _cell_radius)
+		var base_pt := Vector2(cos(base_angle) * _cell_radius * _elongation, sin(base_angle) * _cell_radius)
 		var tip_len: float = 8.0 + 3.0 * sin(_time * 5.0 + i)
 		if is_energy_depleted:
 			tip_len *= 0.6
@@ -410,9 +420,10 @@ func _draw() -> void:
 	var energy_arc_color := Color(0.3, 0.8, 1.0, 0.15 + energy_ratio * 0.25)
 	if is_energy_depleted:
 		energy_arc_color = Color(0.8, 0.3, 0.2, 0.15 + 0.2 * sin(_time * 4.0))  # Flashing red
-	draw_arc(Vector2.ZERO, _cell_radius + 3.0, 0, TAU * energy_ratio, 48, energy_arc_color, 2.0, true)
+	var arc_r: float = _cell_radius * (1.0 + (_elongation - 1.0) * 0.5)  # Average radius for arcs
+	draw_arc(Vector2.ZERO, arc_r + 3.0, 0, TAU * energy_ratio, 48, energy_arc_color, 2.0, true)
 	if health_ratio < 1.0:
-		draw_arc(Vector2.ZERO, _cell_radius + 5.0, 0, TAU * health_ratio, 48, Color(1.0, 0.3, 0.3, 0.4), 1.5, true)
+		draw_arc(Vector2.ZERO, arc_r + 5.0, 0, TAU * health_ratio, 48, Color(1.0, 0.3, 0.3, 0.4), 1.5, true)
 
 	# Parasite count warning
 	if attached_parasites.size() > 0:
@@ -490,9 +501,10 @@ func _draw_face() -> void:
 	# Eyes are larger, cleaner, with distinct expressions
 	var eye_y_offset: float = 0.0
 	var base_spacing: float = _eye_spacing * 1.2  # Wider spacing for cleaner look
-	var left_eye := Vector2(_cell_radius * 0.25, -base_spacing * 0.4 + eye_y_offset) + _eye_shake
-	var right_eye := Vector2(_cell_radius * 0.25, base_spacing * 0.4 + eye_y_offset) + _eye_shake
-	var mouth_pos := Vector2(_cell_radius * 0.5, 0)
+	var face_fwd: float = _cell_radius * (_elongation - 1.0) * 0.4  # Shift face forward when elongated
+	var left_eye := Vector2(_cell_radius * 0.25 + face_fwd, -base_spacing * 0.4 + eye_y_offset) + _eye_shake
+	var right_eye := Vector2(_cell_radius * 0.25 + face_fwd, base_spacing * 0.4 + eye_y_offset) + _eye_shake
+	var mouth_pos := Vector2(_cell_radius * 0.5 + face_fwd, 0)
 
 	# Anime eye colors - brighter, more vibrant
 	var eye_white_color := Color(1.0, 1.0, 1.0, 1.0)
@@ -829,7 +841,7 @@ func _try_eat_prey() -> void:
 			continue
 		if global_position.distance_to(prey.global_position) < EAT_RANGE:
 			# Must be facing the prey to eat it (mouth is at front)
-			if not _is_target_in_front(prey.global_position, 0.7):  # ~80 degree cone
+			if not _is_target_in_front(prey.global_position, 1.3):  # ~150 degree cone (easy eat when touching)
 				continue
 			if prey.has_method("get_eaten"):
 				var nutrition: Dictionary = prey.get_eaten()
@@ -1211,7 +1223,9 @@ func _on_evolution_applied(mutation: Dictionary) -> void:
 	# Grow cell slightly for larger_membrane
 	if mutation.get("visual", "") == "larger_membrane":
 		_cell_radius += 3.0
-		_init_procedural_shape()
+	# Elongate cell with each evolution
+	_compute_elongation()
+	_init_procedural_shape()
 	# Update camera zoom for sensory upgrades
 	if mutation.get("sensory_upgrade", false):
 		_update_sensory_zoom(true)
@@ -1222,6 +1236,37 @@ func _update_sensory_zoom(animate: bool) -> void:
 	if not animate and camera:
 		_current_zoom = _target_zoom
 		camera.zoom = Vector2(_current_zoom, _current_zoom)
+
+func _compute_elongation() -> void:
+	_elongation = 1.0 + GameManager.evolution_level * 0.15
+	_elongation = minf(_elongation, 2.5)
+	_update_collision_shape()
+
+func _update_collision_shape() -> void:
+	var coll := get_node_or_null("CollisionShape2D")
+	if not coll:
+		return
+	if _elongation > 1.1:
+		var cap := CapsuleShape2D.new()
+		cap.radius = _cell_radius
+		cap.height = _cell_radius * _elongation * 2.0
+		coll.shape = cap
+		coll.rotation = PI / 2.0
+	else:
+		var circle := CircleShape2D.new()
+		circle.radius = _cell_radius
+		coll.shape = circle
+		coll.rotation = 0.0
+
+func _draw_ellipse(center: Vector2, rx: float, ry: float, color: Color, segments: int = 24) -> void:
+	if absf(rx - ry) < 0.5:
+		draw_circle(center, rx, color)
+		return
+	var pts := PackedVector2Array()
+	for i in range(segments):
+		var a: float = TAU * i / segments
+		pts.append(center + Vector2(cos(a) * rx, sin(a) * ry))
+	draw_colored_polygon(pts, color)
 
 func _draw_mutations() -> void:
 	for m in GameManager.active_mutations:
@@ -1309,7 +1354,7 @@ func _draw_mut_bioluminescence() -> void:
 	draw_circle(Vector2.ZERO, _cell_radius * 1.2, Color(0.3, 0.9, 0.6, pulse * 0.15))
 
 func _draw_mut_flagellum() -> void:
-	var base := Vector2(-_cell_radius - 2.0, 0)
+	var base := Vector2(-_cell_radius * _elongation - 2.0, 0)
 	for i in range(14):
 		var t: float = float(i) / 13.0
 		var px: float = base.x - t * 28.0
@@ -1481,10 +1526,11 @@ func _draw_mut_lateral_line() -> void:
 
 func _draw_mut_beak() -> void:
 	# Pointed beak at front
+	var fr: float = _cell_radius * _elongation
 	var pts: PackedVector2Array = PackedVector2Array([
-		Vector2(_cell_radius + 1.0, -3.0),
-		Vector2(_cell_radius + 9.0, 0),
-		Vector2(_cell_radius + 1.0, 3.0),
+		Vector2(fr + 1.0, -3.0),
+		Vector2(fr + 9.0, 0),
+		Vector2(fr + 1.0, 3.0),
 	])
 	draw_colored_polygon(pts, Color(0.7, 0.5, 0.2, 0.8))
 	draw_line(pts[0], pts[1], Color(0.5, 0.35, 0.1, 0.9), 1.0, true)
@@ -1506,11 +1552,12 @@ func _draw_mut_front_spike() -> void:
 	if _front_hit_flash > 0:
 		spike_col = spike_col.lerp(Color(1.0, 0.9, 0.6, 1.0), _front_hit_flash)
 		edge_col = edge_col.lerp(Color(1.0, 0.8, 0.4, 1.0), _front_hit_flash)
-	var base1 := Vector2(_cell_radius - 2.0, -4.0)
-	var base2 := Vector2(_cell_radius - 2.0, 4.0)
+	var fr: float = _cell_radius * _elongation
+	var base1 := Vector2(fr - 2.0, -4.0)
+	var base2 := Vector2(fr - 2.0, 4.0)
 	# Jab forward on hit
 	var jab: float = _front_hit_flash * 6.0 * sin(_front_hit_flash * PI)
-	var tip := Vector2(_cell_radius + 18.0 + sin(_time * 3.0) * 2.0 + jab, 0)
+	var tip := Vector2(fr + 18.0 + sin(_time * 3.0) * 2.0 + jab, 0)
 	var pts: PackedVector2Array = PackedVector2Array([base1, tip, base2])
 	draw_colored_polygon(pts, spike_col)
 	draw_line(base1, tip, edge_col, 1.5, true)
@@ -1531,10 +1578,11 @@ func _draw_mut_front_spike() -> void:
 func _draw_mut_mandibles() -> void:
 	# Two pincer jaws at front
 	var open: float = 0.2 + abs(sin(_time * 4.0)) * 0.3
+	var fr: float = _cell_radius * _elongation
 	for side in [-1.0, 1.0]:
-		var base := Vector2(_cell_radius - 1.0, side * 5.0)
-		var mid := Vector2(_cell_radius + 8.0, side * (4.0 + open * 6.0))
-		var tip := Vector2(_cell_radius + 14.0, side * (2.0 + open * 3.0))
+		var base := Vector2(fr - 1.0, side * 5.0)
+		var mid := Vector2(fr + 8.0, side * (4.0 + open * 6.0))
+		var tip := Vector2(fr + 14.0, side * (2.0 + open * 3.0))
 		draw_line(base, mid, Color(0.6, 0.4, 0.2, 0.9), 2.5, true)
 		draw_line(mid, tip, Color(0.5, 0.3, 0.15, 0.9), 2.0, true)
 		# Serrated edge
@@ -1545,9 +1593,10 @@ func _draw_mut_mandibles() -> void:
 
 func _draw_mut_side_barbs() -> void:
 	# Barbs along both sides
+	var er: float = _cell_radius * _elongation
 	for side in [-1.0, 1.0]:
 		for i in range(4):
-			var x: float = -_cell_radius * 0.5 + i * (_cell_radius * 0.4)
+			var x: float = -er * 0.5 + i * (er * 0.4)
 			var base := Vector2(x, side * _cell_radius)
 			var tip := base + Vector2(0, side * (8.0 + sin(_time * 5.0 + i) * 2.0))
 			draw_line(base, tip, Color(0.9, 0.4, 0.3, 0.8), 1.5, true)
@@ -1557,8 +1606,9 @@ func _draw_mut_side_barbs() -> void:
 
 func _draw_mut_rear_stinger() -> void:
 	# Scorpion-like stinger at back
+	var rr: float = _cell_radius * _elongation
 	var segments: int = 5
-	var prev := Vector2(-_cell_radius, 0)
+	var prev := Vector2(-rr, 0)
 	var base_color := Color(0.3, 0.7, 0.2, 0.9)
 	var tip_color := Color(0.2, 0.8, 0.1, 1.0)
 	var glow_color := Color(0.1, 0.9, 0.2, 0.6 + sin(_time * 6.0) * 0.3)
@@ -1572,7 +1622,7 @@ func _draw_mut_rear_stinger() -> void:
 		var wave: float = sin(_time * 3.0 + t * 2.0) * 4.0
 		# Quick jab motion on hit
 		var jab_offset: float = _tail_hit_flash * -8.0 * sin(_tail_hit_flash * PI)
-		var cur := Vector2(-_cell_radius - t * 16.0 + jab_offset * t, wave * t)
+		var cur := Vector2(-rr - t * 16.0 + jab_offset * t, wave * t)
 		var width: float = 3.0 * (1.0 - t * 0.6)
 		draw_line(prev, cur, base_color, width, true)
 		prev = cur
@@ -1591,31 +1641,33 @@ func _draw_mut_rear_stinger() -> void:
 
 func _draw_mut_ramming_crest() -> void:
 	# Armored head plate
+	var fr: float = _cell_radius * _elongation
 	var pts: PackedVector2Array = PackedVector2Array()
 	for i in range(7):
 		var t: float = float(i) / 6.0
 		var a: float = lerpf(-0.6, 0.6, t)
-		var r: float = _cell_radius + 4.0 + sin(t * PI) * 6.0
+		var r: float = fr + 4.0 + sin(t * PI) * 6.0
 		pts.append(Vector2(cos(a) * r, sin(a) * r))
-	pts.append(Vector2(_cell_radius - 2.0, sin(0.6) * _cell_radius))
-	pts.append(Vector2(_cell_radius - 2.0, sin(-0.6) * _cell_radius))
+	pts.append(Vector2(fr - 2.0, sin(0.6) * _cell_radius))
+	pts.append(Vector2(fr - 2.0, sin(-0.6) * _cell_radius))
 	draw_colored_polygon(pts, Color(0.5, 0.55, 0.6, 0.7))
 	# Ridge lines
 	for i in range(3):
 		var a: float = -0.3 + i * 0.3
-		var p1 := Vector2(cos(a) * _cell_radius, sin(a) * _cell_radius)
-		var p2 := Vector2(cos(a) * (_cell_radius + 8.0), sin(a) * (_cell_radius + 8.0) * 0.7)
+		var p1 := Vector2(cos(a) * fr, sin(a) * _cell_radius)
+		var p2 := Vector2(cos(a) * (fr + 8.0), sin(a) * (_cell_radius + 8.0) * 0.7)
 		draw_line(p1, p2, Color(0.4, 0.45, 0.5, 0.8), 1.5, true)
 
 func _draw_mut_proboscis() -> void:
 	# Long feeding needle at front
+	var fr: float = _cell_radius * _elongation
 	var wave: float = sin(_time * 8.0) * 1.5
-	var base := Vector2(_cell_radius, 0)
+	var base := Vector2(fr, 0)
 	var segments: int = 6
 	var prev := base
 	for i in range(segments):
 		var t: float = float(i + 1) / segments
-		var cur := Vector2(_cell_radius + t * 20.0, sin(_time * 4.0 + t * 3.0) * 2.0 * t)
+		var cur := Vector2(fr + t * 20.0, sin(_time * 4.0 + t * 3.0) * 2.0 * t)
 		var width: float = 2.0 * (1.0 - t * 0.7)
 		draw_line(prev, cur, Color(0.8, 0.5, 0.6, 0.8), width, true)
 		prev = cur
@@ -1624,6 +1676,7 @@ func _draw_mut_proboscis() -> void:
 
 func _draw_mut_tail_club() -> void:
 	# Heavy club at back
+	var rr: float = _cell_radius * _elongation
 	var stem_col := Color(0.6, 0.5, 0.4, 0.9)
 	var club_col := Color(0.55, 0.45, 0.35, 0.85)
 	var outline_col := Color(0.4, 0.35, 0.3, 0.9)
@@ -1632,7 +1685,7 @@ func _draw_mut_tail_club() -> void:
 		stem_col = stem_col.lerp(Color(1.0, 0.8, 0.4, 1.0), _tail_hit_flash)
 		club_col = club_col.lerp(Color(1.0, 0.9, 0.5, 1.0), _tail_hit_flash)
 		outline_col = outline_col.lerp(Color(1.0, 0.7, 0.3, 1.0), _tail_hit_flash)
-	var base := Vector2(-_cell_radius, 0)
+	var base := Vector2(-rr, 0)
 	# Swing motion on hit
 	var swing: float = sin(_time * 2.0) * 3.0
 	if _tail_hit_flash > 0:
@@ -1667,14 +1720,15 @@ func _draw_mut_electroreceptors() -> void:
 
 func _draw_mut_antenna() -> void:
 	# Two long antennae at front
+	var fr: float = _cell_radius * _elongation
 	for side in [-1.0, 1.0]:
-		var base := Vector2(_cell_radius - 2.0, side * 4.0)
+		var base := Vector2(fr - 2.0, side * 4.0)
 		var segments: int = 8
 		var prev := base
 		for i in range(segments):
 			var t: float = float(i + 1) / segments
 			var wave: float = sin(_time * 6.0 + t * 4.0 + side) * 3.0 * t
-			var cur := Vector2(_cell_radius + t * 25.0, side * 4.0 + wave)
+			var cur := Vector2(fr + t * 25.0, side * 4.0 + wave)
 			var width: float = 1.5 * (1.0 - t * 0.8)
 			draw_line(prev, cur, Color(0.6, 0.7, 0.5, 0.7), width, true)
 			prev = cur

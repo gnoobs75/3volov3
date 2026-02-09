@@ -53,6 +53,7 @@ var _head_wrapper: Node3D = null  # Orientation wrapper (rotation.y=PI to face f
 
 # --- Trifold Jaw ---
 var _jaw_petals: Array[Node3D] = []  # 3 pivot nodes holding jaw cone + teeth
+var _jaw_initial_rotations: Array[Vector3] = []  # Store Blender-baked rotations so we add splay on top
 var _jaw_open_amount: float = 0.0  # 0 = closed, 1 = full open
 var _jaw_state: int = 0  # 0=closed, 1=open, 2=bite
 var _bite_cooldown: float = 0.0
@@ -85,6 +86,9 @@ var _eye_light: SpotLight3D = null
 var _time: float = 0.0
 var _body_color: Color = Color(0.55, 0.35, 0.45)  # Pink-brown worm
 var _belly_color: Color = Color(0.7, 0.55, 0.5)
+var _vein_meshes: Array[MeshInstance3D] = []  # Purple vein details on segments
+var _synapse_lights: Array[OmniLight3D] = []  # Firing synapse pulses
+const GLOW_COLOR: Color = Color(0.15, 0.45, 0.1)  # Eerie green glow
 var _damage_flash: float = 0.0
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -97,7 +101,7 @@ func _ready() -> void:
 	add_to_group("player_worm")
 	# Smoother traversal over cave geometry
 	floor_max_angle = deg_to_rad(60.0)
-	floor_snap_length = 1.0
+	floor_snap_length = 2.0
 	floor_stop_on_slope = true
 	max_slides = 6
 	_build_head()
@@ -144,22 +148,62 @@ func _build_head() -> void:
 
 		# Find jaw pivots for animation
 		_jaw_petals.clear()
+		_jaw_initial_rotations.clear()
 		for i in range(3):
 			var pivot: Node3D = _head_node.find_child("JawPivot_%d" % i, true, false)
 			if pivot:
 				_jaw_petals.append(pivot)
+				_jaw_initial_rotations.append(pivot.rotation)
 
-		# Eye flashlight (forward-facing spotlight for cave illumination)
+		# Eye flashlight — proper beam with bright spotlight on target surface
+		# Main beam: long range spotlight from the eyes
 		_eye_light = SpotLight3D.new()
-		_eye_light.light_color = Color(0.35, 0.55, 0.15)
-		_eye_light.light_energy = 0.6
-		_eye_light.spot_range = 8.0
-		_eye_light.spot_angle = 55.0
-		_eye_light.spot_attenuation = 1.5
-		_eye_light.shadow_enabled = false
+		_eye_light.name = "Flashlight"
+		_eye_light.light_color = Color(0.3, 0.6, 0.15)
+		_eye_light.light_energy = 3.5
+		_eye_light.spot_range = 25.0
+		_eye_light.spot_angle = 18.0  # Tight beam for flashlight feel
+		_eye_light.spot_attenuation = 0.8  # Bright center, soft falloff
+		_eye_light.shadow_enabled = true
 		_eye_light.position = Vector3(0, 0.3, 0.5)
-		_eye_light.rotation.x = deg_to_rad(-10.0)
+		_eye_light.rotation.x = deg_to_rad(-5.0)  # Slight downward to hit floor ahead
 		_head_wrapper.add_child(_eye_light)
+
+		# Secondary wide fill light (subtle ambient around the beam)
+		var fill_light: SpotLight3D = SpotLight3D.new()
+		fill_light.name = "FlashlightFill"
+		fill_light.light_color = Color(0.2, 0.4, 0.1)
+		fill_light.light_energy = 0.4
+		fill_light.spot_range = 12.0
+		fill_light.spot_angle = 45.0  # Wide halo around the beam
+		fill_light.spot_attenuation = 2.0
+		fill_light.shadow_enabled = false
+		fill_light.position = Vector3(0, 0.3, 0.5)
+		fill_light.rotation.x = deg_to_rad(-5.0)
+		_head_wrapper.add_child(fill_light)
+
+		# Visible beam: long narrow cone mesh with very low alpha additive blend
+		var beam_mesh: CylinderMesh = CylinderMesh.new()
+		beam_mesh.top_radius = 0.03  # Pinpoint at source
+		beam_mesh.bottom_radius = 1.8  # Spreads to match spot angle at range
+		beam_mesh.height = 18.0  # Length of visible beam
+		beam_mesh.radial_segments = 12
+		var beam_mi: MeshInstance3D = MeshInstance3D.new()
+		beam_mi.name = "LightCone"
+		beam_mi.mesh = beam_mesh
+		beam_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var beam_mat: StandardMaterial3D = StandardMaterial3D.new()
+		beam_mat.albedo_color = Color(0.25, 0.5, 0.1, 0.015)  # Very subtle
+		beam_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		beam_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		beam_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		beam_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		beam_mat.no_depth_test = true
+		beam_mi.material_override = beam_mat
+		# Rotate cylinder so it extends along +Z (forward) from the head
+		beam_mi.position = Vector3(0, 0.3, 9.5)  # Midpoint of 18-unit cone
+		beam_mi.rotation.x = deg_to_rad(90.0)  # Align cylinder along Z
+		_head_wrapper.add_child(beam_mi)
 	else:
 		# Fallback: procedural head if GLB not found
 		_build_head_procedural()
@@ -186,30 +230,62 @@ func _build_head_procedural() -> void:
 	add_child(_head_mesh)
 
 	# Trifold jaw: 3 petals at 120° intervals (procedural fallback)
+	# Each petal is a tapered cone pointing forward along Z, with a tooth tip.
+	# Pivots are at the mouth opening; Z rotation spaces them 120° apart.
+	# Splaying rotates each petal outward from center via local X axis.
 	var petal_color: Color = _body_color.lightened(0.1)
 	var tooth_color: Color = Color(0.95, 0.9, 0.75)
+	_jaw_initial_rotations.clear()
 	for i in range(3):
 		var angle_offset: float = TAU / 3.0 * i
 		var pivot: Node3D = Node3D.new()
 		pivot.name = "JawPetal_%d" % i
+		# Pivot at the mouth ring, facing forward
 		pivot.position = Vector3(0, 0.6, 0.55)
 		pivot.rotation.z = angle_offset
 		add_child(pivot)
+
+		# Petal: tapered cone extending outward from pivot
 		var petal: MeshInstance3D = MeshInstance3D.new()
 		var cone: CylinderMesh = CylinderMesh.new()
-		cone.top_radius = 0.03
-		cone.bottom_radius = 0.25
-		cone.height = 0.6
-		cone.radial_segments = 8
+		cone.top_radius = 0.02
+		cone.bottom_radius = 0.22
+		cone.height = 0.55
+		cone.radial_segments = 6
 		petal.mesh = cone
 		var petal_mat: StandardMaterial3D = StandardMaterial3D.new()
 		petal_mat.albedo_color = petal_color
 		petal_mat.roughness = 0.5
+		petal_mat.emission_enabled = true
+		petal_mat.emission = petal_color * 0.15
+		petal_mat.emission_energy_multiplier = 0.3
 		petal.material_override = petal_mat
-		petal.position = Vector3(0, 0.25, 0.2)
-		petal.rotation.x = -PI * 0.35
+		# Cone extends along local Y; rotate so it points forward along Z
+		petal.position = Vector3(0, 0.0, 0.25)
+		petal.rotation.x = -PI * 0.5  # Tip points forward (+Z)
 		pivot.add_child(petal)
+
+		# Tooth at tip
+		var tooth: MeshInstance3D = MeshInstance3D.new()
+		var tooth_mesh: CylinderMesh = CylinderMesh.new()
+		tooth_mesh.top_radius = 0.005
+		tooth_mesh.bottom_radius = 0.03
+		tooth_mesh.height = 0.15
+		tooth_mesh.radial_segments = 4
+		tooth.mesh = tooth_mesh
+		var tooth_mat: StandardMaterial3D = StandardMaterial3D.new()
+		tooth_mat.albedo_color = tooth_color
+		tooth_mat.roughness = 0.3
+		tooth_mat.emission_enabled = true
+		tooth_mat.emission = tooth_color * 0.1
+		tooth_mat.emission_energy_multiplier = 0.2
+		tooth.material_override = tooth_mat
+		tooth.position = Vector3(0, 0.0, 0.5)
+		tooth.rotation.x = -PI * 0.5
+		pivot.add_child(tooth)
+
 		_jaw_petals.append(pivot)
+		_jaw_initial_rotations.append(pivot.rotation)
 
 func _trigger_bite() -> void:
 	if _bite_cooldown > 0 or _jaw_state == 2:
@@ -256,12 +332,20 @@ func _update_jaw() -> void:
 		_jaw_open_amount = breath_cycle * 0.12  # Subtle 12% max open during breathing
 
 	# Apply jaw_open_amount to petal rotations
+	# Each petal splays outward along its own radial axis (120° apart)
+	var splay_angle: float = _jaw_open_amount * deg_to_rad(75.0)
 	for i in range(_jaw_petals.size()):
 		var pivot: Node3D = _jaw_petals[i]
-		# When closed: petals together. When open: splay outward 90 degrees
-		var splay_angle: float = _jaw_open_amount * deg_to_rad(90.0)
-		# Splay outward from center — local X axis for both model types
-		pivot.rotation.x = splay_angle
+		if i < _jaw_initial_rotations.size():
+			# Blender model: add splay on top of baked rotation
+			# The pivots are already rotated around Z at 120° intervals in Blender.
+			# Splay on local X axis rotates each petal outward from mouth center.
+			pivot.rotation = _jaw_initial_rotations[i]
+			pivot.rotation.x += splay_angle
+		else:
+			# Procedural fallback: each petal's Z rotation is already set at creation
+			# Splay on local X splays outward because local X is radial
+			pivot.rotation.x = splay_angle
 
 func _build_face() -> void:
 	if _head_node:
@@ -304,6 +388,8 @@ func _build_face() -> void:
 	add_child(_eye_light)
 
 func _build_segments() -> void:
+	var vein_color: Color = Color(0.35, 0.08, 0.45)  # Purple veins
+
 	for i in range(INITIAL_SEGMENTS):
 		var t: float = float(i + 1) / (INITIAL_SEGMENTS + 1)
 		var seg_radius: float = lerpf(0.55, 0.18, t * t)
@@ -324,13 +410,52 @@ func _build_segments() -> void:
 		mat.albedo_color = col
 		mat.roughness = 0.65
 		mat.emission_enabled = true
-		mat.emission = col * 0.2  # Increased emission for cave visibility
-		mat.emission_energy_multiplier = 0.5
+		mat.emission = GLOW_COLOR  # Eerie green glow
+		mat.emission_energy_multiplier = 0.8
 		seg.material_override = mat
 
 		seg.position = Vector3(0, 0.4, -(i + 1) * SEGMENT_SPACING)
 		add_child(seg)
 		_segments.append(seg)
+
+		# Purple veins: 2-3 thin tubes wrapping around each segment
+		var vein_count: int = 2 if i % 2 == 0 else 3
+		for v in range(vein_count):
+			var vein: MeshInstance3D = MeshInstance3D.new()
+			var vein_cyl: CylinderMesh = CylinderMesh.new()
+			vein_cyl.top_radius = seg_radius * 0.06
+			vein_cyl.bottom_radius = seg_radius * 0.06
+			vein_cyl.height = seg_radius * 1.8
+			vein_cyl.radial_segments = 4
+			vein.mesh = vein_cyl
+
+			var vein_mat: StandardMaterial3D = StandardMaterial3D.new()
+			vein_mat.albedo_color = vein_color
+			vein_mat.roughness = 0.3
+			vein_mat.emission_enabled = true
+			vein_mat.emission = vein_color
+			vein_mat.emission_energy_multiplier = 1.5
+			vein.material_override = vein_mat
+
+			# Position veins around the segment at different angles
+			var angle: float = (TAU / vein_count) * v + i * 0.7
+			var offset_r: float = seg_radius * 0.85
+			vein.position = Vector3(cos(angle) * offset_r, sin(angle) * offset_r, 0)
+			# Tilt vein to wrap along body axis
+			vein.rotation.x = randf_range(-0.4, 0.4)
+			vein.rotation.z = angle + PI * 0.5
+			seg.add_child(vein)
+			_vein_meshes.append(vein)
+
+		# Synapse light on every 3rd segment
+		if i % 3 == 0:
+			var synapse: OmniLight3D = OmniLight3D.new()
+			synapse.light_color = vein_color
+			synapse.light_energy = 0.0  # Starts off, pulses on
+			synapse.omni_range = seg_radius * 3.0
+			synapse.shadow_enabled = false
+			seg.add_child(synapse)
+			_synapse_lights.append(synapse)
 
 		# Connector cylinder
 		var connector: MeshInstance3D = MeshInstance3D.new()
@@ -346,8 +471,8 @@ func _build_segments() -> void:
 		conn_mat.albedo_color = col.darkened(0.05)
 		conn_mat.roughness = 0.7
 		conn_mat.emission_enabled = true
-		conn_mat.emission = col.darkened(0.05) * 0.15
-		conn_mat.emission_energy_multiplier = 0.35
+		conn_mat.emission = GLOW_COLOR * 0.7  # Green glow on connectors too
+		conn_mat.emission_energy_multiplier = 0.6
 		connector.material_override = conn_mat
 
 		connector.position = Vector3(0, 0.4, -(i + 0.5) * SEGMENT_SPACING)
@@ -366,8 +491,8 @@ func _build_segments() -> void:
 	tail_mat.albedo_color = _body_color.darkened(0.25)
 	tail_mat.roughness = 0.7
 	tail_mat.emission_enabled = true
-	tail_mat.emission = _body_color.darkened(0.25) * 0.12
-	tail_mat.emission_energy_multiplier = 0.3
+	tail_mat.emission = GLOW_COLOR * 0.5
+	tail_mat.emission_energy_multiplier = 0.4
 	tail.material_override = tail_mat
 	tail.position = Vector3(0, 0.3, -(INITIAL_SEGMENTS + 0.8) * SEGMENT_SPACING)
 	add_child(tail)
@@ -521,11 +646,25 @@ func _physics_process(delta: float) -> void:
 
 	# --- Eye flashlight pulse (organic flicker) ---
 	if _eye_light:
-		var pulse: float = sin(_time * 2.5) * 0.15 + sin(_time * 7.3) * 0.05  # Slow breath + fast flicker
-		_eye_light.light_energy = 0.6 + pulse
+		var pulse: float = sin(_time * 2.5) * 0.4 + sin(_time * 7.3) * 0.15
+		var beam_energy: float = 3.5 + pulse
 		# Dim during creep for stealth
 		if _is_creeping:
-			_eye_light.light_energy *= 0.3
+			beam_energy *= 0.15  # Nearly off when sneaking
+		_eye_light.light_energy = beam_energy
+		# Match fill light
+		if _head_wrapper:
+			var fill: SpotLight3D = _head_wrapper.get_node_or_null("FlashlightFill") as SpotLight3D
+			if fill:
+				fill.light_energy = beam_energy * 0.12
+			# Animate beam cone visibility
+			var cone_node: MeshInstance3D = _head_wrapper.get_node_or_null("LightCone") as MeshInstance3D
+			if cone_node and cone_node.material_override is StandardMaterial3D:
+				var cone_mat: StandardMaterial3D = cone_node.material_override
+				var cone_alpha: float = 0.015 + (pulse * 0.003)
+				if _is_creeping:
+					cone_alpha *= 0.15
+				cone_mat.albedo_color.a = cone_alpha
 
 func _update_segments(delta: float) -> void:
 	var prev_pos: Vector3
@@ -546,6 +685,11 @@ func _update_segments(delta: float) -> void:
 		# Wobble animation
 		var wobble: float = sin(_time * 3.0 + i * 1.5) * 0.06
 		seg.position.y += wobble
+
+		# Green glow breathing per segment (staggered wave)
+		if seg.material_override:
+			var glow_wave: float = sin(_time * 2.0 + i * 0.6) * 0.2 + 0.8
+			seg.material_override.emission_energy_multiplier = glow_wave
 
 		# Update connector
 		if i < _connectors.size() - 1:
@@ -571,6 +715,24 @@ func _update_segments(delta: float) -> void:
 		if tail_dir.length() > 0.01:
 			tail.look_at_from_position(tail.position, tail.position + tail_dir, Vector3.UP)
 			tail.rotation.x += PI * 0.5
+
+	# Synapse firing: purple pulse wave traveling head-to-tail
+	var synapse_wave: float = fmod(_time * 1.5, 4.0)  # Wave every ~4 seconds
+	for si in range(_synapse_lights.size()):
+		var light: OmniLight3D = _synapse_lights[si]
+		var seg_index: float = float(si) / maxf(_synapse_lights.size() - 1, 1)
+		var wave_dist: float = absf(synapse_wave - seg_index * 3.0)
+		if wave_dist < 0.5:
+			var pulse: float = 1.0 - wave_dist * 2.0  # 0-1 peak
+			light.light_energy = pulse * 2.5
+		else:
+			light.light_energy = lerpf(light.light_energy, 0.0, delta * 6.0)
+
+	# Vein glow pulse — subtle breathing
+	var vein_pulse: float = sin(_time * 2.5) * 0.3 + 1.2
+	for vein in _vein_meshes:
+		if vein and vein.material_override:
+			vein.material_override.emission_energy_multiplier = vein_pulse
 
 func _get_history_position(distance: float) -> Vector3:
 	if _position_history.size() < 2:
@@ -644,18 +806,19 @@ func _trigger_stun_burst() -> void:
 	stun_burst_fired.emit()
 
 func get_bite_targets() -> Array:
-	## Returns WBCs within bite range and head-facing cone
+	## Returns creatures within bite range and head-facing cone (WBCs, prey, flyers)
 	var targets: Array = []
 	var head_dir: float = _heading + _head_flip
 	var forward: Vector3 = Vector3(sin(head_dir), 0, cos(head_dir))
-	for wbc in get_tree().get_nodes_in_group("white_blood_cell"):
-		var to_target: Vector3 = wbc.global_position - global_position
-		var dist: float = to_target.length()
-		if dist > 2.0:
-			continue
-		var dot: float = forward.dot(to_target.normalized())
-		if dot > 0.7:
-			targets.append(wbc)
+	for group_name in ["white_blood_cell", "prey", "flyer"]:
+		for creature in get_tree().get_nodes_in_group(group_name):
+			var to_target: Vector3 = creature.global_position - global_position
+			var dist: float = to_target.length()
+			if dist > 2.5:
+				continue
+			var dot: float = forward.dot(to_target.normalized())
+			if dot > 0.6:
+				targets.append(creature)
 	return targets
 
 var _hazard_slow: float = 1.0  # Multiplied into speed (1.0 = normal, <1 = slowed)
@@ -676,6 +839,8 @@ func _check_hazards(delta: float) -> void:
 			"nerve":
 				if randf() < node.get_meta("zap_chance", 0.015):
 					take_damage(node.get_meta("zap_damage", 8.0))
+			"gas":
+				take_damage(node.get_meta("dps", 2.0) * delta)
 			"pulse":
 				var period: float = node.get_meta("period", 1.4)
 				var cycle: float = fmod(Time.get_ticks_msec() / 1000.0, period) / period
@@ -687,6 +852,13 @@ func _check_hazards(delta: float) -> void:
 					else:
 						push_dir = Vector3.FORWARD
 					velocity += push_dir * node.get_meta("force", 6.0)
+			"peristalsis":
+				var period: float = node.get_meta("period", 2.5)
+				var cycle: float = fmod(Time.get_ticks_msec() / 1000.0, period) / period
+				if cycle < 0.15:  # Longer push window than heartbeat
+					var push_angle: float = node.get_meta("push_angle", 0.0)
+					var push_dir: Vector3 = Vector3(cos(push_angle), 0, sin(push_angle))
+					velocity += push_dir * node.get_meta("force", 4.0) * delta * 10.0
 
 var _creep_transparent: bool = false
 
@@ -744,8 +916,12 @@ func _update_tractor_beam(delta: float) -> void:
 			node.global_position += pull_dir * strength * delta
 
 func do_bite_damage() -> void:
-	## Called during bite snap — deals damage to WBCs in range
+	## Called during bite snap — deals damage to creatures in range with knockback
 	var targets: Array = get_bite_targets()
 	for target in targets:
 		if target.has_method("take_damage"):
 			target.take_damage(25.0)
+		# Knockback: push target away from player + upward
+		if target is CharacterBody3D:
+			var push: Vector3 = (target.global_position - global_position).normalized()
+			target.velocity += push * 12.0 + Vector3(0, 3.0, 0)

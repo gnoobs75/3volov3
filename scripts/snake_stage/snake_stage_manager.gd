@@ -30,10 +30,20 @@ var _wbc_container: Node3D = null
 var _spawn_floor_y: float = -10.0  # Expected floor Y for safety check
 var _cave_check_timer: float = 0.0  # Timer for cave boundary validation
 
+# Brain hallucination flicker
+var _hallucination_overlay: ColorRect = null
+var _hallucination_timer: float = 0.0
+
+# Antibody Flyer spawning
+const FLYER_TARGET_COUNT: int = 8
+const FLYER_DESPAWN_RADIUS: float = 350.0
+var _flyer_check_timer: float = 0.0
+
 # --- HUD references ---
 var _energy_bar: ProgressBar = null
 var _health_bar: ProgressBar = null
 var _controls_label: Label = null
+var _vitals_hud: Control = null  # Curved arc bars
 
 func _ready() -> void:
 	_setup_environment()
@@ -156,6 +166,7 @@ func _on_cave_ready() -> void:
 	call_deferred("_spawn_initial_nutrients")
 	call_deferred("_spawn_initial_prey")
 	call_deferred("_spawn_initial_wbc")
+	call_deferred("_spawn_initial_flyers")
 
 	# Wire minimap to cave system
 	if _minimap and _minimap.has_method("setup"):
@@ -229,6 +240,15 @@ func _setup_hud() -> void:
 	hud.layer = 5
 	hud.name = "HUD"
 	add_child(hud)
+
+	# --- Curved vitals arc bars (centered on screen, outside layout) ---
+	var vitals_script = load("res://scripts/snake_stage/vitals_hud.gd")
+	_vitals_hud = Control.new()
+	_vitals_hud.set_script(vitals_script)
+	_vitals_hud.name = "VitalsHUD"
+	_vitals_hud.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_vitals_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(_vitals_hud)
 
 	# --- Three-pane layout (matching cell stage) ---
 	var layout: HBoxContainer = HBoxContainer.new()
@@ -428,6 +448,12 @@ func _process(delta: float) -> void:
 		_wbc_check_timer = 0.0
 		_manage_wbc()
 
+	# Flyer management
+	_flyer_check_timer += delta
+	if _flyer_check_timer >= 3.0:
+		_flyer_check_timer = 0.0
+		_manage_flyers()
+
 	# Safety: full cave validation every 1 second (player + creatures)
 	_cave_check_timer += delta
 	if _cave_check_timer >= 1.0:
@@ -463,6 +489,9 @@ func _process(delta: float) -> void:
 	# Update sonar contour points
 	_update_sonar(delta)
 
+	# Brain hallucination flicker
+	_update_hallucination(delta)
+
 	# Update camera based on hub/tunnel context
 	_update_camera_context()
 
@@ -478,6 +507,9 @@ func _update_hud() -> void:
 		_energy_bar.value = (_player.energy / _player.max_energy) * 100.0
 	if _player and _health_bar:
 		_health_bar.value = (_player.health / _player.max_health) * 100.0
+	if _player and _vitals_hud:
+		_vitals_hud.health_ratio = _player.health / _player.max_health
+		_vitals_hud.energy_ratio = _player.energy / _player.max_energy
 	# Update depth label (now inside ThreePaneLayout/MiddlePane)
 	if _player:
 		var depth_label: Label = get_node_or_null("HUD/ThreePaneLayout/MiddlePane/DepthLabel")
@@ -639,6 +671,8 @@ func _spawn_prey() -> void:
 	var pos: Vector3 = _cave_gen.get_random_position_in_hub(_player.global_position)
 	bug.position = pos
 	_creatures_container.add_child(bug)
+	if bug.has_signal("died"):
+		bug.died.connect(_on_creature_died)
 
 func _on_player_damaged(_amount: float) -> void:
 	pass  # Future: screen shake, observer notes
@@ -677,6 +711,48 @@ func _spawn_wbc() -> void:
 	var pos: Vector3 = _cave_gen.get_random_position_in_hub(_player.global_position)
 	wbc.position = pos
 	_wbc_container.add_child(wbc)
+	if wbc.has_signal("died"):
+		wbc.died.connect(_on_creature_died)
+
+# --- Antibody Flyer Management ---
+func _spawn_initial_flyers() -> void:
+	for i in range(FLYER_TARGET_COUNT):
+		_spawn_flyer()
+
+func _manage_flyers() -> void:
+	if not _player or not _creatures_container:
+		return
+	# Despawn far flyers
+	for child in _creatures_container.get_children():
+		if child.is_in_group("flyer") and child.global_position.distance_to(_player.global_position) > FLYER_DESPAWN_RADIUS:
+			child.queue_free()
+	# Count and spawn
+	var flyer_count: int = 0
+	for child in _creatures_container.get_children():
+		if child.is_in_group("flyer"):
+			flyer_count += 1
+	if flyer_count < FLYER_TARGET_COUNT:
+		_spawn_flyer()
+
+func _spawn_flyer() -> void:
+	if not _player or not _cave_gen:
+		return
+	var flyer_script = load("res://scripts/snake_stage/antibody_flyer.gd")
+	var flyer: CharacterBody3D = CharacterBody3D.new()
+	flyer.set_script(flyer_script)
+
+	# Spawn above a random hub position — try up to 5 times to avoid spawning near player
+	var pos: Vector3 = Vector3.ZERO
+	for _attempt in range(5):
+		pos = _cave_gen.get_random_position_in_hub(_player.global_position)
+		var horiz_dist: float = Vector2(pos.x - _player.global_position.x, pos.z - _player.global_position.z).length()
+		if horiz_dist > 40.0:
+			break  # Far enough
+	pos.y += 10.0  # Start at hover height (above player line of sight)
+	flyer.position = pos
+	_creatures_container.add_child(flyer)
+	if flyer.has_signal("died"):
+		flyer.died.connect(_on_creature_died)
 
 # --- Combat VFX ---
 var _bite_flash_alpha: float = 0.0
@@ -698,6 +774,9 @@ func _on_player_bite() -> void:
 	if _bite_flash_overlay:
 		_bite_flash_overlay.visible = true
 		_bite_flash_overlay.color.a = 0.4
+	# Camera shake on bite
+	if _camera and _camera.has_method("add_shake"):
+		_camera.add_shake(0.3)
 	# Sound
 	if AudioManager and AudioManager.has_method("play_bite_snap"):
 		AudioManager.play_bite_snap()
@@ -1147,3 +1226,99 @@ func _activate_sonar_point(idx: int, pos: Vector3, col: Color) -> void:
 	var basis: Basis = Basis.IDENTITY.scaled(Vector3(1.0, 1.5, 1.0))
 	_sonar_mm.set_instance_transform(idx, Transform3D(basis, start_pos))
 	_sonar_mm.set_instance_color(idx, Color(0.4, 0.9, 0.8, 0.0))
+
+# --- Death VFX: blood particle burst + nutrient drops ---
+
+func _spawn_blood_burst(pos: Vector3) -> void:
+	var particles: GPUParticles3D = GPUParticles3D.new()
+	particles.emitting = true
+	particles.one_shot = true
+	particles.amount = 20
+	particles.lifetime = 0.6
+	particles.explosiveness = 1.0
+	particles.global_position = pos
+
+	var proc_mat: ParticleProcessMaterial = ParticleProcessMaterial.new()
+	proc_mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	proc_mat.emission_sphere_radius = 0.3
+	proc_mat.direction = Vector3(0, 1, 0)
+	proc_mat.spread = 180.0
+	proc_mat.initial_velocity_min = 3.0
+	proc_mat.initial_velocity_max = 8.0
+	proc_mat.gravity = Vector3(0, -6.0, 0)
+	proc_mat.scale_min = 0.5
+	proc_mat.scale_max = 1.5
+	proc_mat.color = Color(0.8, 0.1, 0.05, 0.9)
+	particles.process_material = proc_mat
+
+	var quad: QuadMesh = QuadMesh.new()
+	quad.size = Vector2(0.08, 0.08)
+	particles.draw_pass_1 = quad
+
+	var draw_mat: StandardMaterial3D = StandardMaterial3D.new()
+	draw_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	draw_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	draw_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	draw_mat.albedo_color = Color(0.9, 0.15, 0.05, 0.9)
+	draw_mat.emission_enabled = true
+	draw_mat.emission = Color(0.9, 0.2, 0.05)
+	draw_mat.emission_energy_multiplier = 3.0
+	draw_mat.vertex_color_use_as_albedo = true
+	draw_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	particles.material_override = draw_mat
+	particles.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+	add_child(particles)
+	# Auto-free after particles expire
+	get_tree().create_timer(1.0).timeout.connect(particles.queue_free)
+
+func _spawn_death_drops(pos: Vector3, count: int = 3) -> void:
+	for i in range(count):
+		var nutrient: Node3D = _create_nutrient()
+		var offset: Vector3 = Vector3(randf_range(-1.5, 1.5), 0.5, randf_range(-1.5, 1.5))
+		nutrient.position = pos + offset
+		_nutrients_container.add_child(nutrient)
+
+func _on_creature_died(pos: Vector3) -> void:
+	_spawn_blood_burst(pos)
+	_spawn_death_drops(pos, randi_range(2, 4))
+	# Camera shake on kill
+	if _camera and _camera.has_method("add_shake"):
+		_camera.add_shake(0.5)
+
+# --- Brain hallucination flicker ---
+func _update_hallucination(delta: float) -> void:
+	if not _player or not _cave_gen:
+		return
+	# Check if player is in BRAIN biome
+	var hub = _cave_gen.get_hub_at_position(_player.global_position)
+	if not hub or hub.biome != 6:  # 6 = BRAIN
+		if _hallucination_overlay and _hallucination_overlay.visible:
+			_hallucination_overlay.visible = false
+		return
+
+	# 5% chance per second (check each frame scaled by delta)
+	_hallucination_timer += delta
+	if _hallucination_timer >= 1.0:
+		_hallucination_timer = 0.0
+		if randf() < 0.05:
+			_trigger_hallucination_flash()
+
+	# Fade out overlay
+	if _hallucination_overlay and _hallucination_overlay.visible:
+		_hallucination_overlay.color.a -= delta * 10.0
+		if _hallucination_overlay.color.a <= 0.01:
+			_hallucination_overlay.visible = false
+
+func _trigger_hallucination_flash() -> void:
+	if not _hallucination_overlay:
+		_hallucination_overlay = ColorRect.new()
+		_hallucination_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_hallucination_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var hud: Node = get_node_or_null("HUD")
+		if hud:
+			hud.add_child(_hallucination_overlay)
+	if _hallucination_overlay:
+		# Purple-tinted flash
+		_hallucination_overlay.color = Color(0.4, 0.1, 0.5, 0.25)
+		_hallucination_overlay.visible = true

@@ -88,6 +88,17 @@ func _build_floor(colors: Dictionary) -> void:
 	var subdivs: int = clampi(int(radius * 1.0), 20, 60)
 	_grid_size = subdivs + 1
 
+	# Per-biome terrain amplitude for organic feel
+	var biome_amplitude: float = 2.5  # Default (Stomach — folds)
+	match _hub_data.biome:
+		0: biome_amplitude = 2.5   # STOMACH: gastric folds
+		1: biome_amplitude = 1.5   # HEART: smoother muscle
+		2: biome_amplitude = 3.0   # INTESTINE: villi ridges
+		3: biome_amplitude = 1.0   # LUNG: spongy, gentle
+		4: biome_amplitude = 2.0   # BONE_MARROW: rough
+		5: biome_amplitude = 1.5   # LIVER: moderate
+		6: biome_amplitude = 1.0   # BRAIN: folds but smooth
+
 	# Generate heightmap
 	_floor_heightmap.resize(_grid_size)
 	for gx in range(_grid_size):
@@ -97,7 +108,9 @@ func _build_floor(colors: Dictionary) -> void:
 			var wx: float = (float(gx) / subdivs - 0.5) * radius * 2.0
 			var wz: float = (float(gz) / subdivs - 0.5) * radius * 2.0
 			var dist_from_center: float = Vector2(wx, wz).length()
-			var height_noise: float = _noise.get_noise_2d(wx, wz) * 0.15  # Very subtle undulation
+			# Two-octave organic terrain noise
+			var height_noise: float = _noise.get_noise_2d(wx, wz) * biome_amplitude
+			height_noise += _noise.get_noise_2d(wx * 3.0, wz * 3.0) * biome_amplitude * 0.3  # Detail layer
 
 			# Gentle rise at very edge only (mostly flat floor)
 			var edge_factor: float = clampf(dist_from_center / radius, 0.0, 1.0)
@@ -138,19 +151,20 @@ func _build_floor(colors: Dictionary) -> void:
 
 	# POST-SMOOTH flatten: hard-set center area to y=0 so spawn is always safe.
 	# This runs AFTER smoothing so the blur can't undo it.
-	# Inner 10 units: perfectly flat (y=0). 10-16 units: smooth blend to terrain.
+	# Inner 14 units: perfectly flat (y=0). 14-22 units: smooth blend to terrain.
+	# (Expanded from 10/16 to accommodate larger terrain hills)
 	for gx3 in range(_grid_size):
 		for gz3 in range(_grid_size):
 			var wx3: float = (float(gx3) / subdivs - 0.5) * radius * 2.0
 			var wz3: float = (float(gz3) / subdivs - 0.5) * radius * 2.0
 			var center_dist3: float = Vector2(wx3, wz3).length()
-			if center_dist3 < 16.0:
-				if center_dist3 < 10.0:
+			if center_dist3 < 22.0:
+				if center_dist3 < 14.0:
 					# Inner zone: perfectly flat
 					_floor_heightmap[gx3][gz3] = 0.0
 				else:
 					# Transition zone: blend from flat to terrain
-					var blend3: float = (center_dist3 - 10.0) / 6.0
+					var blend3: float = (center_dist3 - 14.0) / 8.0
 					blend3 = blend3 * blend3  # Quadratic ease
 					_floor_heightmap[gx3][gz3] = lerpf(0.0, _floor_heightmap[gx3][gz3], blend3)
 

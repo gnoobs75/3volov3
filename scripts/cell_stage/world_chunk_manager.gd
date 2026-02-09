@@ -30,28 +30,28 @@ var _world_seed: int = 0
 # Spawn tables per biome: {type: [min_count, max_count]}
 const SPAWN_TABLES: Dictionary = {
 	Biome.NORMAL: {
-		"food": [3, 6], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 1],
-		"hazard": [0, 1], "repeller": [0, 0], "blocker": [0, 1], "parasite": [0, 1],
+		"food": [5, 9], "enemy": [0, 2], "competitor": [0, 1], "snake": [0, 2],
+		"hazard": [0, 1], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 1], "dart_predator": [0, 0], "leviathan": [0, 0],
 	},
 	Biome.THERMAL_VENT: {
-		"food": [3, 5], "enemy": [0, 2], "competitor": [0, 1], "snake": [0, 1],
-		"hazard": [0, 2], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
+		"food": [5, 8], "enemy": [1, 3], "competitor": [0, 1], "snake": [0, 2],
+		"hazard": [0, 2], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 2],
 		"virus": [0, 1], "dart_predator": [0, 1], "leviathan": [0, 0],
 	},
 	Biome.DEEP_ABYSS: {
-		"food": [2, 3], "enemy": [0, 2], "competitor": [0, 1], "snake": [0, 1],
-		"hazard": [0, 2], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
+		"food": [3, 5], "enemy": [1, 3], "competitor": [0, 1], "snake": [0, 2],
+		"hazard": [0, 2], "repeller": [0, 1], "blocker": [0, 2], "parasite": [0, 2],
 		"virus": [0, 1], "dart_predator": [0, 1], "leviathan": [0, 1],
 	},
 	Biome.SHALLOWS: {
-		"food": [5, 8], "enemy": [0, 1], "competitor": [0, 2], "snake": [0, 2],
+		"food": [7, 12], "enemy": [0, 1], "competitor": [0, 2], "snake": [1, 3],
 		"hazard": [0, 0], "repeller": [0, 0], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 0], "dart_predator": [0, 0], "leviathan": [0, 0],
 	},
 	Biome.NUTRIENT_RICH: {
-		"food": [6, 9], "enemy": [0, 1], "competitor": [0, 2], "snake": [0, 1],
-		"hazard": [0, 1], "repeller": [0, 0], "blocker": [0, 1], "parasite": [0, 1],
+		"food": [8, 13], "enemy": [0, 2], "competitor": [0, 2], "snake": [0, 2],
+		"hazard": [0, 1], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 1], "dart_predator": [0, 1], "leviathan": [0, 0],
 	},
 }
@@ -191,6 +191,9 @@ func _get_organism_type(org: Node2D) -> String:
 		return "blocker"
 	return "blocker"
 
+# Types suppressed during the safe zone (no hostiles until player learns controls)
+const HOSTILE_TYPES: Array = ["enemy", "hazard", "parasite", "virus", "dart_predator", "leviathan"]
+
 func _spawn_chunk_population(coord: Vector2i) -> void:
 	var chunk: Dictionary = _chunks[coord]
 	var biome: int = chunk["biome"]
@@ -200,10 +203,18 @@ func _spawn_chunk_population(coord: Vector2i) -> void:
 	var center := _get_chunk_center(coord)
 	var memory: Dictionary = chunk["memory"]
 	var remaining_override: Dictionary = memory.get("remaining", {})
+	var in_safe_zone: bool = GameManager.safe_zone_active
 
 	for type_key in table:
+		# Skip hostile spawns during the safe zone
+		if in_safe_zone and type_key in HOSTILE_TYPES:
+			continue
+
 		var range_arr: Array = table[type_key]
 		var base_count: int = rng.randi_range(range_arr[0], range_arr[1])
+		# Boost food during safe zone so new players have plenty to collect
+		if in_safe_zone and type_key == "food":
+			base_count = maxi(base_count, 6)
 		# If we have memory of this chunk, use remembered count instead
 		var count: int = base_count
 		if remaining_override.has(type_key):

@@ -5,13 +5,13 @@ extends RefCounted
 
 # Per-biome fog parameters: {density, height_mult}
 const FOG_PARAMS: Dictionary = {
-	0: {"density": 0.03, "height_mult": 0.7},    # STOMACH - moderate acidic haze
-	1: {"density": 0.04, "height_mult": 0.8},    # HEART - thick warm blood mist
-	2: {"density": 0.025, "height_mult": 0.6},   # INTESTINE - moderate
-	3: {"density": 0.015, "height_mult": 0.5},   # LUNG - thin, airy
-	4: {"density": 0.02, "height_mult": 0.5},    # BONE_MARROW - light haze
-	5: {"density": 0.035, "height_mult": 0.7},   # LIVER - moderate dark
-	6: {"density": 0.04, "height_mult": 0.9},    # BRAIN - thick, mysterious
+	0: {"density": 0.035, "height_mult": 0.75},   # STOMACH - acidic haze, thicker
+	1: {"density": 0.045, "height_mult": 0.85},   # HEART - warm blood mist
+	2: {"density": 0.03, "height_mult": 0.65},    # INTESTINE - moderate mucous haze
+	3: {"density": 0.02, "height_mult": 0.5},     # LUNG - thin, airy (gas clouds add local density)
+	4: {"density": 0.025, "height_mult": 0.55},   # BONE_MARROW - cold crystalline haze
+	5: {"density": 0.04, "height_mult": 0.75},    # LIVER - dark bile fog
+	6: {"density": 0.05, "height_mult": 0.95},    # BRAIN - thick, disorienting
 }
 
 static func add_fog(parent: Node3D, hub_data, biome_colors: Dictionary) -> void:

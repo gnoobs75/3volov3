@@ -35,9 +35,14 @@ text = "CRISPR Gene Editor"
 horizontal_alignment = 1
 theme_override_font_sizes/font_size = 22
 
-[node name="GeneList" type="ItemList" parent="CRISPRPanel/PanelContainer/VBoxContainer"]
+[node name="GeneScroll" type="ScrollContainer" parent="CRISPRPanel/PanelContainer/VBoxContainer"]
 layout_mode = 2
 custom_minimum_size = Vector2(0, 200)
+
+[node name="GeneCards" type="VBoxContainer" parent="CRISPRPanel/PanelContainer/VBoxContainer/GeneScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 3
 
 [node name="SpliceArea" type="HBoxContainer" parent="CRISPRPanel/PanelContainer/VBoxContainer"]
 layout_mode = 2

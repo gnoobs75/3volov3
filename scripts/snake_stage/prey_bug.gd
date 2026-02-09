@@ -11,6 +11,7 @@ var _heading: float = 0.0
 var _speed: float = 0.0
 var _panic: float = 0.0  # 0-1
 var health: float = 20.0
+var _damage_flash: float = 0.0
 
 
 # Visuals
@@ -302,6 +303,14 @@ func _physics_process(delta: float) -> void:
 
 	rotation.y = _heading
 
+	# Damage flash decay
+	if _damage_flash > 0:
+		_damage_flash = maxf(_damage_flash - delta * 4.0, 0.0)
+		if _body_mesh and _body_mesh.material_override is StandardMaterial3D:
+			var bmat: StandardMaterial3D = _body_mesh.material_override
+			bmat.emission_energy_multiplier = 0.4 + _damage_flash * 5.0
+			bmat.emission = Color(1.0, 0.2, 0.1).lerp(_body_color * 0.2, 1.0 - _damage_flash)
+
 	# Update face expressions
 	_update_face(delta)
 
@@ -388,14 +397,17 @@ func _update_face(delta: float) -> void:
 		if _panic > 0.3:
 			_body_mesh.rotation.x = sin(_time * 15.0) * 0.1 * _panic
 
+signal died(pos: Vector3)
+
 func take_damage(amount: float) -> void:
 	health -= amount
 	_panic = 1.0
+	_damage_flash = 1.0
 	state = State.FLEE
 	_state_timer = 3.0
 	if health <= 0:
 		_die()
 
 func _die() -> void:
-	# Drop nutrients handled by stage manager
+	died.emit(global_position)
 	queue_free()
