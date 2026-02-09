@@ -40,8 +40,6 @@ const FLYER_DESPAWN_RADIUS: float = 350.0
 var _flyer_check_timer: float = 0.0
 
 # --- HUD references ---
-var _energy_bar: ProgressBar = null
-var _health_bar: ProgressBar = null
 var _controls_label: Label = null
 var _vitals_hud: Control = null  # Curved arc bars
 
@@ -312,36 +310,6 @@ func _setup_hud() -> void:
 	top_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	middle_pane.add_child(top_bar)
 
-	# Energy label + bar
-	var energy_label: Label = Label.new()
-	energy_label.text = "ENERGY"
-	energy_label.position = Vector2(20, 4)
-	energy_label.add_theme_font_size_override("font_size", 10)
-	energy_label.add_theme_color_override("font_color", Color(0.2, 0.7, 0.5, 0.8))
-	middle_pane.add_child(energy_label)
-
-	_energy_bar = ProgressBar.new()
-	_energy_bar.position = Vector2(20, 20)
-	_energy_bar.size = Vector2(200, 16)
-	_energy_bar.value = 100
-	_energy_bar.show_percentage = false
-	middle_pane.add_child(_energy_bar)
-
-	# Health label + bar
-	var health_label: Label = Label.new()
-	health_label.text = "HEALTH"
-	health_label.position = Vector2(20, 38)
-	health_label.add_theme_font_size_override("font_size", 10)
-	health_label.add_theme_color_override("font_color", Color(1.0, 0.4, 0.3, 0.8))
-	middle_pane.add_child(health_label)
-
-	_health_bar = ProgressBar.new()
-	_health_bar.position = Vector2(20, 54)
-	_health_bar.size = Vector2(200, 16)
-	_health_bar.value = 100
-	_health_bar.show_percentage = false
-	middle_pane.add_child(_health_bar)
-
 	# Stage title (center top)
 	var title: Label = Label.new()
 	title.text = "PARASITE MODE - Inside the Host"
@@ -503,10 +471,6 @@ func _process(delta: float) -> void:
 			AudioManager.play_cave_drip()
 
 func _update_hud() -> void:
-	if _player and _energy_bar:
-		_energy_bar.value = (_player.energy / _player.max_energy) * 100.0
-	if _player and _health_bar:
-		_health_bar.value = (_player.health / _player.max_health) * 100.0
 	if _player and _vitals_hud:
 		_vitals_hud.health_ratio = _player.health / _player.max_health
 		_vitals_hud.energy_ratio = _player.energy / _player.max_energy

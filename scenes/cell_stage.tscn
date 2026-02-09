@@ -126,42 +126,6 @@ offset_bottom = 80.0
 grow_horizontal = 2
 color = Color(0.02, 0.05, 0.1, 0.7)
 
-[node name="EnergyLabel" type="Label" parent="HUD/ThreePaneLayout/MiddlePane"]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 4.0
-offset_right = 100.0
-offset_bottom = 20.0
-text = "ENERGY"
-theme_override_font_sizes/font_size = 10
-theme_override_colors/font_color = Color(0.3, 0.8, 1.0, 0.8)
-
-[node name="EnergyBar" type="ProgressBar" parent="HUD/ThreePaneLayout/MiddlePane"]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 20.0
-offset_right = 220.0
-offset_bottom = 36.0
-value = 100.0
-
-[node name="HealthLabel" type="Label" parent="HUD/ThreePaneLayout/MiddlePane"]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 38.0
-offset_right = 100.0
-offset_bottom = 54.0
-text = "HEALTH"
-theme_override_font_sizes/font_size = 10
-theme_override_colors/font_color = Color(1.0, 0.4, 0.3, 0.8)
-
-[node name="HealthBar" type="ProgressBar" parent="HUD/ThreePaneLayout/MiddlePane"]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 54.0
-offset_right = 220.0
-offset_bottom = 70.0
-value = 100.0
-
 [node name="StatsLabel" type="Label" parent="HUD/ThreePaneLayout/MiddlePane"]
 layout_mode = 1
 anchors_preset = 1

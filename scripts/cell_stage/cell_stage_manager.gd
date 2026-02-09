@@ -4,8 +4,6 @@ extends Node2D
 
 @onready var player: CharacterBody2D = $PlayerCell
 @onready var hud: CanvasLayer = $HUD
-@onready var energy_bar: ProgressBar = $"HUD/ThreePaneLayout/MiddlePane/EnergyBar"
-@onready var health_bar: ProgressBar = $"HUD/ThreePaneLayout/MiddlePane/HealthBar"
 @onready var stats_label: Label = $"HUD/ThreePaneLayout/MiddlePane/StatsLabel"
 @onready var parasite_label: Label = $"HUD/ThreePaneLayout/MiddlePane/ParasiteLabel"
 @onready var fps_label: Label = $"HUD/ThreePaneLayout/MiddlePane/FPSLabel"
@@ -58,11 +56,11 @@ var _popup_color: Color = Color(0.5, 0.9, 0.7)
 var _low_health_pulse: float = 0.0
 var _heartbeat_timer: float = 0.0
 var _energy_warning_played: bool = false
-var _energy_bar_pulse: float = 0.0  # Pulsing timer for energy bar flash
 
 var _overlay: Control = null  # For drawing screen-space effects
 var _pause_menu: Control = null
 var _paused: bool = false
+var _vitals_hud: Control = null  # Curved arc bars (health left, energy right)
 
 # Victory screen
 var _victory_active: bool = false
@@ -122,6 +120,15 @@ func _ready() -> void:
 	else:
 		# Returning player — no showcase or tutorial needed
 		pass
+
+	# Curved vitals arc bars (centered on screen, health left / energy right)
+	var vitals_script := load("res://scripts/snake_stage/vitals_hud.gd")
+	_vitals_hud = Control.new()
+	_vitals_hud.set_script(vitals_script)
+	_vitals_hud.name = "VitalsHUD"
+	_vitals_hud.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_vitals_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(_vitals_hud)
 
 	# Create and setup chunk manager
 	var ChunkManagerScript := preload("res://scripts/cell_stage/world_chunk_manager.gd")
@@ -222,17 +229,6 @@ func _process(delta: float) -> void:
 	elif energy_ratio > 0.35:
 		_energy_warning_played = false
 
-	# Energy bar flash pulse when below 25%
-	if energy_ratio < 0.25:
-		_energy_bar_pulse += delta * 5.0
-		var pulse: float = 0.5 + 0.5 * sin(_energy_bar_pulse)
-		var flash_color := Color(1.0, 0.3, 0.1).lerp(Color(1.0, 0.8, 0.2), pulse)
-		energy_bar.add_theme_color_override("font_color", flash_color)
-		energy_bar.modulate = Color(1.0, 1.0, 1.0).lerp(Color(1.0, 0.6, 0.4), pulse * 0.5)
-	else:
-		_energy_bar_pulse = 0.0
-		energy_bar.modulate = Color.WHITE
-
 	# Generic popup fade
 	if _popup_timer > 0:
 		_popup_timer -= delta
@@ -260,11 +256,10 @@ func _process(delta: float) -> void:
 	if background:
 		background.global_position = player.global_position - Vector2(2000, 2000)
 
-	# HUD bars
-	energy_bar.value = player.energy
-	energy_bar.max_value = player.max_energy
-	health_bar.value = player.health
-	health_bar.max_value = player.max_health
+	# HUD vitals arcs
+	if _vitals_hud:
+		_vitals_hud.health_ratio = player.health / player.max_health
+		_vitals_hud.energy_ratio = player.energy / player.max_energy
 
 	var energy_status: String = ""
 	if player.is_energy_depleted:
