@@ -49,6 +49,7 @@ var _face_billboard: Sprite3D = null
 var _face_canvas: Control = null
 var _head_mesh: MeshInstance3D = null
 var _head_node: Node3D = null  # Root of imported Blender head model
+var _head_wrapper: Node3D = null  # Orientation wrapper (rotation.y=PI to face forward)
 
 # --- Trifold Jaw ---
 var _jaw_petals: Array[Node3D] = []  # 3 pivot nodes holding jaw cone + teeth
@@ -56,7 +57,10 @@ var _jaw_open_amount: float = 0.0  # 0 = closed, 1 = full open
 var _jaw_state: int = 0  # 0=closed, 1=open, 2=bite
 var _bite_cooldown: float = 0.0
 var _bite_tween: Tween = null
+var _lunge_tween: Tween = null
+var _lunge_offset: float = 0.0  # Forward head offset during bite
 const BITE_COOLDOWN_TIME: float = 0.5
+const LUNGE_VELOCITY: float = 18.0  # Forward impulse on bite
 
 # --- Stealth & Combat ---
 var noise_level: float = 0.0  # 0.0-1.0 for WBC detection
@@ -113,13 +117,18 @@ func _build_head() -> void:
 	# Load the Blender head model with trifold jaw
 	var head_scene: PackedScene = load("res://models/worm_head.glb")
 	if head_scene:
+		# Wrapper node: rotation.y=PI flips the model so jaw faces +Z (movement direction)
+		# Without this, rotation.x=-PI/2 maps jaw to -Z (backward toward camera)
+		_head_wrapper = Node3D.new()
+		_head_wrapper.name = "HeadWrapper"
+		_head_wrapper.position = Vector3(0, 0.6, 0)
+		_head_wrapper.rotation.y = PI
+		add_child(_head_wrapper)
+
 		_head_node = head_scene.instantiate()
 		_head_node.name = "HeadModel"
-		# Blender Z-up export to Y-up: jaw (Blender +Z) becomes +Y in Godot
-		# Rotate -90° around X to point jaw forward (-Z in Godot = forward)
-		_head_node.position = Vector3(0, 0.6, 0)
 		_head_node.rotation.x = -PI * 0.5
-		add_child(_head_node)
+		_head_wrapper.add_child(_head_node)
 
 		# Find the WormHead MeshInstance3D for material/transparency control
 		_head_mesh = _head_node.find_child("WormHead", true, false) as MeshInstance3D
@@ -136,6 +145,18 @@ func _build_head() -> void:
 			var pivot: Node3D = _head_node.find_child("JawPivot_%d" % i, true, false)
 			if pivot:
 				_jaw_petals.append(pivot)
+
+		# Eye flashlight (forward-facing spotlight for cave illumination)
+		_eye_light = SpotLight3D.new()
+		_eye_light.light_color = Color(0.35, 0.55, 0.15)
+		_eye_light.light_energy = 0.6
+		_eye_light.spot_range = 8.0
+		_eye_light.spot_angle = 55.0
+		_eye_light.spot_attenuation = 1.5
+		_eye_light.shadow_enabled = false
+		_eye_light.position = Vector3(0, 0.3, 0.5)
+		_eye_light.rotation.x = deg_to_rad(-10.0)
+		_head_wrapper.add_child(_eye_light)
 	else:
 		# Fallback: procedural head if GLB not found
 		_build_head_procedural()
@@ -192,7 +213,19 @@ func _trigger_bite() -> void:
 		return
 	_jaw_state = 2
 	_bite_cooldown = BITE_COOLDOWN_TIME
-	# Kill existing tween
+
+	# --- LUNGE: immediate forward thrust ---
+	var forward: Vector3 = Vector3(sin(_heading), 0, cos(_heading))
+	velocity += forward * LUNGE_VELOCITY
+
+	# Head lunge animation (offset head forward then back)
+	if _lunge_tween and _lunge_tween.is_valid():
+		_lunge_tween.kill()
+	_lunge_tween = create_tween()
+	_lunge_tween.tween_property(self, "_lunge_offset", 0.6, 0.06).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+	_lunge_tween.tween_property(self, "_lunge_offset", 0.0, 0.25).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
+
+	# --- JAW: rip open then snap shut ---
 	if _bite_tween and _bite_tween.is_valid():
 		_bite_tween.kill()
 	_bite_tween = create_tween()
@@ -463,9 +496,12 @@ func _physics_process(delta: float) -> void:
 	# --- Update face ---
 	_update_face(delta)
 
-	# --- Head bob ---
+	# --- Head bob + lunge offset ---
 	var bob: float = sin(_time * 8.0) * 0.05 * clampf(absf(_current_speed) / BASE_SPEED, 0.0, 1.0)
-	if _head_node:
+	if _head_wrapper:
+		_head_wrapper.position.y = 0.6 + bob
+		_head_wrapper.position.z = _lunge_offset  # Forward lunge during bite
+	elif _head_node:
 		_head_node.position.y = 0.6 + bob
 	elif _head_mesh:
 		_head_mesh.position.y = 0.6 + bob
@@ -479,7 +515,13 @@ func _physics_process(delta: float) -> void:
 			_eye_light.light_energy *= 0.3
 
 func _update_segments(delta: float) -> void:
-	var prev_pos: Vector3 = _head_node.position if _head_node else _head_mesh.position
+	var prev_pos: Vector3
+	if _head_wrapper:
+		prev_pos = _head_wrapper.position
+	elif _head_node:
+		prev_pos = _head_node.position
+	else:
+		prev_pos = _head_mesh.position
 	for i in range(_segments.size()):
 		var seg: MeshInstance3D = _segments[i]
 		var desired_dist: float = (i + 1) * SEGMENT_SPACING
@@ -692,6 +734,3 @@ func do_bite_damage() -> void:
 	for target in targets:
 		if target.has_method("take_damage"):
 			target.take_damage(25.0)
-	# Brief forward lunge
-	var forward: Vector3 = Vector3(sin(_heading), 0, cos(_heading))
-	velocity += forward * 8.0
