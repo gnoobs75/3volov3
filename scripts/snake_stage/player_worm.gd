@@ -419,12 +419,12 @@ func _physics_process(delta: float) -> void:
 	# --- Rotation ---
 	rotation.y = _heading
 
-	# --- Head faces movement direction (flip when going backward) ---
-	var head_flip_target: float = 0.0
+	# --- Head faces movement direction (hold direction until opposite key) ---
+	var head_flip_target: float = _head_flip  # Hold current facing when idle
 	if input_forward < -0.1:
-		head_flip_target = PI  # Moving backward: head faces camera
+		head_flip_target = PI  # S key: head faces backward
 	elif input_forward > 0.1:
-		head_flip_target = 0.0  # Moving forward: head faces ahead
+		head_flip_target = 0.0  # W key: head faces forward
 	_head_flip = lerp_angle(_head_flip, head_flip_target, delta * 8.0)
 
 	# --- Record position history ---
