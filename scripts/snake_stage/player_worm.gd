@@ -83,11 +83,10 @@ var _head_flip: float = 0.0  # 0 = facing forward, PI = facing backward (smooth)
 
 # --- Visuals ---
 var _eye_light: SpotLight3D = null
-var _eye_light_base_energy: float = 4.0  # Stored base energy for pulse animation
-var _fill_light: SpotLight3D = null
-var _ground_spot: SpotLight3D = null
-var _light_cone: MeshInstance3D = null
-var _light_cone_core: MeshInstance3D = null
+var _eye_light_base_energy: float = 1.5  # Stored base energy for pulse animation
+var _eye_stalk: Node3D = null  # Anglerfish lure stalk
+var _eye_lure: MeshInstance3D = null  # Glowing lure at stalk tip
+var _lure_light: OmniLight3D = null  # Ambient glow from the lure
 var _time: float = 0.0
 var _body_color: Color = Color(0.55, 0.35, 0.45)  # Pink-brown worm
 var _belly_color: Color = Color(0.7, 0.55, 0.5)
@@ -160,150 +159,98 @@ func _build_head() -> void:
 				_jaw_petals.append(pivot)
 				_jaw_initial_rotations.append(pivot.rotation)
 
-		# Eye flashlight — bright beam from eyes that strikes ground ahead
-		# Scales with evolution: range/energy grow as the creature evolves
+		# --- Anglerfish Eye Stalk ---
+		# A bioluminescent lure stalk rising from the head, with a dim spotlight
+		# The wrapper has rotation.y=PI, so wrapper -Z = worm forward.
+		# SpotLight3D default direction is -Z, so rotation (0,0,0) = forward.
 		var evo: int = 0
-		if Engine.has_singleton("GameManager"):
-			evo = Engine.get_singleton("GameManager").get("evolution_level")
-		elif has_node("/root/GameManager"):
+		if has_node("/root/GameManager"):
 			evo = get_node("/root/GameManager").get("evolution_level")
-		var evo_scale: float = 1.0 + evo * 0.15  # 15% boost per evolution level
+		var evo_boost: float = evo * 0.08  # Subtle growth per evolution
 
-		# Main beam: tight spotlight from the eyes — the core "flashlight"
+		# Stalk root — positioned on top of the head
+		_eye_stalk = Node3D.new()
+		_eye_stalk.name = "EyeStalk"
+		_eye_stalk.position = Vector3(0, 0.4, 0)
+		_head_wrapper.add_child(_eye_stalk)
+
+		# Lower stalk segment: thicker base
+		var stalk_lower: MeshInstance3D = MeshInstance3D.new()
+		var stalk_cyl: CylinderMesh = CylinderMesh.new()
+		stalk_cyl.top_radius = 0.04
+		stalk_cyl.bottom_radius = 0.08
+		stalk_cyl.height = 0.5
+		stalk_cyl.radial_segments = 6
+		stalk_lower.mesh = stalk_cyl
+		var stalk_mat: StandardMaterial3D = StandardMaterial3D.new()
+		stalk_mat.albedo_color = _body_color.darkened(0.1)
+		stalk_mat.roughness = 0.7
+		stalk_mat.emission_enabled = true
+		stalk_mat.emission = GLOW_COLOR * 0.3
+		stalk_mat.emission_energy_multiplier = 0.4
+		stalk_lower.material_override = stalk_mat
+		stalk_lower.position = Vector3(0, 0.25, 0)
+		_eye_stalk.add_child(stalk_lower)
+
+		# Upper stalk: thinner, slight forward lean (toward wrapper -Z = worm forward)
+		var stalk_upper_pivot: Node3D = Node3D.new()
+		stalk_upper_pivot.name = "StalkBend"
+		stalk_upper_pivot.position = Vector3(0, 0.5, 0)
+		stalk_upper_pivot.rotation.x = deg_to_rad(15.0)  # Lean forward slightly
+		_eye_stalk.add_child(stalk_upper_pivot)
+
+		var stalk_upper: MeshInstance3D = MeshInstance3D.new()
+		var stalk_upper_cyl: CylinderMesh = CylinderMesh.new()
+		stalk_upper_cyl.top_radius = 0.03
+		stalk_upper_cyl.bottom_radius = 0.05
+		stalk_upper_cyl.height = 0.4
+		stalk_upper_cyl.radial_segments = 6
+		stalk_upper.mesh = stalk_upper_cyl
+		stalk_upper.material_override = stalk_mat
+		stalk_upper.position = Vector3(0, 0.2, 0)
+		stalk_upper_pivot.add_child(stalk_upper)
+
+		# Lure eye: glowing bioluminescent bulb at the tip
+		_eye_lure = MeshInstance3D.new()
+		_eye_lure.name = "LureEye"
+		var lure_sphere: SphereMesh = SphereMesh.new()
+		lure_sphere.radius = 0.1 + evo_boost * 0.3
+		lure_sphere.height = (0.1 + evo_boost * 0.3) * 2.0
+		lure_sphere.radial_segments = 12
+		lure_sphere.rings = 6
+		_eye_lure.mesh = lure_sphere
+		var lure_mat: StandardMaterial3D = StandardMaterial3D.new()
+		lure_mat.albedo_color = Color(0.85, 0.75, 0.4)
+		lure_mat.roughness = 0.2
+		lure_mat.emission_enabled = true
+		lure_mat.emission = Color(0.8, 0.65, 0.25)
+		lure_mat.emission_energy_multiplier = 2.5
+		_eye_lure.material_override = lure_mat
+		_eye_lure.position = Vector3(0, 0.45, 0)
+		stalk_upper_pivot.add_child(_eye_lure)
+
+		# Lure ambient glow (soft omni light from the eye itself)
+		_lure_light = OmniLight3D.new()
+		_lure_light.name = "LureGlow"
+		_lure_light.light_color = Color(0.85, 0.7, 0.35)
+		_lure_light.light_energy = 0.6
+		_lure_light.omni_range = 4.0
+		_lure_light.shadow_enabled = false
+		_eye_lure.add_child(_lure_light)
+
+		# Main spotlight — dim, warm, forward-facing
+		# In wrapper space: default SpotLight3D faces -Z = worm forward
 		_eye_light = SpotLight3D.new()
 		_eye_light.name = "Flashlight"
-		_eye_light.light_color = Color(0.35, 0.65, 0.18)
-		_eye_light_base_energy = 4.0 + evo * 0.5
-		_eye_light.light_energy = _eye_light_base_energy # Brighter with evolution
-		_eye_light.spot_range = (28.0 + evo * 3.0) * evo_scale  # Grows with evolution
-		_eye_light.spot_angle = 16.0 + evo * 1.0  # Slightly wider as it grows
-		_eye_light.spot_attenuation = 0.6  # Tighter bright center
+		_eye_light.light_color = Color(0.8, 0.7, 0.4)  # Warm bioluminescent amber
+		_eye_light_base_energy = 1.5 + evo_boost
+		_eye_light.light_energy = _eye_light_base_energy
+		_eye_light.spot_range = 13.0 + evo * 1.0  # 12-15m range
+		_eye_light.spot_angle = 28.0  # Focused spotlight cone
+		_eye_light.spot_attenuation = 1.2  # Smooth falloff
 		_eye_light.shadow_enabled = true
-		_eye_light.position = Vector3(0, 0.25, 0.6)
-		_eye_light.rotation.x = deg_to_rad(-12.0)  # Angled down to hit the floor ahead
-		_head_wrapper.add_child(_eye_light)
-
-		# Ground spotlight: aimed steeply downward to create a visible pool on the floor
-		_ground_spot = SpotLight3D.new()
-		var ground_spot: SpotLight3D = _ground_spot
-		ground_spot.name = "GroundSpot"
-		ground_spot.light_color = Color(0.3, 0.55, 0.15)
-		ground_spot.light_energy = 2.0 + evo * 0.3
-		ground_spot.spot_range = 15.0 + evo * 2.0
-		ground_spot.spot_angle = 30.0  # Wide pool on floor
-		ground_spot.spot_attenuation = 1.2
-		ground_spot.shadow_enabled = false
-		ground_spot.position = Vector3(0, 0.25, 0.6)
-		ground_spot.rotation.x = deg_to_rad(-35.0)  # Steep downward to splash on ground
-		_head_wrapper.add_child(ground_spot)
-
-		# Secondary wide fill light (subtle ambient halo around beam)
-		_fill_light = SpotLight3D.new()
-		var fill_light: SpotLight3D = _fill_light
-		fill_light.name = "FlashlightFill"
-		fill_light.light_color = Color(0.2, 0.4, 0.1)
-		fill_light.light_energy = 0.6
-		fill_light.spot_range = 14.0
-		fill_light.spot_angle = 50.0  # Wide ambient halo
-		fill_light.spot_attenuation = 2.0
-		fill_light.shadow_enabled = false
-		fill_light.position = Vector3(0, 0.25, 0.6)
-		fill_light.rotation.x = deg_to_rad(-8.0)
-		_head_wrapper.add_child(fill_light)
-
-		# Visible beam cone: volumetric-looking cone mesh with additive blend
-		var beam_length: float = 20.0 + evo * 2.5
-		var beam_spread: float = 2.2 + evo * 0.3
-		var beam_mesh: CylinderMesh = CylinderMesh.new()
-		beam_mesh.top_radius = 0.05  # Pinpoint at eye source
-		beam_mesh.bottom_radius = beam_spread
-		beam_mesh.height = beam_length
-		beam_mesh.radial_segments = 16
-		_light_cone = MeshInstance3D.new()
-		var beam_mi: MeshInstance3D = _light_cone
-		beam_mi.name = "LightCone"
-		beam_mi.mesh = beam_mesh
-		beam_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		var beam_mat: StandardMaterial3D = StandardMaterial3D.new()
-		beam_mat.albedo_color = Color(0.3, 0.55, 0.12, 0.025)
-		beam_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		beam_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		beam_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-		beam_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-		beam_mat.no_depth_test = true
-		beam_mi.material_override = beam_mat
-		beam_mi.position = Vector3(0, 0.25, beam_length * 0.5 + 0.6)
-		beam_mi.rotation.x = deg_to_rad(90.0)  # Align cylinder along +Z
-		_head_wrapper.add_child(beam_mi)
-
-		# Inner bright core beam (thinner, brighter for that flashlight hotspot)
-		var core_mesh: CylinderMesh = CylinderMesh.new()
-		core_mesh.top_radius = 0.02
-		core_mesh.bottom_radius = beam_spread * 0.3  # Narrow hotspot
-		core_mesh.height = beam_length * 0.85
-		core_mesh.radial_segments = 10
-		_light_cone_core = MeshInstance3D.new()
-		var core_mi: MeshInstance3D = _light_cone_core
-		core_mi.name = "LightConeCore"
-		core_mi.mesh = core_mesh
-		core_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		var core_mat: StandardMaterial3D = StandardMaterial3D.new()
-		core_mat.albedo_color = Color(0.4, 0.7, 0.15, 0.04)  # Brighter core
-		core_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		core_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		core_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-		core_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-		core_mat.no_depth_test = true
-		core_mi.material_override = core_mat
-		core_mi.position = Vector3(0, 0.25, beam_length * 0.425 + 0.6)
-		core_mi.rotation.x = deg_to_rad(90.0)
-		_head_wrapper.add_child(core_mi)
-
-		# Flashlight dust motes: tiny particles floating in the beam
-		var dust: GPUParticles3D = GPUParticles3D.new()
-		dust.name = "BeamDust"
-		dust.amount = 30 + evo * 5
-		dust.lifetime = 3.0
-		dust.visibility_aabb = AABB(Vector3(-3, -2, -1), Vector3(6, 4, beam_length + 2))
-		dust.position = Vector3(0, 0.3, beam_length * 0.4)
-
-		var dust_proc: ParticleProcessMaterial = ParticleProcessMaterial.new()
-		dust_proc.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
-		dust_proc.emission_box_extents = Vector3(beam_spread * 0.5, 1.0, beam_length * 0.4)
-		dust_proc.direction = Vector3(0, 0.5, 0)
-		dust_proc.spread = 180.0
-		dust_proc.initial_velocity_min = 0.1
-		dust_proc.initial_velocity_max = 0.4
-		dust_proc.gravity = Vector3(0, -0.05, 0)
-		dust_proc.scale_min = 0.3
-		dust_proc.scale_max = 1.0
-		dust_proc.color = Color(0.4, 0.6, 0.2, 0.25)
-
-		# Fade in/out curve
-		var dust_alpha: CurveTexture = CurveTexture.new()
-		var dust_curve: Curve = Curve.new()
-		dust_curve.add_point(Vector2(0.0, 0.0))
-		dust_curve.add_point(Vector2(0.2, 1.0))
-		dust_curve.add_point(Vector2(0.8, 1.0))
-		dust_curve.add_point(Vector2(1.0, 0.0))
-		dust_alpha.curve = dust_curve
-		dust_proc.alpha_curve = dust_alpha
-		dust.process_material = dust_proc
-
-		# Tiny billboard quad
-		var dust_quad: QuadMesh = QuadMesh.new()
-		dust_quad.size = Vector2(0.04, 0.04)
-		dust.draw_pass_1 = dust_quad
-
-		var dust_mat: StandardMaterial3D = StandardMaterial3D.new()
-		dust_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		dust_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-		dust_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-		dust_mat.albedo_color = Color(0.5, 0.7, 0.25, 0.3)
-		dust_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		dust.material_override = dust_mat
-		dust.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		_head_wrapper.add_child(dust)
+		_eye_light.rotation.x = deg_to_rad(-15.0)  # Tilt down slightly to hit ground
+		_eye_lure.add_child(_eye_light)
 	else:
 		# Fallback: procedural head if GLB not found
 		_build_head_procedural()
@@ -475,17 +422,64 @@ func _build_face() -> void:
 	_face_billboard.transparent = true
 	add_child(_face_billboard)
 
-	# Eye flashlight: dim neon glow pointing forward, stomach-colored
+	# Procedural eye stalk + dim spotlight (fallback version)
+	_eye_stalk = Node3D.new()
+	_eye_stalk.name = "EyeStalk"
+	_eye_stalk.position = Vector3(0, 1.0, 0)
+	add_child(_eye_stalk)
+
+	var p_stalk: MeshInstance3D = MeshInstance3D.new()
+	var p_cyl: CylinderMesh = CylinderMesh.new()
+	p_cyl.top_radius = 0.03
+	p_cyl.bottom_radius = 0.06
+	p_cyl.height = 0.6
+	p_cyl.radial_segments = 6
+	p_stalk.mesh = p_cyl
+	var p_mat: StandardMaterial3D = StandardMaterial3D.new()
+	p_mat.albedo_color = _body_color.darkened(0.1)
+	p_mat.roughness = 0.7
+	p_mat.emission_enabled = true
+	p_mat.emission = GLOW_COLOR * 0.3
+	p_mat.emission_energy_multiplier = 0.4
+	p_stalk.material_override = p_mat
+	p_stalk.position = Vector3(0, 0.3, 0)
+	_eye_stalk.add_child(p_stalk)
+
+	_eye_lure = MeshInstance3D.new()
+	var p_lure: SphereMesh = SphereMesh.new()
+	p_lure.radius = 0.08
+	p_lure.height = 0.16
+	p_lure.radial_segments = 10
+	p_lure.rings = 5
+	_eye_lure.mesh = p_lure
+	var p_lure_mat: StandardMaterial3D = StandardMaterial3D.new()
+	p_lure_mat.albedo_color = Color(0.85, 0.75, 0.4)
+	p_lure_mat.roughness = 0.2
+	p_lure_mat.emission_enabled = true
+	p_lure_mat.emission = Color(0.8, 0.65, 0.25)
+	p_lure_mat.emission_energy_multiplier = 2.5
+	_eye_lure.material_override = p_lure_mat
+	_eye_lure.position = Vector3(0, 0.65, 0)
+	_eye_stalk.add_child(_eye_lure)
+
+	_lure_light = OmniLight3D.new()
+	_lure_light.light_color = Color(0.85, 0.7, 0.35)
+	_lure_light.light_energy = 0.5
+	_lure_light.omni_range = 3.0
+	_lure_light.shadow_enabled = false
+	_eye_lure.add_child(_lure_light)
+
 	_eye_light = SpotLight3D.new()
-	_eye_light.light_color = Color(0.35, 0.55, 0.15)  # Stomach green-yellow neon
-	_eye_light.light_energy = 0.6
-	_eye_light.spot_range = 8.0  # Short range initially
-	_eye_light.spot_angle = 55.0  # Wide angle cone
-	_eye_light.spot_attenuation = 1.5
+	_eye_light.light_color = Color(0.8, 0.7, 0.4)
+	_eye_light_base_energy = 1.2
+	_eye_light.light_energy = _eye_light_base_energy
+	_eye_light.spot_range = 10.0
+	_eye_light.spot_angle = 30.0
+	_eye_light.spot_attenuation = 1.2
 	_eye_light.shadow_enabled = false
-	_eye_light.position = Vector3(0, 0.85, 0.7)  # From the eye area
-	_eye_light.rotation.x = deg_to_rad(-15.0)  # Angled slightly downward to illuminate floor ahead
-	add_child(_eye_light)
+	_eye_light.position = Vector3(0, 0, 0.1)
+	_eye_light.rotation.x = deg_to_rad(-20.0)
+	_eye_lure.add_child(_eye_light)
 
 func _build_segments() -> void:
 	var vein_color: Color = Color(0.35, 0.08, 0.45)  # Purple veins
@@ -744,32 +738,34 @@ func _physics_process(delta: float) -> void:
 	elif _head_mesh:
 		_head_mesh.position.y = 0.6 + bob
 
-	# --- Eye flashlight pulse (organic flicker) ---
+	# --- Eye stalk pulse (organic bioluminescent flicker) ---
 	if _eye_light:
-		var pulse: float = sin(_time * 2.5) * 0.4 + sin(_time * 7.3) * 0.15
+		var pulse: float = sin(_time * 2.0) * 0.25 + sin(_time * 5.7) * 0.1
 		var beam_energy: float = _eye_light_base_energy + pulse
 		# Dim during creep for stealth
 		if _is_creeping:
-			beam_energy *= 0.15  # Nearly off when sneaking
+			beam_energy *= 0.1  # Nearly off when sneaking
 		_eye_light.light_energy = beam_energy
-		# Match secondary lights (cached refs, no per-frame lookups)
-		if _fill_light:
-			_fill_light.light_energy = beam_energy * 0.15
-		if _ground_spot:
-			_ground_spot.light_energy = beam_energy * 0.5
-		# Animate beam cone visibility (outer cone + inner core)
-		if _light_cone and _light_cone.material_override is StandardMaterial3D:
-			var cone_mat: StandardMaterial3D = _light_cone.material_override
-			var cone_alpha: float = 0.025 + (pulse * 0.005)
+		# Lure glow pulses with the light
+		if _lure_light:
+			_lure_light.light_energy = 0.4 + pulse * 0.3
 			if _is_creeping:
-				cone_alpha *= 0.15
-			cone_mat.albedo_color.a = cone_alpha
-		if _light_cone_core and _light_cone_core.material_override is StandardMaterial3D:
-			var core_mat: StandardMaterial3D = _light_cone_core.material_override
-			var core_alpha: float = 0.04 + (pulse * 0.008)
+				_lure_light.light_energy *= 0.15
+		# Lure emission pulses
+		if _eye_lure and _eye_lure.material_override is StandardMaterial3D:
+			var lure_mat: StandardMaterial3D = _eye_lure.material_override
+			var lure_glow: float = 2.0 + pulse * 1.5
 			if _is_creeping:
-				core_alpha *= 0.15
-			core_mat.albedo_color.a = core_alpha
+				lure_glow *= 0.15
+			lure_mat.emission_energy_multiplier = lure_glow
+
+	# --- Eye stalk sway (organic wobble) ---
+	if _eye_stalk:
+		_eye_stalk.rotation.x = sin(_time * 1.3) * 0.08
+		_eye_stalk.rotation.z = sin(_time * 0.9 + 1.0) * 0.06
+		# More sway when moving fast
+		var speed_sway: float = clampf(absf(_current_speed) / BASE_SPEED, 0.0, 1.0)
+		_eye_stalk.rotation.x += sin(_time * 4.0) * 0.04 * speed_sway
 
 func _update_segments(delta: float) -> void:
 	var prev_pos: Vector3

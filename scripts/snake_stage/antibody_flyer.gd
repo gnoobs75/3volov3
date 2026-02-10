@@ -16,13 +16,14 @@ var health: float = 30.0
 const HOVER_HEIGHT: float = 10.0
 const HOVER_SPEED: float = 2.0
 const HOVER_CIRCLE_RADIUS: float = 6.0
-const DIVE_SPEED: float = 20.0
+const DIVE_SPEED: float = 14.0  # Slow enough for player to react and bite
 const RETREAT_SPEED: float = 8.0
-const DIVE_RANGE: float = 25.0
-const DIVE_COOLDOWN: float = 3.0
-const STAB_DURATION: float = 0.5  # Stuck longer = more vulnerable to bite
+const DIVE_RANGE: float = 15.0  # Must be close to trigger a dive
+const AGGRO_RANGE: float = 40.0  # Beyond this, flyer wanders instead of circling player
+const DIVE_COOLDOWN: float = 4.0  # Longer between attacks
+const STAB_DURATION: float = 1.0  # Stuck longer = vulnerable window for player bite
 const STAB_DAMAGE: float = 8.0
-const STAB_RADIUS: float = 2.0
+const STAB_RADIUS: float = 2.5
 const GRAVITY: float = 0.5
 const STEALTH_DETECT_THRESHOLD: float = 0.2  # Player noise below this = invisible
 
@@ -44,6 +45,7 @@ func _ready() -> void:
 	add_to_group("flyer")
 	_hover_angle = randf() * TAU
 	_state_timer = randf_range(1.0, 3.0)
+	_dive_cooldown = randf_range(3.0, 7.0)  # Don't attack immediately after spawn
 	_build_body()
 
 func _build_body() -> void:
@@ -221,8 +223,8 @@ func _physics_process(delta: float) -> void:
 	# State machine
 	match state:
 		State.HOVER:
-			if player:
-				# Circle above player
+			if player and player_dist < AGGRO_RANGE:
+				# Close enough: circle above player
 				_hover_angle += HOVER_SPEED * delta
 				var target_pos: Vector3 = player.global_position
 				target_pos.x += cos(_hover_angle) * HOVER_CIRCLE_RADIUS
@@ -232,9 +234,17 @@ func _physics_process(delta: float) -> void:
 				var dir: Vector3 = (target_pos - global_position)
 				velocity = dir * 3.0
 			else:
-				velocity = Vector3(sin(_time * 0.5), 0, cos(_time * 0.5)) * HOVER_SPEED
+				# Wander aimlessly — lazy patrol, not hunting
+				_hover_angle += HOVER_SPEED * 0.3 * delta
+				var wander_pos: Vector3 = global_position + Vector3(
+					sin(_hover_angle + _time * 0.3) * 4.0,
+					sin(_time * 0.7) * 0.5,
+					cos(_hover_angle + _time * 0.3) * 4.0
+				)
+				var wander_dir: Vector3 = (wander_pos - global_position)
+				velocity = wander_dir * 1.5
 
-			# Check dive trigger — only if player isn't sneaking
+			# Check dive trigger — only if close AND player isn't sneaking
 			if player and player_dist < DIVE_RANGE and _dive_cooldown <= 0 and not player_stealthed:
 				state = State.DIVE
 				_dive_target = player.global_position + Vector3(0, 0.5, 0)
@@ -256,8 +266,12 @@ func _physics_process(delta: float) -> void:
 
 		State.STAB:
 			# Stuck in place — vulnerable to player bite!
-			velocity = Vector3(0, -0.3, 0)
-			# Can't move horizontally while stuck
+			# Settle toward player Y level so bite can connect
+			if player:
+				var target_y: float = player.global_position.y + 0.5
+				velocity.y = (target_y - global_position.y) * 2.0
+			else:
+				velocity.y = -0.3
 			velocity.x = 0.0
 			velocity.z = 0.0
 			if _state_timer <= 0:

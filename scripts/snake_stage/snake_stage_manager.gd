@@ -732,8 +732,8 @@ func _spawn_flyer(initial_spread: bool = false) -> void:
 	var min_dist: float = 100.0 if initial_spread else 80.0
 
 	if initial_spread:
-		# For initial spawns, pick a random active hub and place within it
-		# This distributes flyers across the whole cave, not just near the player
+		# For initial spawns, push flyers to the FAR EDGES of the hub
+		# so they're distant from the player who spawns near center
 		var active_hubs: Array = []
 		for hub in _cave_gen.hubs:
 			if hub.is_active:
@@ -742,7 +742,8 @@ func _spawn_flyer(initial_spread: bool = false) -> void:
 			return
 		var hub = active_hubs[randi_range(0, active_hubs.size() - 1)]
 		var angle: float = randf() * TAU
-		var r: float = hub.radius * 0.7 * sqrt(randf())
+		# Place at 75-95% of hub radius — always near the walls, far from center
+		var r: float = hub.radius * randf_range(0.75, 0.95)
 		pos = Vector3(
 			hub.position.x + cos(angle) * r,
 			hub.position.y + 1.0,
