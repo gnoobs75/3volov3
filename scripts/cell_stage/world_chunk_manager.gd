@@ -28,29 +28,30 @@ var _player: Node2D = null
 var _world_seed: int = 0
 
 # Spawn tables per biome: {type: [min_count, max_count]}
+# Spawn tables — food density halved, creatures reduced but more varied
 const SPAWN_TABLES: Dictionary = {
 	Biome.NORMAL: {
-		"food": [5, 9], "enemy": [0, 2], "competitor": [0, 1], "snake": [0, 2],
+		"food": [2, 5], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 1],
 		"hazard": [0, 1], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 1], "dart_predator": [0, 0], "leviathan": [0, 0],
 	},
 	Biome.THERMAL_VENT: {
-		"food": [5, 8], "enemy": [1, 3], "competitor": [0, 1], "snake": [0, 2],
-		"hazard": [0, 2], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 2],
+		"food": [3, 4], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 1],
+		"hazard": [0, 1], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 1], "dart_predator": [0, 1], "leviathan": [0, 0],
 	},
 	Biome.DEEP_ABYSS: {
-		"food": [3, 5], "enemy": [1, 3], "competitor": [0, 1], "snake": [0, 2],
-		"hazard": [0, 2], "repeller": [0, 1], "blocker": [0, 2], "parasite": [0, 2],
+		"food": [1, 3], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 1],
+		"hazard": [0, 1], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 1], "dart_predator": [0, 1], "leviathan": [0, 1],
 	},
 	Biome.SHALLOWS: {
-		"food": [7, 12], "enemy": [0, 1], "competitor": [0, 2], "snake": [1, 3],
-		"hazard": [0, 0], "repeller": [0, 0], "blocker": [0, 1], "parasite": [0, 1],
+		"food": [4, 6], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 2],
+		"hazard": [0, 1], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 0], "dart_predator": [0, 0], "leviathan": [0, 0],
 	},
 	Biome.NUTRIENT_RICH: {
-		"food": [8, 13], "enemy": [0, 2], "competitor": [0, 2], "snake": [0, 2],
+		"food": [4, 7], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 1],
 		"hazard": [0, 1], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 1], "dart_predator": [0, 1], "leviathan": [0, 0],
 	},
@@ -212,9 +213,9 @@ func _spawn_chunk_population(coord: Vector2i) -> void:
 
 		var range_arr: Array = table[type_key]
 		var base_count: int = rng.randi_range(range_arr[0], range_arr[1])
-		# Boost food during safe zone so new players have plenty to collect
+		# Boost food during safe zone so new players have enough to collect
 		if in_safe_zone and type_key == "food":
-			base_count = maxi(base_count, 6)
+			base_count = maxi(base_count, 4)
 		# If we have memory of this chunk, use remembered count instead
 		var count: int = base_count
 		if remaining_override.has(type_key):
@@ -259,7 +260,7 @@ func _spawn_organism(type_key: String, pos: Vector2, rng: RandomNumberGenerator)
 			org = SNAKE_SCENE.instantiate()
 		"hazard":
 			org = HAZARD_SCENE.instantiate()
-			org.setup(rng.randi() % 3)
+			org.setup(rng.randi() % 4)
 		"repeller":
 			org = REPELLER_SCENE.instantiate()
 		"blocker":

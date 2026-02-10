@@ -12,7 +12,7 @@ var _prompts: Array = [
 	{"keys": "WASD", "label": "Move / Thrust"},
 	{"keys": "SHIFT", "label": "Sprint (costs energy)"},
 	{"keys": "LMB", "label": "Tractor Beam (collect)"},
-	{"keys": "RMB", "label": "Jet Stream (push away)"},
+	{"keys": "RMB", "label": "Jet Stream (push enemies)"},
 	{"keys": "E", "label": "Fire Toxin (attack)"},
 	{"keys": "Q", "label": "Reproduce (costs energy)"},
 	{"keys": "F", "label": "Metabolize (restore energy)"},

@@ -1,16 +1,17 @@
 extends Control
 ## Organic membrane-style arc bars for health (left) and energy (right).
 ## Drawn via _draw(), centered on screen where the character roughly is.
-## Features layered glow, wavy edges, flowing cell dots, and soft tips.
+## Features layered glow, wavy edges, flowing cell dots, soft tips,
+## and a delta-flash effect showing recent gains/losses.
 
 var health_ratio: float = 1.0
 var energy_ratio: float = 1.0
 var _time: float = 0.0
 
-# Arc parameters
-const ARC_RADIUS: float = 140.0
-const ARC_BG_ALPHA: float = 0.12
-const ARC_FILL_ALPHA: float = 0.45
+# Arc parameters — pushed further from center for breathing room
+const ARC_RADIUS: float = 170.0
+const ARC_BG_ALPHA: float = 0.08
+const ARC_FILL_ALPHA: float = 0.30
 
 # Health arc: left side, centered on 180° (120° to 240°)
 const HEALTH_START_ANGLE: float = 120.0
@@ -28,6 +29,15 @@ const DOT_RADIUS: float = 2.5
 const DOT_SPEED: float = 0.15
 const HUE_SHIFT_AMOUNT: float = 0.04
 
+# Delta flash system — shows recent change as a fading ghost arc
+var _prev_health: float = 1.0
+var _prev_energy: float = 1.0
+var _health_flash_ratio: float = 0.0  # The old value that's fading toward current
+var _energy_flash_ratio: float = 0.0
+var _health_flash_alpha: float = 0.0  # Flash visibility
+var _energy_flash_alpha: float = 0.0
+const FLASH_FADE_SPEED: float = 2.0
+
 # Reusable draw buffers (avoid per-frame allocations)
 var _buf_points: PackedVector2Array = PackedVector2Array()
 var _buf_outer: PackedVector2Array = PackedVector2Array()
@@ -38,6 +48,26 @@ var _buf_poly_colors: PackedColorArray = PackedColorArray()
 
 func _process(delta: float) -> void:
 	_time += delta
+
+	# Detect health changes for flash effect
+	if absf(health_ratio - _prev_health) > 0.01:
+		_health_flash_ratio = _prev_health
+		_health_flash_alpha = 0.6
+		_prev_health = health_ratio
+
+	if absf(energy_ratio - _prev_energy) > 0.01:
+		_energy_flash_ratio = _prev_energy
+		_energy_flash_alpha = 0.6
+		_prev_energy = energy_ratio
+
+	# Fade flash toward current value
+	if _health_flash_alpha > 0:
+		_health_flash_alpha = maxf(_health_flash_alpha - FLASH_FADE_SPEED * delta, 0.0)
+		_health_flash_ratio = lerpf(_health_flash_ratio, health_ratio, delta * 4.0)
+	if _energy_flash_alpha > 0:
+		_energy_flash_alpha = maxf(_energy_flash_alpha - FLASH_FADE_SPEED * delta, 0.0)
+		_energy_flash_ratio = lerpf(_energy_flash_ratio, energy_ratio, delta * 4.0)
+
 	queue_redraw()
 
 func _draw() -> void:
@@ -49,7 +79,8 @@ func _draw() -> void:
 		deg_to_rad(HEALTH_START_ANGLE), deg_to_rad(HEALTH_END_ANGLE),
 		health_ratio,
 		Color(0.8, 0.1, 0.05), Color(0.4, 0.05, 0.02),
-		health_ratio < 0.25
+		health_ratio < 0.25,
+		_health_flash_ratio, _health_flash_alpha
 	)
 
 	# Energy arc (right side, green)
@@ -58,7 +89,8 @@ func _draw() -> void:
 		deg_to_rad(ENERGY_START_ANGLE), deg_to_rad(ENERGY_END_ANGLE),
 		energy_ratio,
 		Color(0.1, 0.7, 0.4), Color(0.05, 0.35, 0.15),
-		energy_ratio < 0.25
+		energy_ratio < 0.25,
+		_energy_flash_ratio, _energy_flash_alpha
 	)
 
 func _draw_organic_arc(
@@ -66,7 +98,8 @@ func _draw_organic_arc(
 	start_angle: float, end_angle: float,
 	fill_ratio: float,
 	color_bright: Color, color_dark: Color,
-	pulsing: bool
+	pulsing: bool,
+	flash_ratio: float, flash_alpha: float
 ) -> void:
 	var segments: int = 48
 
@@ -75,13 +108,29 @@ func _draw_organic_arc(
 	bg_color.a = ARC_BG_ALPHA
 	# Outer glow layer (wide, very faint)
 	_draw_wavy_arc(center, radius, start_angle, end_angle, segments,
-		_with_alpha(bg_color, 0.08), 20.0, 0.0)
+		_with_alpha(bg_color, 0.05), 20.0, 0.0)
 	# Mid membrane layer
 	_draw_wavy_arc(center, radius, start_angle, end_angle, segments,
-		_with_alpha(bg_color, 0.15), 14.0, 0.0)
+		_with_alpha(bg_color, 0.1), 14.0, 0.0)
 	# Background core
 	_draw_wavy_arc(center, radius, start_angle, end_angle, segments,
 		bg_color, 6.0, 0.0)
+
+	# --- Delta flash arc (ghost of previous value fading toward current) ---
+	if flash_alpha > 0.02 and absf(flash_ratio - fill_ratio) > 0.005:
+		var flash_min: float = minf(fill_ratio, flash_ratio)
+		var flash_max: float = maxf(fill_ratio, flash_ratio)
+		var flash_start: float = lerpf(start_angle, end_angle, flash_min)
+		var flash_end: float = lerpf(start_angle, end_angle, flash_max)
+		var is_gain: bool = fill_ratio > flash_ratio
+		var flash_col: Color
+		if is_gain:
+			flash_col = color_bright.lightened(0.3)
+		else:
+			flash_col = color_bright.darkened(0.2)
+		flash_col.a = flash_alpha * 0.5
+		_draw_wavy_arc(center, radius, flash_start, flash_end, segments,
+			flash_col, 10.0, 0.0)
 
 	# --- Foreground arc (filled portion) ---
 	if fill_ratio > 0.01:
@@ -97,15 +146,15 @@ func _draw_organic_arc(
 
 		# Outer glow layer
 		_draw_wavy_arc(center, radius, start_angle, fill_end, segments,
-			_with_alpha(fg_color, fg_color.a * 0.18), 20.0, 0.0)
+			_with_alpha(fg_color, fg_color.a * 0.15), 20.0, 0.0)
 		# Mid membrane layer
 		_draw_wavy_arc(center, radius, start_angle, fill_end, segments,
-			_with_alpha(fg_color, fg_color.a * 0.35), 14.0, 0.0)
+			_with_alpha(fg_color, fg_color.a * 0.3), 14.0, 0.0)
 		# Main fill arc (polygon with variable width for vein-like taper)
 		_draw_vein_arc(center, radius, start_angle, fill_end, segments, fg_color)
 		# Inner highlight (thin bright core)
 		var highlight: Color = color_bright.lightened(0.3)
-		highlight.a = 0.3
+		highlight.a = 0.2
 		if pulsing:
 			highlight.a *= sin(_time * 4.0) * 0.3 + 0.7
 		_draw_wavy_arc(center, radius, start_angle, fill_end, segments,
@@ -201,7 +250,7 @@ func _draw_flow_dots(
 		var dot_color: Color = bright_color.lightened(0.2)
 		# Fade dots near the ends for smooth appearance
 		var edge_fade: float = smoothstep(0.0, 0.1, t) * smoothstep(1.0, 0.9, t)
-		dot_color.a = 0.35 * edge_fade
+		dot_color.a = 0.25 * edge_fade
 
 		# Slight size variation with time
 		var dot_r: float = DOT_RADIUS * (0.7 + 0.3 * sin(_time * 3.0 + float(i) * 1.7))
@@ -215,15 +264,15 @@ func _draw_soft_tip(
 	tip_angle: float, bright_color: Color, pulsing: bool
 ) -> void:
 	var tip_pos: Vector2 = center + Vector2(cos(tip_angle), sin(tip_angle)) * radius
-	var base_alpha: float = 0.5
+	var base_alpha: float = 0.35
 	if pulsing:
 		base_alpha *= sin(_time * 4.0) * 0.3 + 0.7
 
 	var tip_color: Color = bright_color.lightened(0.3)
 	# 3 concentric circles with decreasing alpha for soft glow
-	draw_circle(tip_pos, 6.0, _with_alpha(tip_color, base_alpha * 0.12))
-	draw_circle(tip_pos, 4.0, _with_alpha(tip_color, base_alpha * 0.25))
-	draw_circle(tip_pos, 2.0, _with_alpha(tip_color, base_alpha * 0.5))
+	draw_circle(tip_pos, 6.0, _with_alpha(tip_color, base_alpha * 0.1))
+	draw_circle(tip_pos, 4.0, _with_alpha(tip_color, base_alpha * 0.2))
+	draw_circle(tip_pos, 2.0, _with_alpha(tip_color, base_alpha * 0.4))
 
 # --- Utility functions ---
 

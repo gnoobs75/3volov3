@@ -2,7 +2,7 @@ extends Area2D
 ## Passive hazard organism: drifts through the environment dealing contact damage.
 ## Types: jellyfish (trailing tentacles), spike ball (radiating spines), toxic blob (pulsing aura).
 
-enum HazardType { JELLYFISH, SPIKE_BALL, TOXIC_BLOB }
+enum HazardType { JELLYFISH, SPIKE_BALL, TOXIC_BLOB, POISON_CLOUD }
 
 var hazard_type: HazardType = HazardType.JELLYFISH
 var drift_velocity: Vector2 = Vector2.ZERO
@@ -63,6 +63,19 @@ func _init_hazard() -> void:
 			_base_color = Color(0.3, randf_range(0.8, 1.0), 0.1, 0.6)
 			damage_per_second = 10.0
 			drift_velocity = Vector2(randf_range(-10, 10), randf_range(-10, 10))
+		HazardType.POISON_CLOUD:
+			_radius = randf_range(25.0, 40.0)
+			_base_color = Color(0.5, randf_range(0.15, 0.3), 0.6, 0.35)
+			damage_per_second = 8.0
+			drift_velocity = Vector2(randf_range(-8, 8), randf_range(-8, 8))
+			health = 200.0  # Very tanky — meant to be avoided, not killed
+			_has_face = false
+			# Enlarge collision to match visual size
+			var col := get_node_or_null("CollisionShape2D")
+			if col and col.shape is CircleShape2D:
+				var big_shape := CircleShape2D.new()
+				big_shape.radius = _radius * 0.8
+				col.shape = big_shape
 
 var _touching_bodies: Array[Node2D] = []
 
@@ -121,7 +134,8 @@ func _draw() -> void:
 		HazardType.JELLYFISH: _draw_jellyfish()
 		HazardType.SPIKE_BALL: _draw_spike_ball()
 		HazardType.TOXIC_BLOB: _draw_toxic_blob()
-	if _has_face:
+		HazardType.POISON_CLOUD: _draw_poison_cloud()
+	if _has_face and hazard_type != HazardType.POISON_CLOUD:
 		_draw_tiny_face()
 
 func _draw_jellyfish() -> void:
@@ -195,6 +209,39 @@ func _draw_toxic_blob() -> void:
 		var bd: float = r * 0.5 * (0.5 + 0.5 * sin(ba * 0.7))
 		var bp := Vector2(cos(ba) * bd, sin(ba * 0.8) * bd)
 		draw_circle(bp, 1.5, Color(_base_color.r, _base_color.g, _base_color.b, 0.4))
+
+func _draw_poison_cloud() -> void:
+	var r: float = _radius + sin(_time * 1.2 + _pulse_phase) * 3.0
+
+	# Multiple overlapping translucent blobs for cloud effect
+	for layer in range(5):
+		var lr: float = r * (0.6 + layer * 0.15)
+		var offset := Vector2(
+			sin(_time * 0.8 + layer * 1.3) * r * 0.15,
+			cos(_time * 0.6 + layer * 1.7) * r * 0.12
+		)
+		var pts: PackedVector2Array = PackedVector2Array()
+		var n: int = 16
+		for i in range(n):
+			var a: float = TAU * i / n
+			var wobble: float = sin(_time * 1.5 + i * 0.9 + layer * 2.0) * r * 0.12
+			pts.append(offset + Vector2(cos(a) * (lr + wobble), sin(a) * (lr + wobble)))
+		var cloud_alpha: float = 0.12 - layer * 0.015
+		draw_colored_polygon(pts, Color(_base_color.r, _base_color.g, _base_color.b, cloud_alpha))
+
+	# Inner toxic swirl particles
+	for p in range(8):
+		var pa: float = _time * 0.7 + p * 0.8
+		var pd: float = r * 0.5 * (0.3 + 0.4 * sin(pa * 0.5 + p))
+		var pp := Vector2(cos(pa) * pd, sin(pa * 0.7) * pd)
+		var particle_alpha: float = 0.15 + 0.1 * sin(_time * 2.0 + p * 1.2)
+		draw_circle(pp, randf_range(2.0, 4.0), Color(_base_color.r * 1.3, _base_color.g, _base_color.b * 1.2, particle_alpha))
+
+	# Warning skull-like pattern in center (two dark dots + line)
+	var skull_alpha: float = 0.12 + 0.06 * sin(_time * 2.0)
+	draw_circle(Vector2(-4, -2), 2.5, Color(0.1, 0.0, 0.1, skull_alpha))
+	draw_circle(Vector2(4, -2), 2.5, Color(0.1, 0.0, 0.1, skull_alpha))
+	draw_line(Vector2(-3, 4), Vector2(3, 4), Color(0.1, 0.0, 0.1, skull_alpha * 0.7), 1.5)
 
 func _draw_tiny_face() -> void:
 	# Minimalist derpy face on hazards with googly eyes

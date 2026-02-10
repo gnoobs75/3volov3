@@ -1012,20 +1012,32 @@ func _update_targeting() -> void:
 			_target_type = "prey"
 
 func _update_beam(delta: float) -> void:
-	var wants_beam: bool = Input.is_action_pressed("beam_collect")
+	var wants_beam: bool = Input.is_action_just_pressed("beam_collect")
 
-	if wants_beam and _target_candidate and energy > 1.0:
-		if not _beam_active or _beam_target != _target_candidate:
-			# Start beaming new target
-			if _beam_target and is_instance_valid(_beam_target) and _beam_target.has_method("beam_release"):
+	# Start new beam on click (only if not already pulling something)
+	if wants_beam and _target_candidate and energy > 1.0 and not _beam_active:
+		_beam_target = _target_candidate
+		_beam_active = true
+		_set_mood(Mood.EXCITED, 0.3)
+		_mouth_open = 0.5
+
+	# Auto-pull active beam target (no need to hold button)
+	if _beam_active:
+		if not is_instance_valid(_beam_target):
+			_beam_active = false
+			_beam_target = null
+			return
+
+		if energy <= 0.0:
+			# Out of energy — release beam
+			if _beam_target.has_method("beam_release"):
 				_beam_target.beam_release()
-			_beam_target = _target_candidate
-			_beam_active = true
-			_set_mood(Mood.EXCITED, 0.3)
-			_mouth_open = 0.5
+			_beam_active = false
+			_beam_target = null
+			return
 
 		# Pull target toward us
-		if is_instance_valid(_beam_target) and _beam_target.has_method("beam_pull_toward"):
+		if _beam_target.has_method("beam_pull_toward"):
 			_beam_target.beam_pull_toward(global_position, delta)
 			energy -= BEAM_ENERGY_COST * delta
 			energy = maxf(energy, 0.0)
@@ -1035,16 +1047,10 @@ func _update_beam(delta: float) -> void:
 			var beam_color: Color = _beam_target.get_beam_color() if _beam_target.has_method("get_beam_color") else Color(0.5, 0.8, 1.0)
 			_spawn_beam_particles(target_pos, beam_color)
 
-			# Check if close enough to consume
+			# Check if close enough to consume (auto-consume regardless of facing)
 			var dist: float = global_position.distance_to(target_pos)
 			if dist < BEAM_COLLECT_DIST:
 				_consume_beam_target()
-	else:
-		if _beam_active:
-			if is_instance_valid(_beam_target) and _beam_target.has_method("beam_release"):
-				_beam_target.beam_release()
-			_beam_active = false
-			_beam_target = null
 
 func _consume_beam_target() -> void:
 	if not is_instance_valid(_beam_target):

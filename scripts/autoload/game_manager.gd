@@ -71,21 +71,25 @@ func go_to_intro() -> void:
 
 func go_to_cell_stage() -> void:
 	current_stage = Stage.CELL
+	Engine.time_scale = 0.85  # 15% slower for accessibility
 	get_tree().change_scene_to_file("res://scenes/cell_stage.tscn")
 	stage_changed.emit("cell")
 
 func go_to_snake_stage() -> void:
 	current_stage = Stage.SNAKE
+	Engine.time_scale = 1.0
 	get_tree().change_scene_to_file("res://scenes/snake_stage.tscn")
 	stage_changed.emit("snake")
 
 func go_to_ocean_stub() -> void:
 	current_stage = Stage.OCEAN_STUB
+	Engine.time_scale = 1.0
 	print("GameManager: Ocean stage not yet implemented - you've completed the Cell Stage!")
 	stage_changed.emit("ocean_stub")
 
 func go_to_menu() -> void:
 	current_stage = Stage.MENU
+	Engine.time_scale = 1.0
 	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 	stage_changed.emit("menu")
 

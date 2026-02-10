@@ -13,6 +13,7 @@ const DART_SCENE := preload("res://scenes/dart_predator.tscn")
 const SNAKE_SCENE := preload("res://scenes/snake_prey.tscn")
 const FOOD_SCENE := preload("res://scenes/food_particle.tscn")
 const COMPETITOR_SCENE := preload("res://scenes/competitor_cell.tscn")
+const REPELLER_SCENE := preload("res://scenes/repeller_organism.tscn")
 
 var _player: CharacterBody2D = null
 var _camera: Camera2D = null
@@ -85,11 +86,19 @@ var _phases: Array = [
 	{
 		"dur": 10.0, "offset": Vector2(-300, -300),
 		"title": "PARASITIC WORM",
-		"body": ["Latches on and feeds off the host.", "Five attached means total takeover.", "Use jet stream [RMB] to repel them."],
+		"body": ["Latches on and feeds off the host.", "Five attached means total takeover.", "Evade them — outrun or dodge to survive."],
 		"observer": "Disturbing symbiosis...",
 		"spawns": "parasite",
 	},
-	# Phase 5: Dart predator
+	# Phase 5: Repeller / Cleanser
+	{
+		"dur": 11.0, "offset": Vector2(-300, -150),
+		"title": "CLEANSING ANEMONE",
+		"body": ["This purple organism repels parasites.", "Swim through it to cleanse latched parasites.", "Symbiotic allies can also eat parasites off you."],
+		"observer": "A natural remedy...",
+		"spawns": "repeller_demo",
+	},
+	# Phase 6: Dart predator
 	{
 		"dur": 10.0, "offset": Vector2(-300, 0),
 		"title": "APEX HUNTER",
@@ -97,7 +106,7 @@ var _phases: Array = [
 		"observer": "Remarkable speed!",
 		"spawns": "dart_predator",
 	},
-	# Phase 6: Competitor
+	# Phase 7: Competitor
 	{
 		"dur": 11.0, "offset": Vector2(0, 300),
 		"title": "RIVAL ORGANISM",
@@ -105,7 +114,7 @@ var _phases: Array = [
 		"observer": "The struggle for survival...",
 		"spawns": "competitor",
 	},
-	# Phase 7: Reveal player
+	# Phase 8: Reveal player
 	{
 		"dur": 5.0, "offset": Vector2.ZERO,
 		"title": "",
@@ -185,13 +194,16 @@ func _trigger_hud_for_phase() -> void:
 		4:  # Parasite
 			_show_creature_blueprint("parasite")
 			_queue_observer_note("Damage")
-		5:  # Dart predator
+		5:  # Repeller / Cleanser
+			_queue_observer_note("Observation")
+			_queue_observer_note("Collection")
+		6:  # Dart predator
 			_show_creature_blueprint("dart_predator")
 			_queue_observer_note("Kill")
-		6:  # Competitor
+		7:  # Competitor
 			_show_creature_blueprint("competitor")
 			_queue_observer_note("Observation")
-		7:  # Reveal player
+		8:  # Reveal player
 			_queue_observer_note("Evolution")
 			_queue_observer_note("Evolution")
 
@@ -308,6 +320,23 @@ func _spawn_for_phase(spawn_type: String) -> void:
 				var angle: float = TAU * i / 3.0
 				var parasite := PARASITE_SCENE.instantiate()
 				parasite.global_position = center + Vector2(cos(angle) * 50, sin(angle) * 50)
+				add_child(parasite)
+				_spawned_entities.append(parasite)
+
+		"repeller_demo":
+			# Purple repeller in center with parasites nearby + a dummy victim
+			var repeller := REPELLER_SCENE.instantiate()
+			repeller.global_position = center
+			add_child(repeller)
+			_spawned_entities.append(repeller)
+			# Dummy cell with parasites approaching it
+			var dummy := DUMMY_SCENE.instantiate()
+			dummy.global_position = center + Vector2(50, 20)
+			add_child(dummy)
+			_spawned_entities.append(dummy)
+			for i in range(3):
+				var parasite := PARASITE_SCENE.instantiate()
+				parasite.global_position = center + Vector2(randf_range(-70, 70), randf_range(-50, 50))
 				add_child(parasite)
 				_spawned_entities.append(parasite)
 
