@@ -47,6 +47,60 @@ func _ready() -> void:
 	_build_body()
 
 func _build_body() -> void:
+	# Try to load Hyper3D-generated model first
+	var flyer_scene: PackedScene = load("res://models/antibody_flyer.glb") as PackedScene
+	if flyer_scene:
+		_build_body_from_glb(flyer_scene)
+	else:
+		_build_body_procedural()
+
+func _build_body_from_glb(scene: PackedScene) -> void:
+	var model: Node3D = scene.instantiate()
+	model.name = "FlyerModel"
+	model.rotation.x = -PI * 0.5  # Blender Z-up to Godot Y-up
+	model.position = Vector3(0, 0.6, 0)
+	add_child(model)
+
+	# Find the mesh for reference
+	for child in model.get_children():
+		if child is MeshInstance3D:
+			_body_mesh = child
+			# Apply emissive organic material overlay
+			var mat: StandardMaterial3D = StandardMaterial3D.new()
+			mat.albedo_color = Color(0.85, 0.8, 0.65)
+			mat.roughness = 0.4
+			mat.emission_enabled = true
+			mat.emission = Color(0.6, 0.5, 0.3) * 0.2
+			mat.emission_energy_multiplier = 0.5
+			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			child.material_override = mat
+			break
+
+	# Still add eye light on top of the model
+	_eye_mesh = MeshInstance3D.new()
+	var eye_sphere: SphereMesh = SphereMesh.new()
+	eye_sphere.radius = 0.12
+	eye_sphere.height = 0.24
+	eye_sphere.radial_segments = 10
+	eye_sphere.rings = 5
+	_eye_mesh.mesh = eye_sphere
+	var eye_mat: StandardMaterial3D = StandardMaterial3D.new()
+	eye_mat.albedo_color = Color(1.0, 0.15, 0.05)
+	eye_mat.emission_enabled = true
+	eye_mat.emission = Color(1.0, 0.1, 0.05)
+	eye_mat.emission_energy_multiplier = 4.0
+	_eye_mesh.material_override = eye_mat
+	_eye_mesh.position = Vector3(0, 1.2, 0.18)
+	add_child(_eye_mesh)
+
+	var eye_light: OmniLight3D = OmniLight3D.new()
+	eye_light.light_color = Color(1.0, 0.2, 0.1)
+	eye_light.light_energy = 0.6
+	eye_light.omni_range = 4.0
+	eye_light.shadow_enabled = false
+	_eye_mesh.add_child(eye_light)
+
+func _build_body_procedural() -> void:
 	# Central body: vertical cylinder (antibody stem)
 	_body_mesh = MeshInstance3D.new()
 	var cyl: CylinderMesh = CylinderMesh.new()

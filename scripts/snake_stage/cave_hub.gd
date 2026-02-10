@@ -35,12 +35,13 @@ func _build_hub() -> void:
 	_build_ceiling(biome_colors)
 	_build_walls(biome_colors)
 
-	# Environmental enhancements (decorations, lighting, fog, hazards, animation)
+	# Environmental enhancements (decorations, lighting, fog, hazards, animation, audio)
 	BiomeDecorator.decorate_hub(self, _hub_data, biome_colors)
 	BiolumLighting.add_lights(self, _hub_data, biome_colors)
 	BiomeFog.add_fog(self, _hub_data, biome_colors)
 	BiomeHazards.add_hazards(self, _hub_data, biome_colors)
 	BiomeParticles.add_particles(self, _hub_data, biome_colors)
+	CaveAudio.add_audio(self, _hub_data, biome_colors)
 
 	# Biome animator (pulsing lights, heartbeat, breathing, sparks)
 	var animator_script = load("res://scripts/snake_stage/biome_animator.gd")
@@ -66,6 +67,18 @@ func _add_tunnel_mouth_lights(colors: Dictionary) -> void:
 		light.shadow_enabled = false
 		light.position = local_pos + Vector3(0, 2.5, 0)
 		add_child(light)
+
+func _get_biome_pulse_speed() -> float:
+	## Returns vein pulse speed tuned to each biome's character.
+	match _hub_data.biome:
+		0: return 1.2   # STOMACH: moderate acid pulse
+		1: return 2.4   # HEART: fast heartbeat-synced
+		2: return 0.6   # INTESTINE: slow peristaltic
+		3: return 0.8   # LUNG: breathing rhythm
+		4: return 0.3   # BONE_MARROW: very slow
+		5: return 1.0   # LIVER: steady
+		6: return 3.0   # BRAIN: fast electrical
+	return 1.2
 
 func _get_biome_colors() -> Dictionary:
 	var CaveGen = load("res://scripts/snake_stage/cave_generator.gd")
@@ -295,13 +308,38 @@ func _build_floor(colors: Dictionary) -> void:
 	floor_mi.mesh = mesh
 	floor_mi.name = "Floor"
 
-	var mat: StandardMaterial3D = StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mat.roughness = 0.85
-	mat.emission_enabled = true
-	mat.emission = colors.emission * 0.15
-	mat.emission_energy_multiplier = 0.3
-	floor_mi.material_override = mat
+	# Floor material: use organic shader if available, with roots texture overlay
+	var floor_shader: Shader = load("res://shaders/cave_floor_organic.gdshader") as Shader
+	if floor_shader:
+		var floor_smat: ShaderMaterial = ShaderMaterial.new()
+		floor_smat.shader = floor_shader
+		floor_smat.set_shader_parameter("base_color", colors.floor)
+		floor_smat.set_shader_parameter("vein_color", colors.emission.darkened(0.4))
+		floor_smat.set_shader_parameter("emission_color", colors.emission)
+		floor_smat.set_shader_parameter("emission_strength", 0.15)
+		floor_smat.set_shader_parameter("vein_intensity", 0.25)  # Subtler on floor
+		floor_smat.set_shader_parameter("vein_scale", 6.0)
+		floor_smat.set_shader_parameter("pulse_speed", _get_biome_pulse_speed() * 0.5)
+		floor_smat.set_shader_parameter("subsurface_strength", 0.15)
+		floor_smat.set_shader_parameter("moisture", 0.4)
+		# Roots texture for organic floor detail
+		var floor_tex: Texture2D = load("res://textures/roots_diffuse.jpg") as Texture2D
+		var floor_norm: Texture2D = load("res://textures/roots_nor_gl.jpg") as Texture2D
+		if floor_tex:
+			floor_smat.set_shader_parameter("surface_texture", floor_tex)
+			floor_smat.set_shader_parameter("texture_blend", 0.2)
+			floor_smat.set_shader_parameter("texture_scale", 0.06)
+		if floor_norm:
+			floor_smat.set_shader_parameter("normal_texture", floor_norm)
+		floor_mi.material_override = floor_smat
+	else:
+		var mat: StandardMaterial3D = StandardMaterial3D.new()
+		mat.vertex_color_use_as_albedo = true
+		mat.roughness = 0.85
+		mat.emission_enabled = true
+		mat.emission = colors.emission * 0.15
+		mat.emission_energy_multiplier = 0.3
+		floor_mi.material_override = mat
 	add_child(floor_mi)
 
 	# Floor collision
@@ -582,14 +620,39 @@ func _build_walls(colors: Dictionary) -> void:
 	wall_mi.mesh = mesh
 	wall_mi.name = "Walls"
 
-	var mat: StandardMaterial3D = StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mat.roughness = 0.9
-	mat.cull_mode = BaseMaterial3D.CULL_FRONT
-	mat.emission_enabled = true
-	mat.emission = colors.emission * 0.1
-	mat.emission_energy_multiplier = 0.25
-	wall_mi.material_override = mat
+	# Use organic pulsing vein shader for walls if available
+	var wall_shader: Shader = load("res://shaders/cave_wall_organic.gdshader") as Shader
+	if wall_shader:
+		var shader_mat: ShaderMaterial = ShaderMaterial.new()
+		shader_mat.shader = wall_shader
+		shader_mat.set_shader_parameter("base_color", colors.wall)
+		shader_mat.set_shader_parameter("vein_color", colors.emission.darkened(0.3))
+		shader_mat.set_shader_parameter("emission_color", colors.emission)
+		shader_mat.set_shader_parameter("emission_strength", 0.25)
+		shader_mat.set_shader_parameter("vein_intensity", 0.4)
+		shader_mat.set_shader_parameter("pulse_speed", _get_biome_pulse_speed())
+		shader_mat.set_shader_parameter("subsurface_strength", 0.3)
+		shader_mat.set_shader_parameter("moisture", 0.3)
+		# Blend Polyhaven texture for surface detail
+		var wall_tex: Texture2D = load("res://textures/sandstone_cracks_diffuse.jpg") as Texture2D
+		var wall_norm: Texture2D = load("res://textures/sandstone_cracks_nor_gl.jpg") as Texture2D
+		if wall_tex:
+			shader_mat.set_shader_parameter("surface_texture", wall_tex)
+			shader_mat.set_shader_parameter("texture_blend", 0.25)
+			shader_mat.set_shader_parameter("texture_scale", 0.08)
+		if wall_norm:
+			shader_mat.set_shader_parameter("normal_texture", wall_norm)
+		wall_mi.material_override = shader_mat
+	else:
+		# Fallback: standard material
+		var mat: StandardMaterial3D = StandardMaterial3D.new()
+		mat.vertex_color_use_as_albedo = true
+		mat.roughness = 0.9
+		mat.cull_mode = BaseMaterial3D.CULL_FRONT
+		mat.emission_enabled = true
+		mat.emission = colors.emission * 0.1
+		mat.emission_energy_multiplier = 0.25
+		wall_mi.material_override = mat
 	add_child(wall_mi)
 
 	# Wall collision

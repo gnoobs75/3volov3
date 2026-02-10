@@ -7,6 +7,9 @@ uniform vec4 deep_color : source_color = vec4(0.02, 0.05, 0.12, 1.0);
 uniform vec4 vent_color : source_color = vec4(0.25, 0.08, 0.03, 1.0);
 uniform vec4 particle_color : source_color = vec4(0.3, 0.6, 1.0, 0.5);
 uniform vec2 player_uv = vec2(0.5, 0.5);
+uniform vec4 biome_tint : source_color = vec4(0.0, 0.0, 0.0, 0.0);
+uniform float biome_strength : hint_range(0.0, 1.0) = 0.0;
+uniform float biome_vent_intensity : hint_range(0.0, 2.0) = 1.0;
 
 float hash(vec2 p) {
 	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -93,6 +96,14 @@ void fragment() {
 	float caustics = fbm(uv_d * 7.0 + vec2(t * 0.05, -t * 0.03));
 	caustics = smoothstep(0.35, 0.7, caustics) * 0.12;
 	base.rgb += vec3(0.12, 0.28, 0.45) * caustics;
+
+	// Biome tinting: blend toward biome color for visual variety
+	if (biome_strength > 0.001) {
+		// Tint the deep color toward the biome color
+		base.rgb = mix(base.rgb, base.rgb * (vec3(1.0) + biome_tint.rgb * 2.0), biome_strength * 0.5);
+		// Add subtle biome-colored glow to the whole scene
+		base.rgb += biome_tint.rgb * biome_strength * 0.08;
+	}
 
 	// Vignette (extra soft edges to avoid visible boundaries)
 	float vignette_dist = length(uv - vec2(0.5));

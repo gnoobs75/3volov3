@@ -17,6 +17,7 @@ var _yawn_timer: float = 0.0
 var _is_yawning: bool = false
 var _eye_roll_angle: float = 0.0
 var _annoyance: float = 0.0  # Increases when player is nearby
+var _player: Node2D = null
 
 func _ready() -> void:
 	_radius = randf_range(16.0, 26.0)
@@ -38,14 +39,21 @@ func _ready() -> void:
 	add_to_group("blockers")
 	_blink_timer = randf_range(3.0, 8.0)
 	_yawn_timer = randf_range(8.0, 20.0)
+	call_deferred("_cache_player")
+
+func _cache_player() -> void:
+	var players := get_tree().get_nodes_in_group("player")
+	if not players.is_empty():
+		_player = players[0]
 
 func _process(delta: float) -> void:
 	_time += delta
 
-	# Check if player is nearby for annoyance
-	var players := get_tree().get_nodes_in_group("player")
-	if not players.is_empty():
-		var player_dist: float = global_position.distance_to(players[0].global_position)
+	# Check if player is nearby for annoyance (cached ref)
+	if not is_instance_valid(_player):
+		_player = null
+	if _player:
+		var player_dist: float = global_position.distance_to(_player.global_position)
 		if player_dist < 150.0:
 			_annoyance = minf(_annoyance + delta * 0.5, 1.0)
 		else:

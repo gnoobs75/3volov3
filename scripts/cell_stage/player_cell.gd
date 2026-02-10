@@ -80,6 +80,7 @@ var input_disabled: bool = false  # Disable during cinematic showcase
 
 # Parasite system
 var attached_parasites: Array = []  # Array of parasite node refs
+var _parasite_cleanup_timer: float = 0.0
 const MAX_PARASITES: int = 5  # This many = takeover
 
 # Procedural graphics
@@ -273,8 +274,15 @@ func _physics_process(delta: float) -> void:
 	if health <= 0:
 		died.emit()
 
-	# Clean up dead parasite refs
-	attached_parasites = attached_parasites.filter(func(p): return is_instance_valid(p))
+	# Clean up dead parasite refs (throttled to avoid per-frame allocation)
+	_parasite_cleanup_timer -= delta
+	if _parasite_cleanup_timer <= 0:
+		_parasite_cleanup_timer = 0.5
+		var i: int = attached_parasites.size() - 1
+		while i >= 0:
+			if not is_instance_valid(attached_parasites[i]):
+				attached_parasites.remove_at(i)
+			i -= 1
 	# Check parasite takeover
 	if attached_parasites.size() >= MAX_PARASITES:
 		died.emit()  # Takeover = death

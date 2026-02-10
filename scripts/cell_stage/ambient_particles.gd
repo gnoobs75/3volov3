@@ -1,42 +1,132 @@
 extends Node2D
-## Vibrant bioluminescent ambient particles — OPTIMIZED for performance.
-## Viewport culling and simplified drawing.
+## Bioluminescent ambient particles using GPUParticles2D for massive performance gain.
+## Multiple particle systems for different visual types, all GPU-driven.
+## Follows the player to create an infinite ocean feel.
 
-var _particles: Array[Dictionary] = []
-var _time: float = 0.0
 var _player: Node2D = null
-var _camera_pos: Vector2 = Vector2.ZERO
-var _camera_zoom: float = 1.0
-
-const NUM_PARTICLES: int = 50  # Further reduced for performance
-const SPAWN_RANGE: float = 500.0  # Smaller range, denser feel
-const VIEWPORT_MARGIN: float = 80.0
-const VIEWPORT_SIZE: Vector2 = Vector2(1920, 1080)
+var _time: float = 0.0
+var _systems: Array[GPUParticles2D] = []
 
 func _ready() -> void:
-	for i in range(NUM_PARTICLES):
-		_particles.append(_make_particle())
 	call_deferred("_find_player")
+	_build_particle_systems()
 
 func _find_player() -> void:
 	var players := get_tree().get_nodes_in_group("player")
 	if players.size() > 0:
 		_player = players[0]
 
-func _make_particle() -> Dictionary:
-	var type: int = randi() % 5  # Reduced variety
-	var size: float = randf_range(1.0, 3.0)
-	if type == 4:
-		size = randf_range(3.5, 6.0)  # Larger jellyfish plankton
-	return {
-		"pos": Vector2(randf_range(-SPAWN_RANGE, SPAWN_RANGE), randf_range(-SPAWN_RANGE, SPAWN_RANGE)),
-		"size": size,
-		"alpha": randf_range(0.08, 0.2),
-		"drift": Vector2(randf_range(-8.0, 8.0), randf_range(-15.0, -3.0)),
-		"type": type,
-		"phase": randf() * TAU,
-		"pulse_speed": randf_range(1.5, 3.0),
-	}
+func _build_particle_systems() -> void:
+	# System 1: Cyan micro-plankton (most common, tiny dots)
+	_add_system(
+		150, 4.0,
+		Color(0.3, 0.7, 1.0, 0.15),
+		Vector2(600, 600),  # emission area
+		Vector2(0.8, 0.8),  # particle size
+		Vector2(-6.0, -10.0),  # drift direction
+		5.0  # drift speed variation
+	)
+
+	# System 2: Green bioluminescent specks
+	_add_system(
+		100, 5.0,
+		Color(0.2, 1.0, 0.5, 0.12),
+		Vector2(500, 500),
+		Vector2(1.0, 1.0),
+		Vector2(4.0, -8.0),
+		6.0
+	)
+
+	# System 3: Pink/warm glow dots
+	_add_system(
+		60, 6.0,
+		Color(1.0, 0.5, 0.7, 0.1),
+		Vector2(550, 550),
+		Vector2(1.2, 1.2),
+		Vector2(-3.0, -5.0),
+		4.0
+	)
+
+	# System 4: Purple drifters
+	_add_system(
+		50, 5.5,
+		Color(0.6, 0.4, 1.0, 0.13),
+		Vector2(480, 480),
+		Vector2(0.9, 0.9),
+		Vector2(5.0, -7.0),
+		5.0
+	)
+
+	# System 5: Teal jellyfish plankton (larger, fewer, brighter)
+	_add_system(
+		20, 8.0,
+		Color(0.4, 0.9, 0.9, 0.2),
+		Vector2(600, 600),
+		Vector2(3.0, 3.0),
+		Vector2(-2.0, -4.0),
+		3.0
+	)
+
+func _add_system(
+	count: int, lifetime: float,
+	color: Color, emission_area: Vector2,
+	particle_size: Vector2, drift: Vector2, speed_variation: float
+) -> void:
+	var gpu: GPUParticles2D = GPUParticles2D.new()
+	gpu.amount = count
+	gpu.lifetime = lifetime
+	gpu.preprocess = lifetime  # Pre-fill so particles exist immediately
+
+	var proc: ParticleProcessMaterial = ParticleProcessMaterial.new()
+	proc.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	proc.emission_box_extents = Vector3(emission_area.x, emission_area.y, 0)
+
+	# Drift direction
+	proc.direction = Vector3(drift.x, drift.y, 0).normalized()
+	proc.spread = 30.0
+	proc.initial_velocity_min = maxf(drift.length() - speed_variation, 0.5)
+	proc.initial_velocity_max = drift.length() + speed_variation
+
+	# No gravity — floating particles
+	proc.gravity = Vector3(0, 0, 0)
+
+	# Scale
+	proc.scale_min = particle_size.x * 0.5
+	proc.scale_max = particle_size.x * 1.5
+
+	# Color with fade in/out
+	proc.color = color
+
+	# Alpha curve: fade in, hold, fade out
+	var alpha_curve: CurveTexture = CurveTexture.new()
+	var curve: Curve = Curve.new()
+	curve.add_point(Vector2(0.0, 0.0))
+	curve.add_point(Vector2(0.15, 1.0))
+	curve.add_point(Vector2(0.85, 1.0))
+	curve.add_point(Vector2(1.0, 0.0))
+	alpha_curve.curve = curve
+	proc.alpha_curve = alpha_curve
+
+	# Scale curve: gentle pulse
+	var scale_curve: CurveTexture = CurveTexture.new()
+	var s_curve: Curve = Curve.new()
+	s_curve.add_point(Vector2(0.0, 0.6))
+	s_curve.add_point(Vector2(0.3, 1.0))
+	s_curve.add_point(Vector2(0.7, 1.2))
+	s_curve.add_point(Vector2(1.0, 0.4))
+	scale_curve.curve = s_curve
+	proc.scale_curve = scale_curve
+
+	gpu.process_material = proc
+
+	# Use a simple circle texture rendered as a CanvasItemMaterial
+	# with additive blend for glow effect
+	var canvas_mat: CanvasItemMaterial = CanvasItemMaterial.new()
+	canvas_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	gpu.material = canvas_mat
+
+	add_child(gpu)
+	_systems.append(gpu)
 
 func _process(delta: float) -> void:
 	_time += delta
@@ -45,64 +135,5 @@ func _process(delta: float) -> void:
 		_find_player()
 		return
 
-	# Cache camera info
-	var cam: Camera2D = _player.get_node_or_null("Camera2D")
-	if cam:
-		_camera_pos = _player.global_position
-		_camera_zoom = cam.zoom.x
-
-	# Update positions
-	for p in _particles:
-		p.pos += p.drift * delta
-		# Respawn if too far - randomize position to avoid horizontal bands
-		if p.pos.length() > SPAWN_RANGE or _player and p.pos.distance_to(_player.global_position - global_position) > SPAWN_RANGE:
-			# Spawn at random edge position, not fixed y
-			var edge: int = randi() % 4
-			match edge:
-				0: p.pos = Vector2(randf_range(-SPAWN_RANGE, SPAWN_RANGE), -SPAWN_RANGE * 0.9)  # Top
-				1: p.pos = Vector2(randf_range(-SPAWN_RANGE, SPAWN_RANGE), SPAWN_RANGE * 0.9)   # Bottom
-				2: p.pos = Vector2(-SPAWN_RANGE * 0.9, randf_range(-SPAWN_RANGE, SPAWN_RANGE))  # Left
-				3: p.pos = Vector2(SPAWN_RANGE * 0.9, randf_range(-SPAWN_RANGE, SPAWN_RANGE))   # Right
-			if _player:
-				p.pos += _player.global_position - global_position
-			# Randomize drift direction to avoid uniform movement
-			p.drift = Vector2(randf_range(-10.0, 10.0), randf_range(-10.0, 10.0))
-
-	queue_redraw()
-
-func _is_visible(pos: Vector2) -> bool:
-	if not _player:
-		return true
-	var world_pos: Vector2 = global_position + pos
-	var half_view: Vector2 = (VIEWPORT_SIZE / _camera_zoom) * 0.5 + Vector2(VIEWPORT_MARGIN, VIEWPORT_MARGIN)
-	var rel: Vector2 = world_pos - _camera_pos
-	return abs(rel.x) < half_view.x and abs(rel.y) < half_view.y
-
-func _draw() -> void:
-	var colors: Array[Color] = [
-		Color(0.3, 0.7, 1.0),   # Cyan
-		Color(0.2, 1.0, 0.5),   # Green
-		Color(1.0, 0.5, 0.7),   # Pink
-		Color(0.6, 0.4, 1.0),   # Purple
-		Color(0.4, 0.9, 0.9),   # Teal jellyfish
-	]
-
-	for p in _particles:
-		if not _is_visible(p.pos):
-			continue
-
-		var c: Color = colors[p.type]
-		var pulse: float = 0.7 + 0.3 * sin(_time * p.pulse_speed + p.phase)
-		var alpha: float = p.alpha * pulse
-		c.a = alpha
-
-		var pos: Vector2 = p.pos
-		# Simplified wobble
-		pos.x += sin(_time * 1.5 + p.phase) * 2.0
-		pos.y += sin(_time * 0.7 + p.phase * 2.0) * 1.0
-
-		# All particles are simple dots now for performance
-		draw_circle(pos, p.size, c)
-		# Glow halo only for type 4 (jellyfish)
-		if p.type == 4:
-			draw_circle(pos, p.size * 2.0, Color(c.r, c.g, c.b, alpha * 0.15))
+	# Keep particle systems centered on player for infinite effect
+	global_position = _player.global_position

@@ -17,7 +17,10 @@ var _target_fps: int = 120
 var _show_profiler: bool = true  # Toggle with F3
 var _entity_counts: Dictionary = {}
 var _frame_times: Array[float] = []
+var _frame_time_index: int = 0
+var _frame_time_sum: float = 0.0
 var _avg_frame_time: float = 0.0
+const FRAME_TIME_BUFFER_SIZE: int = 30
 
 const FOOD_SCENE := preload("res://scenes/food_particle.tscn")
 const MUTATION_CHANCE: float = 0.05
@@ -27,6 +30,11 @@ var _biome_label_timer: float = 0.0
 var _biome_label_alpha: float = 0.0
 var _current_biome_name: String = ""
 var _current_biome_color: Color = Color(0.5, 0.8, 0.9)
+var _bg_shader_mat: ShaderMaterial = null
+var _biome_tint_current: Color = Color(0, 0, 0, 0)
+var _biome_tint_target: Color = Color(0, 0, 0, 0)
+var _biome_strength_current: float = 0.0
+var _biome_strength_target: float = 0.0
 
 # Sensory upgrade notification
 var _sensory_notify_text: String = ""
@@ -130,6 +138,10 @@ func _ready() -> void:
 	_vitals_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(_vitals_hud)
 
+	# Grab background shader material for biome tinting
+	if background and background.material is ShaderMaterial:
+		_bg_shader_mat = background.material
+
 	# Create and setup chunk manager
 	var ChunkManagerScript := preload("res://scripts/cell_stage/world_chunk_manager.gd")
 	chunk_manager = Node2D.new()
@@ -143,14 +155,17 @@ func _process(delta: float) -> void:
 	if Input.is_action_just_pressed("ui_page_down"):  # F3 or Page Down
 		_show_profiler = not _show_profiler
 
-	# Track frame times for averaging
-	_frame_times.append(delta * 1000.0)  # Convert to ms
-	if _frame_times.size() > 30:
-		_frame_times.pop_front()
-	_avg_frame_time = 0.0
-	for ft in _frame_times:
-		_avg_frame_time += ft
-	_avg_frame_time /= _frame_times.size()
+	# Track frame times via circular buffer (no allocations)
+	var frame_ms: float = delta * 1000.0
+	if _frame_times.size() < FRAME_TIME_BUFFER_SIZE:
+		_frame_times.append(frame_ms)
+		_frame_time_sum += frame_ms
+	else:
+		_frame_time_sum -= _frame_times[_frame_time_index]
+		_frame_times[_frame_time_index] = frame_ms
+		_frame_time_sum += frame_ms
+		_frame_time_index = (_frame_time_index + 1) % FRAME_TIME_BUFFER_SIZE
+	_avg_frame_time = _frame_time_sum / _frame_times.size()
 
 	# FPS display (update every 0.25 seconds for stability)
 	_fps_update_timer -= delta
@@ -165,22 +180,20 @@ func _process(delta: float) -> void:
 		else:
 			fps_color = Color(0.95, 0.3, 0.3, 0.9)
 
-		# Count entities for profiling
-		_entity_counts = {
-			"food": get_tree().get_nodes_in_group("food").size(),
-			"enemies": get_tree().get_nodes_in_group("enemies").size(),
-			"competitors": get_tree().get_nodes_in_group("competitors").size(),
-			"prey": get_tree().get_nodes_in_group("prey").size(),
-			"hazards": get_tree().get_nodes_in_group("hazards").size(),
-			"parasites": get_tree().get_nodes_in_group("parasites").size(),
-			"viruses": get_tree().get_nodes_in_group("viruses").size(),
-		}
-		var total_entities: int = 0
-		for key in _entity_counts:
-			total_entities += _entity_counts[key]
-
-		# Build profiler text
+		# Build profiler text — only count entities when profiler is visible
 		if _show_profiler:
+			_entity_counts = {
+				"food": get_tree().get_nodes_in_group("food").size(),
+				"enemies": get_tree().get_nodes_in_group("enemies").size(),
+				"competitors": get_tree().get_nodes_in_group("competitors").size(),
+				"prey": get_tree().get_nodes_in_group("prey").size(),
+				"hazards": get_tree().get_nodes_in_group("hazards").size(),
+				"parasites": get_tree().get_nodes_in_group("parasites").size(),
+				"viruses": get_tree().get_nodes_in_group("viruses").size(),
+			}
+			var total_entities: int = 0
+			for key in _entity_counts:
+				total_entities += _entity_counts[key]
 			var profiler_text: String = "FPS: %d | %.1fms\n" % [current_fps, _avg_frame_time]
 			profiler_text += "Entities: %d\n" % total_entities
 			profiler_text += "Food:%d Enem:%d Comp:%d\n" % [_entity_counts["food"], _entity_counts["enemies"], _entity_counts["competitors"]]
@@ -274,16 +287,41 @@ func _process(delta: float) -> void:
 			_biome_label_timer = 4.0
 			_biome_label_alpha = 1.0
 			match biome_name:
-				"Open Waters": _current_biome_color = Color(0.4, 0.7, 0.9)
-				"Thermal Vent": _current_biome_color = Color(1.0, 0.5, 0.2)
-				"Deep Abyss": _current_biome_color = Color(0.3, 0.2, 0.6)
-				"Shallows": _current_biome_color = Color(0.4, 0.9, 0.7)
-				"Nutrient Garden": _current_biome_color = Color(0.5, 0.9, 0.3)
-				_: _current_biome_color = Color(0.5, 0.8, 0.9)
+				"Open Waters":
+					_current_biome_color = Color(0.4, 0.7, 0.9)
+					_biome_tint_target = Color(0.1, 0.3, 0.6)
+					_biome_strength_target = 0.15
+				"Thermal Vent":
+					_current_biome_color = Color(1.0, 0.5, 0.2)
+					_biome_tint_target = Color(0.8, 0.3, 0.05)
+					_biome_strength_target = 0.4
+				"Deep Abyss":
+					_current_biome_color = Color(0.3, 0.2, 0.6)
+					_biome_tint_target = Color(0.15, 0.05, 0.4)
+					_biome_strength_target = 0.5
+				"Shallows":
+					_current_biome_color = Color(0.4, 0.9, 0.7)
+					_biome_tint_target = Color(0.2, 0.7, 0.4)
+					_biome_strength_target = 0.3
+				"Nutrient Garden":
+					_current_biome_color = Color(0.5, 0.9, 0.3)
+					_biome_tint_target = Color(0.4, 0.6, 0.1)
+					_biome_strength_target = 0.35
+				_:
+					_current_biome_color = Color(0.5, 0.8, 0.9)
+					_biome_tint_target = Color(0, 0, 0)
+					_biome_strength_target = 0.0
 	if _biome_label_timer > 0:
 		_biome_label_timer -= delta
 		if _biome_label_timer < 1.0:
 			_biome_label_alpha = clampf(_biome_label_timer, 0.0, 1.0)
+
+	# Smoothly interpolate biome shader tinting
+	if _bg_shader_mat:
+		_biome_tint_current = _biome_tint_current.lerp(_biome_tint_target, delta * 1.5)
+		_biome_strength_current = lerpf(_biome_strength_current, _biome_strength_target, delta * 1.5)
+		_bg_shader_mat.set_shader_parameter("biome_tint", _biome_tint_current)
+		_bg_shader_mat.set_shader_parameter("biome_strength", _biome_strength_current)
 
 	stats_label.text = "Repros: %d/10 | Organelles: %d/5 | Collected: %d%s" % [
 		GameManager.player_stats.reproductions,

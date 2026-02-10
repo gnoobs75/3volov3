@@ -702,8 +702,9 @@ func _spawn_wbc() -> void:
 
 # --- Antibody Flyer Management ---
 func _spawn_initial_flyers() -> void:
+	# Stagger initial spawns widely across the hub to avoid dog-piling the player
 	for i in range(FLYER_TARGET_COUNT):
-		_spawn_flyer()
+		_spawn_flyer(true)
 
 func _manage_flyers() -> void:
 	if not _player or not _creatures_container:
@@ -718,23 +719,47 @@ func _manage_flyers() -> void:
 		if child.is_in_group("flyer"):
 			flyer_count += 1
 	if flyer_count < FLYER_TARGET_COUNT:
-		_spawn_flyer()
+		_spawn_flyer(false)
 
-func _spawn_flyer() -> void:
+func _spawn_flyer(initial_spread: bool = false) -> void:
 	if not _player or not _cave_gen:
 		return
 	var flyer_script = load("res://scripts/snake_stage/antibody_flyer.gd")
 	var flyer: CharacterBody3D = CharacterBody3D.new()
 	flyer.set_script(flyer_script)
 
-	# Spawn above a random hub position — try up to 5 times to avoid spawning near player
 	var pos: Vector3 = Vector3.ZERO
-	for _attempt in range(5):
-		pos = _cave_gen.get_random_position_in_hub(_player.global_position)
-		var horiz_dist: float = Vector2(pos.x - _player.global_position.x, pos.z - _player.global_position.z).length()
-		if horiz_dist > 40.0:
-			break  # Far enough
-	pos.y += 10.0  # Start at hover height (above player line of sight)
+	var min_dist: float = 100.0 if initial_spread else 80.0
+
+	if initial_spread:
+		# For initial spawns, pick a random active hub and place within it
+		# This distributes flyers across the whole cave, not just near the player
+		var active_hubs: Array = []
+		for hub in _cave_gen.hubs:
+			if hub.is_active:
+				active_hubs.append(hub)
+		if active_hubs.is_empty():
+			return
+		var hub = active_hubs[randi_range(0, active_hubs.size() - 1)]
+		var angle: float = randf() * TAU
+		var r: float = hub.radius * 0.7 * sqrt(randf())
+		pos = Vector3(
+			hub.position.x + cos(angle) * r,
+			hub.position.y + 1.0,
+			hub.position.z + sin(angle) * r
+		)
+		if hub.node_3d and hub.node_3d.has_method("get_floor_y"):
+			pos.y = hub.node_3d.get_floor_y(pos.x, pos.z) + 0.5
+	else:
+		# Runtime respawns: spawn in a nearby hub but away from the player
+		for _attempt in range(8):
+			pos = _cave_gen.get_random_position_in_hub(_player.global_position)
+			var horiz_dist: float = Vector2(pos.x - _player.global_position.x, pos.z - _player.global_position.z).length()
+			if horiz_dist > min_dist:
+				break
+
+	# Varied hover height so they don't all cluster at the same altitude
+	pos.y += randf_range(6.0, 14.0)
 	flyer.position = pos
 	_creatures_container.add_child(flyer)
 	if flyer.has_signal("died"):
