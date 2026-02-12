@@ -51,6 +51,16 @@ func _build_hub() -> void:
 	animator.setup(_hub_data.biome, biome_colors)
 	add_child(animator)
 
+	# Ambient life (non-aggressive creatures drifting in the cave)
+	AmbientLife.spawn_ambient_creatures(self, _hub_data.biome, randi_range(8, 15))
+
+	# Moist cave atmosphere (drips, mucus strands, slow puddles)
+	CaveMoisture.add_moisture_effects(self, _hub_data.biome)
+
+	# Boss arena markers (only for wing hubs with bosses, not Stomach)
+	if _hub_data.biome in [1, 2, 3, 4, 6]:
+		_build_boss_arena_markers(biome_colors)
+
 	# Add tunnel mouth lights (deferred so tunnel connections are registered)
 	call_deferred("_add_tunnel_mouth_lights", biome_colors)
 
@@ -692,3 +702,71 @@ func get_floor_y(world_x: float, world_z: float) -> float:
 
 	var h: float = lerpf(lerpf(h00, h10, fx), lerpf(h01, h11, fx), fz)
 	return global_position.y + h
+
+func _build_boss_arena_markers(colors: Dictionary) -> void:
+	## Add glowing floor ring + pillar lights to signal boss arena
+	var ring_radius: float = 20.0
+	var segments: int = 48
+	var emission_col: Color = colors.emission.lightened(0.2)
+
+	# Glowing ring on the floor (TorusMesh flat on ground)
+	var ring: MeshInstance3D = MeshInstance3D.new()
+	var torus: TorusMesh = TorusMesh.new()
+	torus.inner_radius = ring_radius - 0.3
+	torus.outer_radius = ring_radius + 0.3
+	torus.rings = segments
+	torus.ring_segments = 8
+	ring.mesh = torus
+	var ring_mat: StandardMaterial3D = StandardMaterial3D.new()
+	ring_mat.albedo_color = Color(emission_col.r, emission_col.g, emission_col.b, 0.1)
+	ring_mat.emission_enabled = true
+	ring_mat.emission = emission_col
+	ring_mat.emission_energy_multiplier = 1.5
+	ring_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	ring_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	ring.material_override = ring_mat
+	ring.position = Vector3(0, 0.15, 0)
+	ring.name = "BossArenaRing"
+	add_child(ring)
+
+	# 4 pillar lights at cardinal directions around the ring
+	for i in range(4):
+		var angle: float = TAU * i / 4.0 + PI * 0.25  # 45 degree offset
+		var px: float = cos(angle) * ring_radius
+		var pz: float = sin(angle) * ring_radius
+		# Pillar light
+		var pillar_light: OmniLight3D = OmniLight3D.new()
+		pillar_light.light_color = emission_col
+		pillar_light.light_energy = 1.2
+		pillar_light.omni_range = 15.0
+		pillar_light.omni_attenuation = 1.5
+		pillar_light.shadow_enabled = false
+		pillar_light.position = Vector3(px, 3.0, pz)
+		pillar_light.name = "ArenaPillarLight%d" % i
+		add_child(pillar_light)
+		# Small glowing orb mesh at pillar position
+		var orb: MeshInstance3D = MeshInstance3D.new()
+		var orb_mesh: SphereMesh = SphereMesh.new()
+		orb_mesh.radius = 0.5
+		orb_mesh.height = 1.0
+		orb.mesh = orb_mesh
+		var orb_mat: StandardMaterial3D = StandardMaterial3D.new()
+		orb_mat.albedo_color = Color(emission_col.r, emission_col.g, emission_col.b, 0.3)
+		orb_mat.emission_enabled = true
+		orb_mat.emission = emission_col
+		orb_mat.emission_energy_multiplier = 2.5
+		orb_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		orb.material_override = orb_mat
+		orb.position = Vector3(px, 2.5, pz)
+		add_child(orb)
+
+	# Central danger light (red/boss-colored, brighter)
+	var center_light: OmniLight3D = OmniLight3D.new()
+	center_light.light_color = emission_col.lerp(Color.RED, 0.3)
+	center_light.light_energy = 0.8
+	center_light.omni_range = 25.0
+	center_light.omni_attenuation = 1.0
+	center_light.shadow_enabled = false
+	center_light.position = Vector3(0, 5.0, 0)
+	center_light.name = "BossArenaCenterLight"
+	add_child(center_light)

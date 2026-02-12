@@ -15,6 +15,12 @@ var wander_timer: float = 0.0
 var _confused_timer: float = 0.0
 var _target_velocity: Vector2 = Vector2.ZERO  # For smooth interpolated movement
 
+# Titan variant
+var is_titan: bool = false
+var _titan_burst_timer: float = 0.0  # Cooldown for burst attack
+const TITAN_BURST_COOLDOWN: float = 8.0
+const TITAN_BURST_COUNT: int = 3  # Number of projectiles in burst
+
 # Procedural graphics
 var _time: float = 0.0
 var _cell_radius: float = 14.0
@@ -40,6 +46,17 @@ var _tongue_out: float = 0.0  # 0-1 tongue extension
 var _eye_pop: float = 0.0  # Eye bulge multiplier
 var _double_blink: bool = false  # For double-take blinks
 var _eyebrow_bounce: float = 0.0  # Animated eyebrow raise
+
+func make_titan() -> void:
+	## Upgrade this enemy to a Titan variant: 2x health, bigger, more damage
+	is_titan = true
+	health *= 2.0
+	max_health *= 2.0
+	damage *= 1.5
+	speed *= 0.85  # Slightly slower
+	_cell_radius *= 1.5
+	detection_range *= 1.2
+	_titan_burst_timer = TITAN_BURST_COOLDOWN
 
 func _ready() -> void:
 	_pick_wander_target()
@@ -181,6 +198,15 @@ func _draw() -> void:
 	# Glow
 	var glow_a: float = 0.06 + 0.04 * sin(_time * 3.0)
 	draw_circle(Vector2.ZERO, _cell_radius * 1.8, Color(draw_color.r, draw_color.g, draw_color.b, glow_a))
+
+	# Titan aura: menacing pulsing ring
+	if is_titan:
+		var titan_pulse: float = 0.15 + 0.1 * sin(_time * 2.5)
+		draw_arc(Vector2.ZERO, _cell_radius * 2.2, 0, TAU, 32, Color(1.0, 0.2, 0.1, titan_pulse), 2.5, true)
+		draw_arc(Vector2.ZERO, _cell_radius * 2.5, _time * 0.5, _time * 0.5 + PI, 16, Color(1.0, 0.4, 0.1, titan_pulse * 0.5), 1.5, true)
+		# Skull symbol hint
+		var skull_a: float = 0.3 + 0.15 * sin(_time * 3.0)
+		draw_circle(Vector2(0, -_cell_radius - 8), 3.0, Color(1.0, 0.3, 0.1, skull_a))
 
 	# Membrane polygon
 	var pts: PackedVector2Array = PackedVector2Array()
@@ -394,6 +420,12 @@ func _do_pursue(delta: float, player: Node2D) -> void:
 		_mouth_open = 0.8
 		if player.has_method("take_damage"):
 			player.take_damage(damage * delta)
+	# Titan burst attack: fire 3 toxin projectiles at range
+	if is_titan:
+		_titan_burst_timer -= delta
+		if _titan_burst_timer <= 0 and global_position.distance_to(player.global_position) < detection_range * 0.7:
+			_titan_burst_timer = TITAN_BURST_COOLDOWN
+			_fire_titan_burst(player.global_position)
 
 func _do_pursue_target(delta: float, target: Node2D) -> void:
 	if not is_instance_valid(target):
@@ -464,6 +496,54 @@ func _find_player() -> Node2D:
 			nearest = p
 	return nearest
 
+func _fire_titan_burst(target_pos: Vector2) -> void:
+	## Fire a spread of 3 toxin projectiles toward the target
+	var base_dir: Vector2 = (target_pos - global_position).normalized()
+	for i in range(TITAN_BURST_COUNT):
+		var spread: float = (float(i) - 1.0) * 0.25  # -0.25, 0, 0.25
+		var dir: Vector2 = base_dir.rotated(spread)
+		var proj := _create_toxin_projectile(dir)
+		if proj:
+			get_parent().add_child(proj)
+	_mouth_open = 1.0
+	_eye_pop = 0.5
+
+func _create_toxin_projectile(dir: Vector2) -> Node2D:
+	## Create a simple toxin projectile as an Area2D
+	var proj := Area2D.new()
+	proj.global_position = global_position + dir * (_cell_radius + 5.0)
+	proj.collision_layer = 0
+	proj.collision_mask = 1
+	proj.monitorable = false
+	# Collision shape
+	var shape := CollisionShape2D.new()
+	var circle := CircleShape2D.new()
+	circle.radius = 4.0
+	shape.shape = circle
+	proj.add_child(shape)
+	# Script-like behavior via metadata
+	proj.set_meta("velocity", dir * 200.0)
+	proj.set_meta("damage", damage * 0.5)
+	proj.set_meta("life", 3.0)
+	proj.set_meta("time", 0.0)
+	# Use process callback via group
+	proj.add_to_group("titan_projectiles")
+	proj.body_entered.connect(_on_titan_proj_hit.bind(proj))
+	# Schedule auto-destruction
+	var timer := Timer.new()
+	timer.wait_time = 3.0
+	timer.one_shot = true
+	timer.autostart = true
+	timer.timeout.connect(proj.queue_free)
+	proj.add_child(timer)
+	return proj
+
+func _on_titan_proj_hit(body: Node2D, proj: Node2D) -> void:
+	if body.is_in_group("player") and body.has_method("take_damage"):
+		body.take_damage(proj.get_meta("damage", 4.0))
+	if is_instance_valid(proj):
+		proj.queue_free()
+
 func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
@@ -474,13 +554,13 @@ func take_damage(amount: float) -> void:
 		_die()
 
 func _die() -> void:
-	# Spawn nutrients at death location
+	# Spawn nutrients at death location (titans drop more)
+	var drop_count: int = randi_range(6, 10) if is_titan else randi_range(3, 6)
 	var manager := get_tree().get_first_node_in_group("cell_stage_manager")
 	if not manager:
-		# Fallback: find by class
 		manager = get_parent()
 	if manager and manager.has_method("spawn_death_nutrients"):
-		manager.spawn_death_nutrients(global_position, randi_range(3, 6), _base_color)
+		manager.spawn_death_nutrients(global_position, drop_count, _base_color)
 	if AudioManager:
 		AudioManager.play_death()
 	queue_free()

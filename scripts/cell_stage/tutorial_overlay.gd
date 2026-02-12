@@ -16,7 +16,7 @@ var _prompts: Array = [
 	{"keys": "E", "label": "Fire Toxin (attack)"},
 	{"keys": "Q", "label": "Reproduce (costs energy)"},
 	{"keys": "F", "label": "Metabolize (restore energy)"},
-	{"keys": "TAB", "label": "CRISPR Gene Editor"},
+	{"keys": "TAB", "label": "CRISPR Mutation Workshop"},
 ]
 
 func _process(delta: float) -> void:
@@ -42,7 +42,7 @@ func _draw() -> void:
 		return
 
 	var vp := get_viewport_rect().size
-	var font := ThemeDB.fallback_font
+	var font := UIConstants.get_display_font()
 
 	# Panel sizing — generous and readable
 	var panel_w: float = 380.0

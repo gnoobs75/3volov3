@@ -237,7 +237,7 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 func _draw() -> void:
-	var font := ThemeDB.fallback_font
+	var font := UIConstants.get_display_font()
 
 	# === TOP: Hologram Viewer ===
 	_draw_hologram_viewer(font)

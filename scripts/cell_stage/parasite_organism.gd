@@ -18,6 +18,10 @@ var attach_offset: Vector2 = Vector2.ZERO  # Offset from player when attached
 var _attached_to: Node2D = null
 var _wiggle_phase: float = 0.0
 var _body_segments: int = 0
+var _attach_duration: float = 0.0  # Time attached
+var _energy_drain_rate: float = 1.5  # Energy per second while attached
+var _reproduce_threshold: float = 25.0  # Seconds before reproducing
+var _has_reproduced: bool = false
 
 func _ready() -> void:
 	_radius = randf_range(4.0, 6.0)
@@ -73,6 +77,14 @@ func _physics_process(delta: float) -> void:
 				_detach()
 				return
 			global_position = _attached_to.global_position + attach_offset.rotated(_attached_to.rotation)
+			_attach_duration += delta
+			# Drain host energy
+			if _attached_to.has_method("get") and _attached_to.get("energy") != null:
+				_attached_to.energy = maxf(_attached_to.energy - _energy_drain_rate * delta, 0.0)
+			# Reproduce after threshold
+			if _attach_duration >= _reproduce_threshold and not _has_reproduced:
+				_has_reproduced = true
+				_try_reproduce()
 
 		State.FLEE:
 			_flee_timer -= delta
@@ -117,6 +129,16 @@ func force_detach() -> void:
 	_flee_timer = 2.0
 	state = State.FLEE
 
+func _try_reproduce() -> void:
+	## Spawn a new parasite nearby the attached host
+	if not is_instance_valid(_attached_to):
+		return
+	var ParasiteScene := preload("res://scenes/parasite_organism.tscn")
+	var offspring := ParasiteScene.instantiate()
+	var spawn_offset := Vector2(randf_range(-30, 30), randf_range(-30, 30))
+	offspring.global_position = global_position + spawn_offset
+	get_parent().add_child(offspring)
+
 func _find_player() -> Node2D:
 	var players := get_tree().get_nodes_in_group("player")
 	if players.is_empty():
@@ -131,9 +153,11 @@ func _find_player() -> Node2D:
 	return nearest
 
 func _draw() -> void:
-	# Wormy segmented body
+	# Wormy segmented body — turns redder while attached
 	var seg_size: float = _radius
 	var prev_pos := Vector2.ZERO
+	var color_shift: float = clampf(_attach_duration / _reproduce_threshold, 0.0, 1.0) if state == State.ATTACHED else 0.0
+	var active_color := _base_color.lerp(Color(0.85, 0.15, 0.1), color_shift * 0.6)
 
 	for s in range(_body_segments):
 		var t: float = float(s) / _body_segments
@@ -142,7 +166,7 @@ func _draw() -> void:
 		var sy: float = wiggle
 		var seg_pos := Vector2(sx, sy)
 		var seg_r: float = seg_size * (1.0 - t * 0.3)
-		var seg_color := Color(_base_color.r * (1.0 - t * 0.2), _base_color.g, _base_color.b * (1.0 - t * 0.15), 0.8)
+		var seg_color := Color(active_color.r * (1.0 - t * 0.2), active_color.g, active_color.b * (1.0 - t * 0.15), 0.8)
 		draw_circle(seg_pos, seg_r, seg_color)
 		if s > 0:
 			draw_line(prev_pos, seg_pos, Color(_base_color, 0.5), seg_r * 0.8, true)

@@ -114,13 +114,13 @@ var _phases: Array = [
 		"observer": "The struggle for survival...",
 		"spawns": "competitor",
 	},
-	# Phase 8: Reveal player
+	# Phase 8: Final message (player stays hidden — editor will handle reveal)
 	{
 		"dur": 5.0, "offset": Vector2.ZERO,
 		"title": "",
-		"body": ["Your specimen has been placed in the ecosystem.", "Survive. Evolve. Dominate."],
+		"body": ["Your specimen awaits configuration.", "Design. Survive. Evolve. Dominate."],
 		"observer": "What kind of creature is this...?",
-		"spawns": "reveal",
+		"spawns": "none",
 	},
 ]
 
@@ -181,31 +181,40 @@ func _trigger_hud_for_phase() -> void:
 		0:  # Opening — observer starts scribing
 			_queue_observer_note("Observation")
 			_queue_observer_note("Observation")
+			AudioManager.play_observer_mutter()
 		1:  # Food / Building Blocks — light up the helix
 			_queue_observer_note("Collection")
 			_helix_flash_index = 0
 			_helix_flash_timer = 0.0
+			AudioManager.play_observer_chirp()
 		2:  # Snake prey
 			_show_creature_blueprint("prey")
 			_queue_observer_note("Kill")
+			AudioManager.play_observer_grunt()
 		3:  # Virus
 			_show_creature_blueprint("virus")
 			_queue_observer_note("Damage")
+			AudioManager.play_observer_hmm()
 		4:  # Parasite
 			_show_creature_blueprint("parasite")
 			_queue_observer_note("Damage")
+			AudioManager.play_observer_distressed()
 		5:  # Repeller / Cleanser
 			_queue_observer_note("Observation")
 			_queue_observer_note("Collection")
+			AudioManager.play_observer_chirp()
 		6:  # Dart predator
 			_show_creature_blueprint("dart_predator")
 			_queue_observer_note("Kill")
+			AudioManager.play_observer_gasp()
 		7:  # Competitor
 			_show_creature_blueprint("competitor")
 			_queue_observer_note("Observation")
+			AudioManager.play_observer_mutter()
 		8:  # Reveal player
 			_queue_observer_note("Evolution")
 			_queue_observer_note("Evolution")
+			AudioManager.play_observer_impressed()
 
 func _queue_observer_note(event_type: String) -> void:
 	if _observer_notes and _observer_notes.has_method("_queue_note"):
@@ -403,6 +412,15 @@ func _process(delta: float) -> void:
 	var obs_show: bool = _observer_text != "" and _phase_timer > 1.8 and _phase_timer < dur - 0.5
 	_observer_alpha = move_toward(_observer_alpha, 1.0 if obs_show else 0.0, delta * 2.5)
 
+	# Mid-phase observer vocalization (~5s in, after cooldown clears)
+	if _phase_timer > 5.0 and _phase_timer < 5.0 + delta * 2.0:
+		match _phase:
+			1:  AudioManager.play_observer_grunt()
+			2:  AudioManager.play_observer_mutter()
+			4:  AudioManager.play_observer_grunt()
+			5:  AudioManager.play_observer_mutter()
+			7:  AudioManager.play_observer_grunt()
+
 	# Staggered helix flash during Phase 1 (Building Blocks)
 	if _phase == 1 and _helix_flash_index >= 0 and _helix_flash_index < 8:
 		_helix_flash_timer += delta
@@ -430,10 +448,7 @@ func _finish_showcase() -> void:
 	if _camera:
 		_camera.offset = Vector2.ZERO
 
-	# Ensure player is revealed (in case phase 7 was skipped somehow)
-	if _player and not _player.visible:
-		_reveal_player()
-
+	# Player stays hidden — the creature editor opens next and handles reveal
 	showcase_finished.emit()
 
 	# Self-destruct after a short delay for final fade
@@ -442,7 +457,7 @@ func _finish_showcase() -> void:
 
 func _draw_overlay(ctl: Control) -> void:
 	var vp := ctl.get_viewport_rect().size
-	var font := ThemeDB.fallback_font
+	var font := UIConstants.get_display_font()
 
 	# --- Title: top-center with accent pill ---
 	if _title_text != "" and _title_alpha > 0.01:

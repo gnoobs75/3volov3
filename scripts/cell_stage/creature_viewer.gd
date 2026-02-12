@@ -362,7 +362,7 @@ func _draw() -> void:
 	_draw_specimen(fade_alpha)
 
 func _draw_idle_state() -> void:
-	var font := ThemeDB.fallback_font
+	var font := UIConstants.get_display_font()
 
 	# Subtle waiting indicator
 	var pulse: float = 0.3 + 0.2 * sin(_time * 2.0)
@@ -375,7 +375,7 @@ func _draw_idle_state() -> void:
 	draw_line(Vector2(20, 80 + idle_scan), Vector2(VIEWER_WIDTH - 20, 80 + idle_scan), Color(0.2, 0.4, 0.5, 0.15), 1.0)
 
 func _draw_specimen(fade_alpha: float) -> void:
-	var font := ThemeDB.fallback_font
+	var font := UIConstants.get_display_font()
 	var cx: float = VIEWER_WIDTH * 0.5
 	var cy: float = VIEWER_HEIGHT * 0.45
 

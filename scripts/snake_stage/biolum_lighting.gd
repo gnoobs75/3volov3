@@ -25,7 +25,9 @@ static func add_lights(parent: Node3D, hub_data, biome_colors: Dictionary) -> vo
 		var light: OmniLight3D = OmniLight3D.new()
 		light.name = "BiolumLight_%d" % i
 		light.light_color = emission_col.lightened(randf_range(-0.1, 0.2))
-		light.light_energy = randf_range(0.15, 0.35)
+		var base_e: float = randf_range(0.15, 0.35)
+		light.light_energy = base_e
+		light.set_meta("base_energy", base_e)
 		light.omni_range = randf_range(5.0, 12.0)
 		light.omni_attenuation = 1.5
 		light.shadow_enabled = false
@@ -64,7 +66,9 @@ static func add_lights(parent: Node3D, hub_data, biome_colors: Dictionary) -> vo
 		var light: OmniLight3D = OmniLight3D.new()
 		light.name = "CeilGlow_%d" % i
 		light.light_color = emission_col.lightened(0.3)
-		light.light_energy = randf_range(0.08, 0.15)
+		var ceil_e: float = randf_range(0.08, 0.15)
+		light.light_energy = ceil_e
+		light.set_meta("base_energy", ceil_e)
 		light.omni_range = randf_range(8.0, 15.0)
 		light.omni_attenuation = 1.8
 		light.shadow_enabled = false

@@ -106,14 +106,15 @@ const SPAWN_Y: float = -10.0
 # Star-pattern layout: 1 central hub + 5 biome wings
 const CENTER_RADIUS: float = 200.0   # Huge central cavern
 const CENTER_HEIGHT: float = 55.0
-const WING_RADIUS: float = 150.0     # Large biome caverns at each spoke tip
-const WING_HEIGHT: float = 45.0
+const WING_RADIUS: float = 250.0     # Large biome caverns at each spoke tip
+const WING_HEIGHT: float = 65.0
 const SPOKE_LENGTH: float = 500.0    # Long distance from center to wing hub
-const HALLWAY_WIDTH: float = 50.0    # Very wide hallways between rooms
+const HALLWAY_WIDTH: float = 70.0    # Very wide hallways between rooms
 const SPOKE_COUNT: int = 5           # 5 biome wings in star pattern
 
-# The 5 spoke biomes (one per wing, fixed order)
-const SPOKE_BIOMES: Array = [
+# The 5 spoke biomes (shuffled each playthrough for variety)
+# Brain is always placed at the furthest spoke from starting direction
+var SPOKE_BIOMES: Array = [
 	Biome.HEART_CHAMBER,
 	Biome.LUNG_TISSUE,
 	Biome.INTESTINAL_TRACT,
@@ -122,8 +123,8 @@ const SPOKE_BIOMES: Array = [
 ]
 
 # Chunk activation (large for big layout)
-const ACTIVATE_DISTANCE: float = 600.0
-const DEACTIVATE_DISTANCE: float = 700.0
+const ACTIVATE_DISTANCE: float = 750.0
+const DEACTIVATE_DISTANCE: float = 850.0
 
 # --- Runtime state ---
 var hubs: Array[HubData] = []
@@ -139,12 +140,31 @@ func _ready() -> void:
 	call_deferred("_generate_cave_system")
 
 func _generate_cave_system() -> void:
+	_shuffle_biomes()
 	_place_star_layout()
 	_generate_tunnel_paths()
 	_instantiate_geometry()
 	_add_valve_gates()
 	_build_containment_shell()
 	cave_ready.emit()
+
+func _shuffle_biomes() -> void:
+	## Randomize biome placement each playthrough. Brain always goes to the last slot.
+	var non_brain: Array = []
+	for b in SPOKE_BIOMES:
+		if b != Biome.BRAIN:
+			non_brain.append(b)
+	# Fisher-Yates shuffle
+	for i in range(non_brain.size() - 1, 0, -1):
+		var j: int = randi() % (i + 1)
+		var temp = non_brain[i]
+		non_brain[i] = non_brain[j]
+		non_brain[j] = temp
+	# Reassemble: Brain always at last position (furthest spoke)
+	SPOKE_BIOMES.clear()
+	for b in non_brain:
+		SPOKE_BIOMES.append(b)
+	SPOKE_BIOMES.append(Biome.BRAIN)
 
 # --- Star-Pattern Hub Placement ---
 func _place_star_layout() -> void:

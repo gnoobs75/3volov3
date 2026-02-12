@@ -105,7 +105,7 @@ func _draw() -> void:
 	if _notifications.is_empty():
 		return
 
-	var font := ThemeDB.fallback_font
+	var font := UIConstants.get_display_font()
 	var start_y: float = 10.0
 
 	for i in range(_notifications.size()):

@@ -351,7 +351,7 @@ func _draw_note(note: Dictionary) -> void:
 	# Event type label (subtle)
 	var evt_type: String = note.get("event_type", "")
 	if evt_type != "" and alpha > 0.1:
-		var font := ThemeDB.fallback_font
+		var font := UIConstants.get_display_font()
 		var evt_color: Color
 		match evt_type:
 			"Evolution": evt_color = Color(0.4, 0.8, 1.0, 0.35 * alpha)

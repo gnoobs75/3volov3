@@ -8,6 +8,7 @@ signal died
 signal nutrient_collected(item: Dictionary)
 signal stun_burst_fired
 signal bite_performed
+signal tail_whip_performed
 
 # --- Movement ---
 const BASE_SPEED: float = 8.0
@@ -31,12 +32,12 @@ const ENERGY_REGEN: float = 8.0  # Per second while not sprinting
 const SPRINT_DRAIN: float = 15.0  # Per second
 const HEALTH_REGEN: float = 1.0
 
-# --- Segments ---
-const INITIAL_SEGMENTS: int = 10
-const SEGMENT_SPACING: float = 0.7
+# --- Body Sections (continuous, no growth) ---
+const BODY_SECTION_COUNT: int = 10
+const SECTION_SPACING: float = 0.7
 const HISTORY_RESOLUTION: float = 0.1
 
-var _segments: Array[MeshInstance3D] = []
+var _body_sections: Array[MeshInstance3D] = []
 var _connectors: Array[MeshInstance3D] = []
 var _position_history: Array[Vector3] = []
 var _rotation_history: Array[float] = []
@@ -70,6 +71,43 @@ var _noise_spike_timer: float = 0.0
 var _stun_cooldown: float = 0.0
 const STUN_COOLDOWN_TIME: float = 4.0
 const STUN_ENERGY_COST: float = 15.0
+
+# --- Tail Whip Attack ---
+var _tail_whip_cooldown: float = 0.0
+var _tail_whip_active: bool = false
+var _tail_whip_timer: float = 0.0
+const TAIL_WHIP_COOLDOWN_TIME: float = 8.0
+const TAIL_WHIP_ENERGY_COST: float = 15.0
+const TAIL_WHIP_RANGE: float = 5.0
+const TAIL_WHIP_DAMAGE: float = 20.0
+const TAIL_WHIP_KNOCKBACK: float = 12.0
+const TAIL_WHIP_DURATION: float = 0.5
+var _tail_whip_angle: float = 0.0  # Sweep progress: 0 → PI over duration
+var _tail_whip_hit_targets: Array = []  # Prevents double-hit during sweep
+
+# --- Venom Bite ---
+var _venom_damage_per_sec: float = 2.0
+var _venom_duration: float = 4.0
+
+# --- Camouflage ---
+var _is_camouflaged: bool = false
+var _camo_energy_drain: float = 3.0  # Energy per second
+var _camo_alpha: float = 1.0  # 1=visible, 0.2=camo
+
+# --- Boss Trait Activation ---
+var _trait_cooldown: float = 0.0
+var _bone_shield_active: bool = false
+var _bone_shield_timer: float = 0.0
+var _shield_mesh: MeshInstance3D = null
+
+# --- Trait VFX ---
+var _pulse_ring: MeshInstance3D = null
+var _pulse_ring_scale: float = 0.0
+var _pulse_ring_active: bool = false
+var _wind_cone: MeshInstance3D = null
+var _wind_cone_alpha: float = 0.0
+var _trait_flash: float = 0.0  # Screen flash on activation
+var _trait_flash_color: Color = Color.WHITE
 
 # --- Tractor Beam ---
 const TRACTOR_RANGE: float = 12.0  # Max pull distance
@@ -110,9 +148,9 @@ func _ready() -> void:
 	max_slides = 6
 	_build_head()
 	_build_face()
-	_build_segments()
+	_build_body_sections()
 	# Initialize position history
-	for i in range(INITIAL_SEGMENTS * 10):
+	for i in range(BODY_SECTION_COUNT * 10):
 		_position_history.append(global_position)
 		_rotation_history.append(_heading)
 	_last_record_pos = global_position
@@ -481,12 +519,12 @@ func _build_face() -> void:
 	_eye_light.rotation.x = deg_to_rad(-20.0)
 	_eye_lure.add_child(_eye_light)
 
-func _build_segments() -> void:
+func _build_body_sections() -> void:
 	var vein_color: Color = Color(0.35, 0.08, 0.45)  # Purple veins
 
-	for i in range(INITIAL_SEGMENTS):
-		var t: float = float(i + 1) / (INITIAL_SEGMENTS + 1)
-		var seg_radius: float = lerpf(0.55, 0.18, t * t)
+	for i in range(BODY_SECTION_COUNT):
+		var t: float = float(i + 1) / (BODY_SECTION_COUNT + 1)
+		var seg_radius: float = lerpf(0.55, 0.15, t * t)  # Smooth taper head→tail
 
 		var seg: MeshInstance3D = MeshInstance3D.new()
 		var sphere: SphereMesh = SphereMesh.new()
@@ -504,15 +542,15 @@ func _build_segments() -> void:
 		mat.albedo_color = col
 		mat.roughness = 0.65
 		mat.emission_enabled = true
-		mat.emission = GLOW_COLOR  # Eerie green glow
+		mat.emission = GLOW_COLOR
 		mat.emission_energy_multiplier = 0.8
 		seg.material_override = mat
 
-		seg.position = Vector3(0, 0.4, -(i + 1) * SEGMENT_SPACING)
+		seg.position = Vector3(0, 0.4, -(i + 1) * SECTION_SPACING)
 		add_child(seg)
-		_segments.append(seg)
+		_body_sections.append(seg)
 
-		# Purple veins: 2-3 thin tubes wrapping around each segment
+		# Purple veins: 2-3 thin tubes wrapping around each section
 		var vein_count: int = 2 if i % 2 == 0 else 3
 		for v in range(vein_count):
 			var vein: MeshInstance3D = MeshInstance3D.new()
@@ -531,33 +569,31 @@ func _build_segments() -> void:
 			vein_mat.emission_energy_multiplier = 1.5
 			vein.material_override = vein_mat
 
-			# Position veins around the segment at different angles
 			var angle: float = (TAU / vein_count) * v + i * 0.7
 			var offset_r: float = seg_radius * 0.85
 			vein.position = Vector3(cos(angle) * offset_r, sin(angle) * offset_r, 0)
-			# Tilt vein to wrap along body axis
 			vein.rotation.x = randf_range(-0.4, 0.4)
 			vein.rotation.z = angle + PI * 0.5
 			seg.add_child(vein)
 			_vein_meshes.append(vein)
 
-		# Synapse light on every 3rd segment
+		# Synapse light on every 3rd section
 		if i % 3 == 0:
 			var synapse: OmniLight3D = OmniLight3D.new()
 			synapse.light_color = vein_color
-			synapse.light_energy = 0.0  # Starts off, pulses on
+			synapse.light_energy = 0.0
 			synapse.omni_range = seg_radius * 3.0
 			synapse.shadow_enabled = false
 			seg.add_child(synapse)
 			_synapse_lights.append(synapse)
 
-		# Connector cylinder
+		# Connector cylinder between sections
 		var connector: MeshInstance3D = MeshInstance3D.new()
 		var cyl: CylinderMesh = CylinderMesh.new()
-		var prev_radius: float = lerpf(0.55, 0.18, (float(i) / (INITIAL_SEGMENTS + 1)) ** 2)
+		var prev_radius: float = lerpf(0.55, 0.15, (float(i) / (BODY_SECTION_COUNT + 1)) ** 2)
 		cyl.top_radius = seg_radius * 0.85
 		cyl.bottom_radius = prev_radius * 0.85
-		cyl.height = SEGMENT_SPACING * 0.8
+		cyl.height = SECTION_SPACING * 0.8
 		cyl.radial_segments = 10
 		connector.mesh = cyl
 
@@ -565,11 +601,11 @@ func _build_segments() -> void:
 		conn_mat.albedo_color = col.darkened(0.05)
 		conn_mat.roughness = 0.7
 		conn_mat.emission_enabled = true
-		conn_mat.emission = GLOW_COLOR * 0.7  # Green glow on connectors too
+		conn_mat.emission = GLOW_COLOR * 0.7
 		conn_mat.emission_energy_multiplier = 0.6
 		connector.material_override = conn_mat
 
-		connector.position = Vector3(0, 0.4, -(i + 0.5) * SEGMENT_SPACING)
+		connector.position = Vector3(0, 0.4, -(i + 0.5) * SECTION_SPACING)
 		add_child(connector)
 		_connectors.append(connector)
 
@@ -577,7 +613,7 @@ func _build_segments() -> void:
 	var tail: MeshInstance3D = MeshInstance3D.new()
 	var tail_mesh: CylinderMesh = CylinderMesh.new()
 	tail_mesh.top_radius = 0.01
-	tail_mesh.bottom_radius = 0.15
+	tail_mesh.bottom_radius = 0.12
 	tail_mesh.height = 0.6
 	tail_mesh.radial_segments = 8
 	tail.mesh = tail_mesh
@@ -588,7 +624,7 @@ func _build_segments() -> void:
 	tail_mat.emission = GLOW_COLOR * 0.5
 	tail_mat.emission_energy_multiplier = 0.4
 	tail.material_override = tail_mat
-	tail.position = Vector3(0, 0.3, -(INITIAL_SEGMENTS + 0.8) * SEGMENT_SPACING)
+	tail.position = Vector3(0, 0.3, -(BODY_SECTION_COUNT + 0.8) * SECTION_SPACING)
 	add_child(tail)
 	_connectors.append(tail)
 
@@ -652,7 +688,7 @@ func _physics_process(delta: float) -> void:
 		_position_history.push_front(global_position)
 		_rotation_history.push_front(_heading)
 		_last_record_pos = global_position
-		var max_history: int = (INITIAL_SEGMENTS + 5) * int(SEGMENT_SPACING / HISTORY_RESOLUTION) + 20
+		var max_history: int = (BODY_SECTION_COUNT + 5) * int(SECTION_SPACING / HISTORY_RESOLUTION) + 20
 		while _position_history.size() > max_history:
 			_position_history.pop_back()
 			_rotation_history.pop_back()
@@ -704,6 +740,50 @@ func _physics_process(delta: float) -> void:
 	# --- Stun burst (E key) ---
 	if Input.is_action_just_pressed("stun_burst") and _stun_cooldown <= 0 and energy >= STUN_ENERGY_COST:
 		_trigger_stun_burst()
+
+	# --- Tail Whip (F key) ---
+	_tail_whip_cooldown = maxf(_tail_whip_cooldown - delta, 0.0)
+	if Input.is_key_pressed(KEY_F) and _tail_whip_cooldown <= 0 and energy >= TAIL_WHIP_ENERGY_COST and not _tail_whip_active:
+		_trigger_tail_whip()
+	if _tail_whip_active:
+		_tail_whip_timer -= delta
+		_update_tail_whip_sweep(delta)
+		if _tail_whip_timer <= 0:
+			_tail_whip_active = false
+			_tail_whip_hit_targets.clear()
+
+	# --- Camouflage (C key near wall) ---
+	if Input.is_key_pressed(KEY_C) and energy > _camo_energy_drain * delta and not _is_sprinting:
+		if not _is_camouflaged:
+			_is_camouflaged = true
+		energy -= _camo_energy_drain * delta
+		_camo_alpha = lerpf(_camo_alpha, 0.2, delta * 5.0)
+		noise_level = minf(noise_level, 0.05)  # Nearly silent when camo'd
+	else:
+		if _is_camouflaged:
+			_is_camouflaged = false
+		_camo_alpha = lerpf(_camo_alpha, 1.0, delta * 5.0)
+	# Apply camo transparency to segments
+	if absf(_camo_alpha - 1.0) > 0.02:
+		_apply_camo_transparency(_camo_alpha)
+
+	# --- Boss Trait Activation (1-5 keys or auto from equipped) ---
+	_trait_cooldown = maxf(_trait_cooldown - delta, 0.0)
+	if _bone_shield_active:
+		_bone_shield_timer -= delta
+		if _bone_shield_timer <= 0:
+			_bone_shield_active = false
+			if _shield_mesh:
+				_shield_mesh.visible = false
+	# Number keys 1-5 activate traits directly
+	for key_idx in range(5):
+		if Input.is_key_pressed(KEY_1 + key_idx) and _trait_cooldown <= 0:
+			var all_traits: Array = GameManager.unlocked_traits
+			if key_idx < all_traits.size():
+				_activate_trait(all_traits[key_idx])
+
+	# Update trait VFX (shield pulse, flash decay)
+	_update_trait_vfx(delta)
 
 	# --- Update jaw visual ---
 	_update_jaw()
@@ -775,9 +855,9 @@ func _update_segments(delta: float) -> void:
 		prev_pos = _head_node.position
 	else:
 		prev_pos = _head_mesh.position
-	for i in range(_segments.size()):
-		var seg: MeshInstance3D = _segments[i]
-		var desired_dist: float = (i + 1) * SEGMENT_SPACING
+	for i in range(_body_sections.size()):
+		var seg: MeshInstance3D = _body_sections[i]
+		var desired_dist: float = (i + 1) * SECTION_SPACING
 		var target_pos: Vector3 = _get_history_position(desired_dist)
 		var local_target: Vector3 = to_local(target_pos)
 
@@ -787,7 +867,7 @@ func _update_segments(delta: float) -> void:
 		var wobble: float = sin(_time * 3.0 + i * 1.5) * 0.06
 		seg.position.y += wobble
 
-		# Green glow breathing per segment (staggered wave)
+		# Green glow breathing per section (staggered wave)
 		if seg.material_override:
 			var glow_wave: float = sin(_time * 2.0 + i * 0.6) * 0.2 + 0.8
 			seg.material_override.emission_energy_multiplier = glow_wave
@@ -806,30 +886,30 @@ func _update_segments(delta: float) -> void:
 		prev_pos = seg.position
 
 	# Update tail tip
-	if _connectors.size() > 0 and _segments.size() > 0:
+	if _connectors.size() > 0 and _body_sections.size() > 0:
 		var tail: MeshInstance3D = _connectors[-1]
-		var tail_dist: float = (INITIAL_SEGMENTS + 0.5) * SEGMENT_SPACING
+		var tail_dist: float = (BODY_SECTION_COUNT + 0.5) * SECTION_SPACING
 		var tail_target: Vector3 = to_local(_get_history_position(tail_dist))
 		tail.position = tail.position.lerp(tail_target, delta * 12.0)
-		var last_seg: Vector3 = _segments[-1].position
+		var last_seg: Vector3 = _body_sections[-1].position
 		var tail_dir: Vector3 = (tail.position - last_seg)
 		if tail_dir.length() > 0.01:
 			tail.look_at_from_position(tail.position, tail.position + tail_dir, Vector3.UP)
 			tail.rotation.x += PI * 0.5
 
 	# Synapse firing: purple pulse wave traveling head-to-tail
-	var synapse_wave: float = fmod(_time * 1.5, 4.0)  # Wave every ~4 seconds
+	var synapse_wave: float = fmod(_time * 1.5, 4.0)
 	for si in range(_synapse_lights.size()):
 		var light: OmniLight3D = _synapse_lights[si]
 		var seg_index: float = float(si) / maxf(_synapse_lights.size() - 1, 1)
 		var wave_dist: float = absf(synapse_wave - seg_index * 3.0)
 		if wave_dist < 0.5:
-			var pulse: float = 1.0 - wave_dist * 2.0  # 0-1 peak
+			var pulse: float = 1.0 - wave_dist * 2.0
 			light.light_energy = pulse * 2.5
 		else:
 			light.light_energy = lerpf(light.light_energy, 0.0, delta * 6.0)
 
-	# Vein glow pulse — subtle breathing
+	# Vein glow pulse
 	var vein_pulse: float = sin(_time * 2.5) * 0.3 + 1.2
 	for vein in _vein_meshes:
 		if vein and vein.material_override:
@@ -874,7 +954,360 @@ func _update_face(_delta: float) -> void:
 	if _damage_flash > 0:
 		face.trigger_damage_flash()
 
+func collect_nutrient_growth() -> void:
+	## Called when a nutrient is collected. Heals and restores energy instead of growing.
+	heal(5.0)
+	restore_energy(3.0)
+
+# --- Boss Trait Execution ---
+
+func _activate_trait(trait_id: String) -> void:
+	var data: Dictionary = BossTraitSystem.get_trait(trait_id)
+	if data.is_empty():
+		return
+	var cost: float = BossTraitSystem.get_energy_cost(trait_id)
+	if energy < cost:
+		return
+	energy -= cost
+	_trait_cooldown = BossTraitSystem.get_cooldown(trait_id)
+	_noise_spike = 1.0
+	_noise_spike_timer = 2.0
+	# Break camo
+	if _is_camouflaged:
+		_is_camouflaged = false
+		_camo_alpha = 1.0
+	match trait_id:
+		"pulse_wave":
+			_do_pulse_wave()
+		"acid_spit":
+			_do_acid_spit()
+		"wind_gust":
+			_do_wind_gust()
+		"bone_shield":
+			_do_bone_shield(data)
+		"summon_minions":
+			_do_summon_minions()
+
+func _do_pulse_wave() -> void:
+	var radius: float = BossTraitSystem.get_radius("pulse_wave")
+	var dmg: float = BossTraitSystem.get_damage("pulse_wave")
+	var mult: float = GameManager.get_trait_multiplier("pulse_wave")
+	var knockback: float = 15.0 * mult
+	for group in ["white_blood_cell", "phagocyte", "killer_t_cell", "mast_cell", "flyer", "boss"]:
+		for enemy in get_tree().get_nodes_in_group(group):
+			var dist: float = global_position.distance_to(enemy.global_position)
+			if dist < radius:
+				var falloff: float = 1.0 - dist / radius
+				if enemy.has_method("take_damage"):
+					enemy.take_damage(dmg * falloff)
+				if enemy is CharacterBody3D:
+					var push: Vector3 = (enemy.global_position - global_position).normalized()
+					push.y = 0.5
+					enemy.velocity += push * knockback * falloff
+				if enemy.has_method("stun"):
+					enemy.stun(1.0)
+	# VFX: expanding shockwave ring
+	_spawn_pulse_ring(radius, Color(0.9, 0.2, 0.1))
+	_trait_flash = 0.5
+	_trait_flash_color = Color(1.0, 0.3, 0.1)
+
+func _do_acid_spit() -> void:
+	var proj_script = load("res://scripts/snake_stage/acid_projectile.gd")
+	if not proj_script:
+		return
+	var mult: float = GameManager.get_trait_multiplier("acid_spit")
+	var proj: Area3D = Area3D.new()
+	proj.set_script(proj_script)
+	var forward: Vector3 = Vector3(sin(_heading + _head_flip), 0, cos(_heading + _head_flip)).normalized()
+	proj.direction = forward
+	proj.speed = 25.0
+	proj.damage = 8.0 * mult
+	proj.dot_dps = 5.0 * mult
+	proj.dot_duration = 4.0
+	proj.position = global_position + Vector3(0, 0.8, 0) + forward * 1.5
+	get_parent().add_child(proj)
+	# VFX: muzzle flash at mouth
+	_spawn_muzzle_flash(forward, Color(0.3, 0.9, 0.1))
+	_trait_flash = 0.3
+	_trait_flash_color = Color(0.3, 1.0, 0.1)
+
+func _do_wind_gust() -> void:
+	var mult: float = GameManager.get_trait_multiplier("wind_gust")
+	var forward: Vector3 = Vector3(sin(_heading + _head_flip), 0, cos(_heading + _head_flip)).normalized()
+	for group in ["white_blood_cell", "phagocyte", "killer_t_cell", "mast_cell", "flyer", "boss"]:
+		for enemy in get_tree().get_nodes_in_group(group):
+			var dist: float = global_position.distance_to(enemy.global_position)
+			if dist < 15.0 * mult:
+				var to_enemy: Vector3 = (enemy.global_position - global_position).normalized()
+				var dot: float = to_enemy.dot(forward)
+				if dot > 0.3:
+					var falloff: float = 1.0 - dist / (15.0 * mult)
+					if enemy.has_method("take_damage"):
+						enemy.take_damage(8.0 * mult * falloff)
+					if enemy is CharacterBody3D:
+						enemy.velocity += to_enemy * 20.0 * mult * falloff
+	# VFX: cone sweep
+	_spawn_wind_cone(forward, 15.0 * mult, Color(0.4, 0.7, 1.0))
+	_trait_flash = 0.3
+	_trait_flash_color = Color(0.5, 0.8, 1.0)
+
+func _do_bone_shield(data: Dictionary) -> void:
+	var mult: float = GameManager.get_trait_multiplier("bone_shield")
+	_bone_shield_active = true
+	_bone_shield_timer = data.get("base_duration", 3.0) * (1.0 + (mult - 1.0) * 0.4)
+	if not _shield_mesh:
+		_shield_mesh = MeshInstance3D.new()
+		var sphere: SphereMesh = SphereMesh.new()
+		sphere.radius = 2.0
+		sphere.height = 4.0
+		sphere.radial_segments = 20
+		sphere.rings = 10
+		_shield_mesh.mesh = sphere
+		var mat: StandardMaterial3D = StandardMaterial3D.new()
+		mat.albedo_color = Color(0.9, 0.85, 0.6, 0.15)
+		mat.roughness = 0.1
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.emission_enabled = true
+		mat.emission = Color(0.8, 0.75, 0.5)
+		mat.emission_energy_multiplier = 2.0
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_shield_mesh.material_override = mat
+		_shield_mesh.position = Vector3(0, 0.8, 0)
+		add_child(_shield_mesh)
+	_shield_mesh.visible = true
+	_trait_flash = 0.4
+	_trait_flash_color = Color(0.9, 0.85, 0.5)
+
+func _do_summon_minions() -> void:
+	var mult: float = GameManager.get_trait_multiplier("summon_minions")
+	var count: int = 2 + int(mult - 1.0)
+	var bug_script = load("res://scripts/snake_stage/prey_bug.gd")
+	if not bug_script:
+		return
+	for i in range(count):
+		var ally: CharacterBody3D = CharacterBody3D.new()
+		ally.set_script(bug_script)
+		var angle: float = TAU * i / count + randf() * 0.5
+		ally.position = global_position + Vector3(cos(angle) * 3.0, 0.5, sin(angle) * 3.0)
+		ally.add_to_group("player_ally")
+		get_tree().current_scene.add_child(ally)
+		# Spawn particle burst at each ally position
+		_spawn_summon_burst(ally.position)
+	_trait_flash = 0.4
+	_trait_flash_color = Color(0.6, 0.2, 0.8)
+
+# --- Trait VFX Helpers ---
+
+func _spawn_pulse_ring(max_radius: float, color: Color) -> void:
+	## Expanding shockwave ring for pulse_wave
+	if _pulse_ring and is_instance_valid(_pulse_ring):
+		_pulse_ring.queue_free()
+	_pulse_ring = MeshInstance3D.new()
+	var torus: TorusMesh = TorusMesh.new()
+	torus.inner_radius = 0.8
+	torus.outer_radius = 1.2
+	torus.rings = 24
+	torus.ring_segments = 16
+	_pulse_ring.mesh = torus
+	var mat: StandardMaterial3D = StandardMaterial3D.new()
+	mat.albedo_color = Color(color.r, color.g, color.b, 0.6)
+	mat.emission_enabled = true
+	mat.emission = color
+	mat.emission_energy_multiplier = 3.0
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.no_depth_test = true
+	_pulse_ring.material_override = mat
+	_pulse_ring.position = Vector3(0, 0.5, 0)
+	_pulse_ring.scale = Vector3(0.1, 0.1, 0.1)
+	add_child(_pulse_ring)
+	_pulse_ring_active = true
+	_pulse_ring_scale = 0.1
+	# Tween the ring outward then free
+	var tw: Tween = create_tween()
+	tw.tween_property(_pulse_ring, "scale", Vector3(max_radius, 0.3, max_radius), 0.6).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+	tw.parallel().tween_property(mat, "albedo_color:a", 0.0, 0.6)
+	tw.tween_callback(_pulse_ring.queue_free)
+	tw.tween_callback(func(): _pulse_ring = null; _pulse_ring_active = false)
+
+func _spawn_muzzle_flash(forward: Vector3, color: Color) -> void:
+	## Brief flash + light at mouth for acid spit
+	var flash: MeshInstance3D = MeshInstance3D.new()
+	var sphere: SphereMesh = SphereMesh.new()
+	sphere.radius = 0.4
+	sphere.height = 0.8
+	flash.mesh = sphere
+	var mat: StandardMaterial3D = StandardMaterial3D.new()
+	mat.albedo_color = Color(color.r, color.g, color.b, 0.8)
+	mat.emission_enabled = true
+	mat.emission = color
+	mat.emission_energy_multiplier = 5.0
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	flash.material_override = mat
+	flash.position = Vector3(0, 0.8, 0) + forward * 1.5
+	add_child(flash)
+	# Flash light
+	var light: OmniLight3D = OmniLight3D.new()
+	light.light_color = color
+	light.light_energy = 3.0
+	light.omni_range = 8.0
+	light.position = flash.position
+	add_child(light)
+	# Fade out
+	var tw: Tween = create_tween()
+	tw.tween_property(mat, "albedo_color:a", 0.0, 0.25)
+	tw.parallel().tween_property(light, "light_energy", 0.0, 0.25)
+	tw.tween_callback(flash.queue_free)
+	tw.tween_callback(light.queue_free)
+
+func _spawn_wind_cone(forward: Vector3, range_dist: float, color: Color) -> void:
+	## Cone sweep particles for wind gust
+	var cone: MeshInstance3D = MeshInstance3D.new()
+	var cylinder: CylinderMesh = CylinderMesh.new()
+	cylinder.top_radius = 0.2
+	cylinder.bottom_radius = range_dist * 0.4
+	cylinder.height = range_dist * 0.8
+	cylinder.radial_segments = 12
+	cone.mesh = cylinder
+	var mat: StandardMaterial3D = StandardMaterial3D.new()
+	mat.albedo_color = Color(color.r, color.g, color.b, 0.15)
+	mat.emission_enabled = true
+	mat.emission = color
+	mat.emission_energy_multiplier = 1.5
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	cone.material_override = mat
+	# Orient cone along forward direction
+	cone.position = global_position + Vector3(0, 0.8, 0) + forward * range_dist * 0.4
+	var up: Vector3 = Vector3.UP
+	if absf(forward.dot(up)) > 0.99:
+		up = Vector3.RIGHT
+	cone.look_at_from_position(cone.position, cone.position + forward, up)
+	cone.rotate_object_local(Vector3.RIGHT, PI * 0.5)  # Align cylinder axis with forward
+	get_parent().add_child(cone)
+	# Fade out
+	var tw: Tween = create_tween()
+	tw.tween_property(mat, "albedo_color:a", 0.0, 0.5)
+	tw.tween_callback(cone.queue_free)
+
+func _spawn_summon_burst(pos: Vector3) -> void:
+	## Purple sparkle burst at summon position
+	var burst: OmniLight3D = OmniLight3D.new()
+	burst.light_color = Color(0.6, 0.2, 0.8)
+	burst.light_energy = 4.0
+	burst.omni_range = 5.0
+	burst.position = pos + Vector3(0, 1.0, 0)
+	get_parent().add_child(burst)
+	var tw: Tween = get_tree().create_tween()
+	tw.tween_property(burst, "light_energy", 0.0, 0.8)
+	tw.tween_callback(burst.queue_free)
+
+func _update_trait_vfx(delta: float) -> void:
+	# Trait activation flash (overlay handled in HUD via metadata)
+	if _trait_flash > 0:
+		_trait_flash = maxf(_trait_flash - delta * 3.0, 0.0)
+	# Bone shield pulse
+	if _bone_shield_active and _shield_mesh and _shield_mesh.visible:
+		var pulse: float = 1.0 + sin(_time * 4.0) * 0.05
+		_shield_mesh.scale = Vector3(pulse, pulse, pulse)
+		var smat = _shield_mesh.material_override
+		if smat:
+			smat.emission_energy_multiplier = 2.0 + sin(_time * 3.0) * 0.5
+
+func _trigger_tail_whip() -> void:
+	## Spin-slam tail in 360 arc, damaging and knocking back nearby enemies
+	# Break camouflage — tail whip is loud
+	if _is_camouflaged:
+		_is_camouflaged = false
+		_camo_alpha = 1.0
+	_tail_whip_active = true
+	_tail_whip_timer = TAIL_WHIP_DURATION
+	_tail_whip_cooldown = TAIL_WHIP_COOLDOWN_TIME
+	energy -= TAIL_WHIP_ENERGY_COST
+	_noise_spike = 1.0
+	_noise_spike_timer = 2.0
+	tail_whip_performed.emit()
+	# Damage is now dealt per-frame during sweep in _update_tail_whip_sweep()
+	_tail_whip_hit_targets.clear()
+	_tail_whip_angle = 0.0
+
+func _update_tail_whip_sweep(delta: float) -> void:
+	## Animated sweep: advance angle, offset tail sections, check for hits
+	_tail_whip_angle += (PI / TAIL_WHIP_DURATION) * delta
+	_tail_whip_angle = minf(_tail_whip_angle, PI)
+
+	# Sweep progress 0→1
+	var sweep_t: float = _tail_whip_angle / PI
+
+	# Offset tail body sections perpendicular to body direction during sweep
+	var perp: Vector3 = Vector3(cos(_heading), 0, -sin(_heading))
+	var sweep_offset_strength: float = sin(sweep_t * PI) * 2.0  # Peaks at midpoint
+	var sweep_side: float = lerpf(-1.0, 1.0, sweep_t)  # Swings from left to right
+
+	# Find tail world positions for damage check
+	var tail_positions: Array[Vector3] = []
+	for i in range(_body_sections.size()):
+		var sec: MeshInstance3D = _body_sections[i]
+		var t: float = float(i) / maxf(_body_sections.size() - 1, 1)
+		# Only offset the back half of the body
+		if t > 0.4:
+			var offset_amount: float = sweep_side * sweep_offset_strength * (t - 0.4) * 2.5
+			sec.position.x += perp.x * offset_amount * delta * 8.0
+			sec.position.z += perp.z * offset_amount * delta * 8.0
+		if t > 0.6:
+			tail_positions.append(sec.global_position)
+
+	# Check for enemy hits along tail sweep arc (excludes prey - tail whip is defensive)
+	for group_name in ["white_blood_cell", "flyer", "phagocyte", "killer_t_cell", "mast_cell", "boss"]:
+		for creature in get_tree().get_nodes_in_group(group_name):
+			if creature in _tail_whip_hit_targets:
+				continue
+			for tail_pos in tail_positions:
+				var dist: float = tail_pos.distance_to(creature.global_position)
+				if dist < TAIL_WHIP_RANGE:
+					_tail_whip_hit_targets.append(creature)
+					if creature.has_method("take_damage"):
+						creature.take_damage(TAIL_WHIP_DAMAGE)
+					var knockback_dir: Vector3 = (creature.global_position - global_position).normalized()
+					knockback_dir.y = 0.5
+					if creature is CharacterBody3D:
+						creature.velocity += knockback_dir * TAIL_WHIP_KNOCKBACK
+					break
+
+func apply_venom(target: Node3D) -> void:
+	## Apply venom DoT to a target (called after bite hits)
+	if not target.has_meta("venomed"):
+		target.set_meta("venomed", true)
+		target.set_meta("venom_remaining", _venom_duration)
+		target.set_meta("venom_dps", _venom_damage_per_sec)
+		# Venom ticks handled by snake_stage_manager
+
+func get_camo_critical_mult() -> float:
+	## Returns damage multiplier for camo-break attacks
+	if _is_camouflaged:
+		return 3.0  # Triple damage from stealth
+	return 1.0
+
+func _apply_camo_transparency(alpha: float) -> void:
+	## Set transparency on all body sections for camouflage effect
+	for seg in _body_sections:
+		var mat: StandardMaterial3D = seg.material_override
+		if mat:
+			if alpha < 0.9:
+				mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				mat.albedo_color.a = alpha
+			else:
+				mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+				mat.albedo_color.a = 1.0
+
 func take_damage(amount: float) -> void:
+	# Bone shield blocks all damage
+	if _bone_shield_active:
+		return
+	# Camo breaks on damage
+	if _is_camouflaged:
+		_is_camouflaged = false
+		_camo_alpha = 1.0
 	health -= amount
 	_damage_flash = 1.0
 	if _face_canvas:
@@ -884,7 +1317,11 @@ func take_damage(amount: float) -> void:
 	if health <= 0:
 		_die()
 
+var last_death_position: Vector3 = Vector3.ZERO
+
 func _die() -> void:
+	# Death penalty: lose half nutrients/health
+	last_death_position = global_position
 	died.emit()
 	health = max_health * 0.5
 	energy = max_energy * 0.5
@@ -937,6 +1374,8 @@ func _check_hazards(delta: float) -> void:
 				take_damage(node.get_meta("dps", 5.0) * delta)
 			"bile":
 				_hazard_slow = minf(_hazard_slow, node.get_meta("slow_factor", 0.4))
+			"slow":
+				_hazard_slow = minf(_hazard_slow, node.get_meta("slow_factor", 0.5))
 			"nerve":
 				if randf() < node.get_meta("zap_chance", 0.015):
 					take_damage(node.get_meta("zap_damage", 8.0))
@@ -1018,10 +1457,13 @@ func _update_tractor_beam(delta: float) -> void:
 
 func do_bite_damage() -> void:
 	## Called during bite snap — deals damage to creatures in range with knockback
+	var crit_mult: float = get_camo_critical_mult()
 	var targets: Array = get_bite_targets()
 	for target in targets:
 		if target.has_method("take_damage"):
-			target.take_damage(25.0)
+			target.take_damage(25.0 * crit_mult)
+		# Apply venom DoT
+		apply_venom(target)
 		# Knockback: push target away from player + upward
 		if target is CharacterBody3D:
 			var push: Vector3 = (target.global_position - global_position).normalized()

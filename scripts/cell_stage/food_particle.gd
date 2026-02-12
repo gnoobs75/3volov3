@@ -212,7 +212,7 @@ func _draw_organelle(r: float) -> void:
 
 func _draw_label() -> void:
 	# Simple floating alien symbol - minimal and clean
-	var font := ThemeDB.fallback_font
+	var font := UIConstants.get_display_font()
 	var font_size: int = 10
 	var label_y: float = -_base_radius - 6.0 + sin(_time * 2.0) * 1.0
 	var rarity: String = component_data.get("rarity", "common")
@@ -242,4 +242,7 @@ func _draw_label() -> void:
 func _on_body_entered(body: Node2D) -> void:
 	if body.has_method("feed"):
 		body.feed(component_data)
+		# 15% chance to drop a gene fragment from rare food
+		if randf() < 0.15:
+			GameManager.add_gene_fragments(1)
 		queue_free()

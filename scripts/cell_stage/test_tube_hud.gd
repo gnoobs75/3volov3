@@ -73,7 +73,7 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	var n: int = DEFS.size()
 	var spacing: float = _height / float(n)
-	var font := ThemeDB.fallback_font
+	var font := UIConstants.get_display_font()
 
 	# Draw helix title
 	draw_string(font, Vector2(10, 20), "GENOME", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.4, 0.7, 0.9, 0.8))

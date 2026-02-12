@@ -8,6 +8,12 @@ signal evolution_triggered(category: String)
 signal evolution_applied(mutation: Dictionary)
 signal cell_stage_won
 signal safe_zone_ended
+signal gene_fragments_changed(new_total: int)
+signal mutation_forged(hybrid: Dictionary)
+signal mutation_upgraded(mutation_id: String, new_tier: int)
+signal sensory_level_changed(new_level: int)
+signal trait_unlocked(trait_id: String)
+signal trait_upgraded(trait_id: String, new_tier: int)
 
 enum Stage { MENU, INTRO, CELL, SNAKE, OCEAN_STUB }
 
@@ -26,6 +32,39 @@ var evolution_level: int = 0
 var active_mutations: Array[Dictionary] = []
 var sensory_level: int = 0
 var tutorial_shown: bool = false
+var initial_customization_done: bool = false
+
+# Creature visual customization (persists across deaths)
+var creature_customization: Dictionary = {
+	"membrane_color": Color(0.3, 0.6, 1.0),
+	"iris_color": Color(0.2, 0.5, 0.9),
+	"glow_color": Color(0.3, 0.7, 1.0),
+	"interior_color": Color(0.15, 0.25, 0.5),
+	"cilia_color": Color(0.4, 0.7, 1.0),
+	"organelle_tint": Color(0.3, 0.8, 0.5),
+	"eye_style": "anime",   # round, anime, compound, googly, slit, lashed, fierce, dot, star
+	"eye_angle": 0.0,       # Radians — angle on membrane where eyes face (0 = front)
+	"eye_spacing": 5.5,     # Distance between eyes (3.0 to 9.0)
+	"eye_size": 3.5,        # Eye radius scale (2.0 to 6.0)
+}
+
+# Mutation placement map: mutation_id -> {angle: float, distance: float, mirrored: bool, scale: float, rotation_offset: float}
+var mutation_placements: Dictionary = {}
+var _placements_migrated: bool = false
+
+# CRISPR Mutation Workshop — persistent across deaths
+var gene_fragments: int = 0
+var forged_mutations: Array[Dictionary] = []  # Hybrid mutations from the Forge
+var mutation_upgrades: Dictionary = {}  # mutation_id -> {tier: int, multiplier: float}
+
+# Creature Codex — persistent across deaths
+var discovered_creatures: Dictionary = {}  # creature_id -> bool
+
+# Boss Traits — looted from defeated biome bosses
+var unlocked_traits: Array[String] = []  # trait IDs: "pulse_wave", "acid_spit", "wind_gust", "bone_shield", "summon_minions"
+var trait_tiers: Dictionary = {}  # trait_id -> int (1-3)
+var equipped_trait: String = ""  # Currently selected trait for use
+
 var safe_zone_active: bool = true  # No enemies until player collects a few items
 const MAX_VIAL: int = 10
 const SAFE_ZONE_THRESHOLD: int = 3  # Collections before enemies appear
@@ -63,6 +102,9 @@ const CATEGORY_LABELS: Dictionary = {
 	"organic_acids": "Organic Acids",
 	"organelles": "Organelles",
 }
+
+func _ready() -> void:
+	_migrate_placements_if_needed()
 
 func go_to_intro() -> void:
 	current_stage = Stage.INTRO
@@ -193,6 +235,8 @@ func consume_vial_for_evolution(category_key: String) -> void:
 	inventory[category_key].clear()
 	evolution_level += 1
 	inventory_changed.emit()
+	# Bonus: award gene fragments for filling a vial
+	add_gene_fragments(2)
 
 func apply_mutation(mutation: Dictionary) -> void:
 	active_mutations.append(mutation)
@@ -201,12 +245,292 @@ func apply_mutation(mutation: Dictionary) -> void:
 		sensory_level = mini(sensory_level + 1, SENSORY_TIERS.size() - 1)
 	evolution_applied.emit(mutation)
 
+func apply_mutation_with_placement(mutation: Dictionary, snap_slot: int, mirrored: bool) -> void:
+	# New angular placement path
+	var vis: String = mutation.get("visual", "")
+	var angle: float = SnapPointSystem.get_default_angle_for_visual(vis)
+	var distance: float = SnapPointSystem.get_default_distance_for_visual(vis)
+	var auto_mirror: bool = not SnapPointSystem.is_center_angle(angle) and distance >= 0.5
+	mutation_placements[mutation.get("id", "")] = {
+		"angle": angle,
+		"distance": distance,
+		"mirrored": auto_mirror,
+		"scale": 1.0,
+		"rotation_offset": 0.0,
+	}
+	apply_mutation(mutation)
+
+func apply_mutation_with_angle(mutation: Dictionary, angle: float, distance: float) -> void:
+	var auto_mirror: bool = not SnapPointSystem.is_center_angle(angle) and distance >= 0.5
+	mutation_placements[mutation.get("id", "")] = {
+		"angle": angle,
+		"distance": distance,
+		"mirrored": auto_mirror,
+		"scale": 1.0,
+		"rotation_offset": 0.0,
+	}
+	apply_mutation(mutation)
+
+func update_mutation_placement(mutation_id: String, snap_slot: int, mirrored: bool) -> void:
+	# Legacy compat — convert snap_slot to angle
+	var angle: float = SnapPointSystem.snap_slot_to_angle(snap_slot)
+	var distance: float = SnapPointSystem.snap_slot_to_distance(snap_slot)
+	var existing: Dictionary = mutation_placements.get(mutation_id, {})
+	var scale_val: float = existing.get("scale", 1.0)
+	var rot_off: float = existing.get("rotation_offset", 0.0)
+	mutation_placements[mutation_id] = {
+		"angle": angle,
+		"distance": distance,
+		"mirrored": mirrored,
+		"scale": scale_val,
+		"rotation_offset": rot_off,
+	}
+
+func update_mutation_angle(mutation_id: String, angle: float, distance: float, mirrored: bool) -> void:
+	var existing: Dictionary = mutation_placements.get(mutation_id, {})
+	var scale_val: float = existing.get("scale", 1.0)
+	var rot_off: float = existing.get("rotation_offset", 0.0)
+	mutation_placements[mutation_id] = {
+		"angle": angle,
+		"distance": distance,
+		"mirrored": mirrored,
+		"scale": scale_val,
+		"rotation_offset": rot_off,
+	}
+
+func update_mutation_scale(mutation_id: String, scale: float) -> void:
+	if mutation_id in mutation_placements:
+		mutation_placements[mutation_id]["scale"] = clampf(scale, 0.4, 2.5)
+
+func update_mutation_rotation(mutation_id: String, rotation_offset: float) -> void:
+	if mutation_id in mutation_placements:
+		mutation_placements[mutation_id]["rotation_offset"] = fmod(rotation_offset + TAU, TAU)
+
+func remove_mutation_placement(mutation_id: String) -> void:
+	mutation_placements.erase(mutation_id)
+
+func _migrate_placements_if_needed() -> void:
+	if _placements_migrated:
+		return
+	_placements_migrated = true
+	var to_migrate: Array = []
+	for mid in mutation_placements:
+		var p: Dictionary = mutation_placements[mid]
+		if p.has("snap_slot") and not p.has("angle"):
+			to_migrate.append(mid)
+	for mid in to_migrate:
+		var p: Dictionary = mutation_placements[mid]
+		var slot: int = p.get("snap_slot", 0)
+		var mirrored: bool = p.get("mirrored", false)
+		var scale_val: float = p.get("scale", 1.0)
+		mutation_placements[mid] = {
+			"angle": SnapPointSystem.snap_slot_to_angle(slot),
+			"distance": SnapPointSystem.snap_slot_to_distance(slot),
+			"mirrored": mirrored,
+			"scale": scale_val,
+			"rotation_offset": 0.0,
+		}
+
+func update_creature_customization(custom: Dictionary) -> void:
+	for key in custom:
+		creature_customization[key] = custom[key]
+
 func get_sensory_tier() -> Dictionary:
 	return SENSORY_TIERS[sensory_level]
+
+# --- CRISPR Mutation Workshop ---
+
+func add_gene_fragments(amount: int) -> void:
+	gene_fragments += amount
+	gene_fragments_changed.emit(gene_fragments)
+
+func spend_gene_fragments(amount: int) -> bool:
+	if gene_fragments < amount:
+		return false
+	gene_fragments -= amount
+	gene_fragments_changed.emit(gene_fragments)
+	return true
+
+func get_mutation_tier(mutation_id: String) -> int:
+	if mutation_id in mutation_upgrades:
+		return mutation_upgrades[mutation_id].get("tier", 1)
+	return 1
+
+func get_tier_multiplier(mutation_id: String) -> float:
+	var tier: int = get_mutation_tier(mutation_id)
+	match tier:
+		2: return 1.4
+		3: return 1.9
+		_: return 1.0
+
+func has_mutation(mutation_id: String) -> bool:
+	for m in active_mutations:
+		if m.get("id", "") == mutation_id:
+			return true
+	for m in forged_mutations:
+		if m.get("id", "") == mutation_id:
+			return true
+	return false
+
+func upgrade_mutation(mutation_id: String) -> bool:
+	var current_tier: int = get_mutation_tier(mutation_id)
+	if current_tier >= 3:
+		return false
+	var cost: int = ForgeCalculator.get_upgrade_cost(current_tier)
+	if not spend_gene_fragments(cost):
+		return false
+	var new_tier: int = current_tier + 1
+	mutation_upgrades[mutation_id] = {"tier": new_tier, "multiplier": ForgeCalculator.get_tier_multiplier(new_tier)}
+	# Apply the stat boost to the active mutation
+	_apply_tier_to_mutation(mutation_id, new_tier)
+	mutation_upgraded.emit(mutation_id, new_tier)
+	return true
+
+func _apply_tier_to_mutation(mutation_id: String, tier: int) -> void:
+	var mult: float = ForgeCalculator.get_tier_multiplier(tier)
+	for m in active_mutations:
+		if m.get("id", "") == mutation_id:
+			# Recalculate stats from base using tier multiplier
+			var base_mut: Dictionary = ForgeCalculator.find_base_mutation(mutation_id)
+			if base_mut.is_empty():
+				break
+			var base_stat: Dictionary = base_mut.get("stat", {})
+			var new_stat: Dictionary = {}
+			for key in base_stat:
+				new_stat[key] = base_stat[key] * mult
+			m["stat"] = new_stat
+			m["tier"] = tier
+			evolution_applied.emit(m)
+			break
+
+func forge_mutations(mut_a: Dictionary, mut_b: Dictionary) -> Dictionary:
+	## Combine two mutations into a hybrid. Returns empty dict on failure.
+	var viability: float = ForgeCalculator.calculate_viability(mut_a, mut_b)
+	# Roll for success
+	if randf() > viability:
+		return {}
+	var hybrid: Dictionary = ForgeCalculator.combine_mutations(mut_a, mut_b, viability)
+	# Remove the source mutations from active
+	_remove_mutation(mut_a.get("id", ""))
+	_remove_mutation(mut_b.get("id", ""))
+	# Add hybrid
+	forged_mutations.append(hybrid)
+	active_mutations.append(hybrid)
+	mutation_forged.emit(hybrid)
+	evolution_applied.emit(hybrid)
+	return hybrid
+
+func _remove_mutation(mutation_id: String) -> void:
+	for i in range(active_mutations.size() - 1, -1, -1):
+		if active_mutations[i].get("id", "") == mutation_id:
+			active_mutations.remove_at(i)
+			break
+	# Clean up placement
+	mutation_placements.erase(mutation_id)
+	mutation_upgrades.erase(mutation_id)
+
+# --- Creature Codex ---
+
+func discover_creature(creature_id: String) -> void:
+	if creature_id in discovered_creatures:
+		return
+	discovered_creatures[creature_id] = true
+
+func is_creature_discovered(creature_id: String) -> bool:
+	return discovered_creatures.get(creature_id, false)
+
+# --- Boss Traits ---
+
+func unlock_trait(trait_id: String) -> void:
+	if trait_id in unlocked_traits:
+		return
+	unlocked_traits.append(trait_id)
+	trait_tiers[trait_id] = 1
+	if equipped_trait == "":
+		equipped_trait = trait_id
+	trait_unlocked.emit(trait_id)
+
+func grant_queen_visual_upgrade() -> void:
+	## Grant unique psionic crown mutation from Macrophage Queen
+	var queen_mut_id: String = "queen_psionic_crown"
+	for m in active_mutations:
+		if m.get("id", "") == queen_mut_id:
+			return  # Already have it
+	var mutation: Dictionary = {
+		"id": queen_mut_id,
+		"name": "Psionic Crown",
+		"description": "Neural tendrils harvested from the Macrophage Queen. Grants a pulsing psionic crest.",
+		"visual": "antenna",
+		"tier": 3,
+		"stat_bonuses": {"health": 15, "energy": 10},
+		"affinities": ["neural", "predator"],
+		"boss_reward": true,
+	}
+	active_mutations.append(mutation)
+	mutation_placements[queen_mut_id] = {
+		"angle": -PI * 0.5,  # Top of head
+		"distance": 1.0,
+		"mirrored": false,
+		"scale": 1.3,
+		"rotation_offset": 0.0,
+	}
+	evolution_applied.emit(mutation)
+
+func has_trait(trait_id: String) -> bool:
+	return trait_id in unlocked_traits
+
+func get_trait_tier(trait_id: String) -> int:
+	return trait_tiers.get(trait_id, 0)
+
+func upgrade_trait(trait_id: String) -> bool:
+	if not has_trait(trait_id):
+		return false
+	var current: int = get_trait_tier(trait_id)
+	if current >= 3:
+		return false
+	var cost: int = 20 if current == 1 else 40  # T1→T2 = 20, T2→T3 = 40
+	if not spend_gene_fragments(cost):
+		return false
+	trait_tiers[trait_id] = current + 1
+	trait_upgraded.emit(trait_id, current + 1)
+	return true
+
+func get_trait_multiplier(trait_id: String) -> float:
+	match get_trait_tier(trait_id):
+		2: return 1.5
+		3: return 2.2
+		_: return 1.0
+
+func equip_trait(trait_id: String) -> void:
+	if has_trait(trait_id):
+		equipped_trait = trait_id
+
+func all_wing_bosses_defeated() -> bool:
+	## Check if all 5 wing biome bosses (1-4 + 6) are killed
+	for idx in [1, 2, 3, 4, 6]:
+		if not get_meta("boss_%d_defeated" % idx, false):
+			return false
+	return true
+
+func mark_boss_defeated(biome_idx: int) -> void:
+	set_meta("boss_%d_defeated" % biome_idx, true)
+
+# --- Sensory Upgrades (Snake Stage) ---
+
+func upgrade_sensory_from_vial() -> void:
+	## Small vision bump when filling a vial in snake stage
+	sensory_level = mini(sensory_level + 1, SENSORY_TIERS.size() - 1)
+	sensory_level_changed.emit(sensory_level)
+
+func upgrade_sensory_from_boss() -> void:
+	## Big vision jump when defeating a biome boss
+	sensory_level = mini(sensory_level + 2, SENSORY_TIERS.size() - 1)
+	sensory_level_changed.emit(sensory_level)
 
 func reset_stats() -> void:
 	## Soft reset: keep evolution progress, lose inventory and reproduction count.
 	## Organelles partially preserved (50% rounded down).
+	## CRISPR data, traits, codex persist permanently.
 	player_stats.reproductions = 0
 	var kept_organelles: int = player_stats.organelles_collected / 2
 	player_stats.organelles_collected = kept_organelles
@@ -215,4 +539,5 @@ func reset_stats() -> void:
 	player_stats.spliced_traits = {}
 	for key in inventory:
 		inventory[key] = []
-	# Keep evolution level, mutations, and sensory upgrades across deaths
+	# Keep: evolution level, mutations, sensory upgrades, gene_fragments,
+	# forged_mutations, mutation_upgrades, unlocked_traits, trait_tiers — all persist

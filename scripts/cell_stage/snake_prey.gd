@@ -12,11 +12,20 @@ var panic_speed: float = 180.0
 var detection_range: float = 120.0
 var health_restore: float = 15.0
 var energy_restore: float = 10.0
+var is_alpha: bool = false  # Alpha variant: golden, fights back, more HP
 
 var _time: float = 0.0
 var wander_target: Vector2 = Vector2.ZERO
 var wander_timer: float = 0.0
 var _target_velocity: Vector2 = Vector2.ZERO  # For smooth interpolated movement
+
+# Schooling behavior
+var _school_scan_timer: float = 0.0
+var _school_neighbors: Array = []  # Nearby prey refs
+const SCHOOL_RANGE: float = 100.0  # Distance to detect schoolmates
+const SCHOOL_COHESION: float = 0.3  # How strongly to steer toward school center
+const SCHOOL_ALIGNMENT: float = 0.4  # How strongly to match school velocity
+const SCHOOL_SEPARATION: float = 0.5  # How strongly to avoid too-close neighbors
 
 # Body segments
 var _num_segments: int = 0
@@ -62,6 +71,18 @@ func _ready() -> void:
 	add_to_group("prey")
 	_pick_wander_target()
 	_blink_timer = randf_range(1.0, 3.0)
+
+	# Alpha variant: 5% chance, golden color, more HP, fights back
+	if not is_alpha and randf() < 0.05:
+		is_alpha = true
+	if is_alpha:
+		_base_color = Color(1.0, 0.85, 0.2, 0.95)
+		_belly_color = Color(1.0, 0.95, 0.5, 0.8)
+		health = 40.0
+		health_restore = 35.0
+		energy_restore = 25.0
+		_head_radius *= 1.3
+		_segment_radius *= 1.2
 
 func _physics_process(delta: float) -> void:
 	var player := _find_player()
@@ -147,6 +168,12 @@ func _physics_process(delta: float) -> void:
 			_is_blinking = true
 			_blink_timer = 0.1
 
+	# Schooling scan (throttled)
+	_school_scan_timer -= delta
+	if _school_scan_timer <= 0:
+		_school_scan_timer = 0.5
+		_update_school_neighbors()
+
 	_time += delta
 	_panic_level = clampf(_panic_level, 0.0, 1.0)
 	var _vp_cam := get_viewport().get_camera_2d()
@@ -157,7 +184,10 @@ func _do_idle(delta: float) -> void:
 	wander_timer -= delta
 	if wander_timer <= 0 or global_position.distance_to(wander_target) < 15:
 		_pick_wander_target()
-	_target_velocity = global_position.direction_to(wander_target) * speed * 0.4
+	var wander_vel: Vector2 = global_position.direction_to(wander_target) * speed * 0.4
+	# Apply schooling behavior
+	var school_steer: Vector2 = _get_school_steering() * speed * 0.5
+	_target_velocity = wander_vel + school_steer
 	_panic_level = maxf(_panic_level - delta * 1.5, 0.0)
 
 func _do_panic(delta: float, player: Node2D) -> void:
@@ -169,11 +199,48 @@ func _do_panic(delta: float, player: Node2D) -> void:
 	var zigzag: float = sin(_time * 8.0) * 0.4
 	flee_dir = flee_dir.rotated(zigzag)
 	_target_velocity = flee_dir * lerpf(speed, panic_speed, _panic_level)
+	# School panic: neighbors also flee when one panics
+	for neighbor in _school_neighbors:
+		if is_instance_valid(neighbor) and neighbor.state == State.IDLE:
+			neighbor.state = State.PANIC
+			neighbor._panic_level = 0.3
 	state = State.FLEEING
 
 func _pick_wander_target() -> void:
 	wander_target = global_position + Vector2(randf_range(-120, 120), randf_range(-120, 120))
 	wander_timer = randf_range(2.0, 4.0)
+
+func _update_school_neighbors() -> void:
+	_school_neighbors.clear()
+	for prey in get_tree().get_nodes_in_group("prey"):
+		if prey == self or not is_instance_valid(prey):
+			continue
+		if global_position.distance_to(prey.global_position) < SCHOOL_RANGE:
+			_school_neighbors.append(prey)
+
+func _get_school_steering() -> Vector2:
+	if _school_neighbors.is_empty():
+		return Vector2.ZERO
+	var cohesion := Vector2.ZERO
+	var alignment := Vector2.ZERO
+	var separation := Vector2.ZERO
+	var count: int = 0
+	for neighbor in _school_neighbors:
+		if not is_instance_valid(neighbor):
+			continue
+		cohesion += neighbor.global_position
+		alignment += neighbor.velocity
+		var diff: Vector2 = global_position - neighbor.global_position
+		var dist: float = diff.length()
+		if dist > 0 and dist < 30.0:  # Separation distance
+			separation += diff.normalized() / dist
+		count += 1
+	if count == 0:
+		return Vector2.ZERO
+	cohesion = (cohesion / count - global_position).normalized() * SCHOOL_COHESION
+	alignment = (alignment / count).normalized() * SCHOOL_ALIGNMENT
+	separation = separation.normalized() * SCHOOL_SEPARATION
+	return cohesion + alignment + separation
 
 func _find_player() -> Node2D:
 	var players := get_tree().get_nodes_in_group("player")
@@ -247,6 +314,11 @@ func _draw() -> void:
 	draw_circle(head_offset, _head_radius * 1.5, Color(head_col.r, head_col.g, head_col.b, 0.05))
 	draw_circle(head_offset, _head_radius, head_col)
 	draw_circle(head_offset + Vector2(_head_radius * 0.15, 0), _head_radius * 0.5, _belly_color)
+	# Alpha prey golden crown glow
+	if is_alpha:
+		var crown_pulse: float = 0.15 + 0.1 * sin(_time * 3.0)
+		draw_circle(head_offset, _head_radius * 2.0, Color(1.0, 0.9, 0.3, crown_pulse))
+		draw_arc(head_offset, _head_radius * 1.3, 0, TAU, 16, Color(1.0, 0.85, 0.2, 0.4 + 0.15 * sin(_time * 4.0)), 1.5, true)
 
 	# Face
 	_draw_face(head_col, head_offset)
@@ -408,9 +480,9 @@ func get_eaten() -> Dictionary:
 	return {
 		"health_restore": health_restore,
 		"energy_restore": energy_restore,
-		"id": "SnakePrey",
-		"short_name": "Nematode",
-		"display_name": "Micro-nematode",
+		"id": "AlphaPrey" if is_alpha else "SnakePrey",
+		"short_name": "Alpha Nematode" if is_alpha else "Nematode",
+		"display_name": "Alpha Micro-nematode" if is_alpha else "Micro-nematode",
 		"color": [_base_color.r, _base_color.g, _base_color.b],
-		"rarity": "uncommon",
+		"rarity": "rare" if is_alpha else "uncommon",
 	}

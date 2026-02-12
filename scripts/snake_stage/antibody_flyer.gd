@@ -22,7 +22,7 @@ const DIVE_RANGE: float = 15.0  # Must be close to trigger a dive
 const AGGRO_RANGE: float = 40.0  # Beyond this, flyer wanders instead of circling player
 const DIVE_COOLDOWN: float = 4.0  # Longer between attacks
 const STAB_DURATION: float = 1.0  # Stuck longer = vulnerable window for player bite
-const STAB_DAMAGE: float = 8.0
+const STAB_DAMAGE: float = 4.0  # Reduced: annoying not deadly
 const STAB_RADIUS: float = 2.5
 const GRAVITY: float = 0.5
 const STEALTH_DETECT_THRESHOLD: float = 0.2  # Player noise below this = invisible

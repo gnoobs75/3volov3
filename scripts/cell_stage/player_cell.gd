@@ -12,6 +12,7 @@ signal damage_dealt(amount: float)
 signal prey_killed
 signal food_consumed
 signal reproduction_complete
+signal biomolecule_category_collected(category: String)
 
 var max_energy: float = 100.0
 var energy: float = 100.0
@@ -120,7 +121,6 @@ var mood: Mood = Mood.IDLE
 var _mood_timer: float = 0.0
 var _blink_timer: float = 0.0
 var _is_blinking: bool = false
-var _mouth_open: float = 0.0
 var _eye_spacing: float = 0.0
 var _eye_size: float = 0.0
 var _pupil_size: float = 0.0
@@ -144,7 +144,7 @@ func _ready() -> void:
 
 func _randomize_face() -> void:
 	_eye_spacing = randf_range(4.5, 7.0)
-	_eye_size = randf_range(3.0, 4.5)
+	_eye_size = GameManager.creature_customization.get("eye_size", 3.5)
 	_pupil_size = randf_range(1.2, 2.2)
 	_has_eyebrows = randf() > 0.3
 
@@ -155,11 +155,12 @@ func _init_procedural_shape() -> void:
 		var rx: float = _cell_radius * _elongation + randf_range(-2.0, 2.0)
 		var ry: float = _cell_radius + randf_range(-2.0, 2.0)
 		_membrane_points.append(Vector2(cos(angle) * rx, sin(angle) * ry))
+	# Tightened organelles — stay in center 35% to avoid eye area
 	_organelle_positions.clear()
 	for i in range(NUM_ORGANELLES):
 		var a: float = randf() * TAU
-		var dx: float = randf_range(3.0, _cell_radius * _elongation * 0.6)
-		var dy: float = randf_range(3.0, _cell_radius * 0.6)
+		var dx: float = randf_range(2.0, _cell_radius * _elongation * 0.35)
+		var dy: float = randf_range(2.0, _cell_radius * 0.35)
 		_organelle_positions.append(Vector2(cos(a) * dx, sin(a) * dy))
 	_cilia_angles.clear()
 	for i in range(NUM_CILIA):
@@ -244,6 +245,10 @@ func _physics_process(delta: float) -> void:
 	if velocity.length() > 20.0:
 		_spawn_wake_particle()
 
+	# Biomolecule magnet: pull nearby food toward player when sensory >= 2
+	if GameManager.sensory_level >= 2:
+		_update_biomolecule_magnet(delta)
+
 	# Try to eat nearby prey after moving
 	_try_eat_prey()
 
@@ -323,8 +328,6 @@ func _update_mood(delta: float) -> void:
 			_is_blinking = true
 			_blink_timer = 0.12
 
-	_mouth_open = maxf(_mouth_open - delta * 3.0, 0.0)
-
 	# Anime eye effects
 	_eye_sparkle_timer += delta
 	_sweat_drop_y = fmod(_sweat_drop_y + delta * 2.0, 1.0)
@@ -366,13 +369,15 @@ func _draw() -> void:
 	var health_ratio: float = health / max_health
 
 	# Outer glow (dims when depleted) — elliptical when elongated
+	var custom_glow: Color = GameManager.creature_customization.get("glow_color", Color(0.3, 0.7, 1.0))
 	var glow_base: float = 0.08 if not is_energy_depleted else 0.03
 	var glow_alpha: float = glow_base + 0.06 * sin(_time * 2.0)
-	var glow_color := Color(0.3, 0.7, 1.0) if not is_energy_depleted else Color(0.3, 0.3, 0.4)
+	var glow_color := custom_glow if not is_energy_depleted else Color(0.3, 0.3, 0.4)
 	_draw_ellipse(Vector2.ZERO, _cell_radius * _elongation * 2.2, _cell_radius * 2.2, Color(glow_color.r, glow_color.g, glow_color.b, glow_alpha))
 	_draw_ellipse(Vector2.ZERO, _cell_radius * _elongation * 1.6, _cell_radius * 1.6, Color(glow_color.r, glow_color.g, glow_color.b, glow_alpha * 1.5))
 
-	# Cilia (sluggish when depleted)
+	# Cilia (sluggish when depleted) — use cilia_color
+	var custom_cilia: Color = GameManager.creature_customization.get("cilia_color", Color(0.4, 0.7, 1.0))
 	var is_moving: bool = velocity.length() > 10.0
 	var cilia_speed: float = 8.0 if not is_energy_depleted else 2.0
 	var cilia_amp: float = (0.3 if is_moving else 0.12) if not is_energy_depleted else 0.05
@@ -385,13 +390,14 @@ func _draw() -> void:
 		if is_energy_depleted:
 			tip_len *= 0.6
 		var tip_pt := base_pt + Vector2(cos(angle) * tip_len, sin(angle) * tip_len)
-		var cilia_col := Color(0.5, 0.85, 1.0, 0.7) if not is_energy_depleted else Color(0.35, 0.4, 0.5, 0.4)
+		var cilia_col := Color(custom_cilia.r * 1.2, custom_cilia.g * 1.1, custom_cilia.b, 0.7) if not is_energy_depleted else Color(0.35, 0.4, 0.5, 0.4)
 		draw_line(base_pt, tip_pt, cilia_col, 1.2, true)
 
-	# Membrane
-	var membrane_color := Color(0.3, 0.6, 1.0, 0.9)
+	# Membrane — use customization color
+	var custom_membrane: Color = GameManager.creature_customization.get("membrane_color", Color(0.3, 0.6, 1.0))
+	var membrane_color := Color(custom_membrane.r, custom_membrane.g, custom_membrane.b, 0.9)
 	if is_energy_depleted:
-		membrane_color = Color(0.3, 0.35, 0.5, 0.7)
+		membrane_color = Color(custom_membrane.r * 0.6, custom_membrane.g * 0.6, custom_membrane.b * 0.7, 0.7)
 	if _damage_flash > 0:
 		membrane_color = membrane_color.lerp(Color(1.0, 0.2, 0.2), _damage_flash)
 	if _feed_flash > 0:
@@ -400,23 +406,32 @@ func _draw() -> void:
 	for i in range(NUM_MEMBRANE_PTS):
 		var wobble := sin(_time * 3.0 + i * 0.7) * 1.5
 		pts.append(_membrane_points[i] + _membrane_points[i].normalized() * wobble)
-	var fill_color := Color(0.12, 0.25, 0.5, 0.7)
+	var custom_interior: Color = GameManager.creature_customization.get("interior_color", Color(0.15, 0.25, 0.5))
+	var fill_color := Color(custom_interior.r, custom_interior.g, custom_interior.b, 0.7)
 	if is_energy_depleted:
-		fill_color = Color(0.15, 0.18, 0.25, 0.6)
+		fill_color = Color(custom_interior.r * 0.6, custom_interior.g * 0.6, custom_interior.b * 0.7, 0.6)
 	if _toxin_flash > 0:
 		fill_color = fill_color.lerp(Color(0.6, 0.1, 0.6, 0.8), _toxin_flash)
 	draw_colored_polygon(pts, fill_color)
 	for i in range(pts.size()):
 		draw_line(pts[i], pts[(i + 1) % pts.size()], membrane_color, 1.5, true)
 
-	# Internal organelles
-	var org_colors: Array[Color] = [
+	# --- MEMBRANE HEALTH VISUALIZATION ---
+	if health_ratio < 0.75:
+		_draw_membrane_damage(pts, health_ratio)
+
+	# Internal organelles — tinted by organelle_tint
+	var org_tint: Color = GameManager.creature_customization.get("organelle_tint", Color(0.3, 0.8, 0.5))
+	var base_org_colors: Array[Color] = [
 		Color(0.2, 0.9, 0.3, 0.7), Color(0.9, 0.6, 0.1, 0.7),
 		Color(0.7, 0.2, 0.8, 0.6), Color(0.1, 0.8, 0.8, 0.6), Color(0.9, 0.9, 0.2, 0.5),
 	]
 	for i in range(_organelle_positions.size()):
 		var wobble_v := Vector2(sin(_time * 2.0 + i), cos(_time * 1.8 + i * 0.7)) * 1.5
-		draw_circle(_organelle_positions[i] + wobble_v, 2.5, org_colors[i % org_colors.size()])
+		var oc: Color = base_org_colors[i % base_org_colors.size()]
+		var tinted: Color = oc.lerp(org_tint, 0.4)
+		tinted.a = oc.a
+		draw_circle(_organelle_positions[i] + wobble_v, 2.5, tinted)
 
 	# --- MUTATION VISUALS ---
 	_draw_mutations()
@@ -504,19 +519,55 @@ func _draw() -> void:
 			var outer: Vector2 = reticle_pos + Vector2(cos(ca), sin(ca)) * (reticle_r + 4.0)
 			draw_line(inner, outer, reticle_col, 1.2, true)
 
-func _draw_face() -> void:
-	# --- ANIME-STYLE EXPRESSIVE EYES ---
-	# Eyes are larger, cleaner, with distinct expressions
-	var eye_y_offset: float = 0.0
-	var base_spacing: float = _eye_spacing * 1.2  # Wider spacing for cleaner look
-	var face_fwd: float = _cell_radius * (_elongation - 1.0) * 0.4  # Shift face forward when elongated
-	var left_eye := Vector2(_cell_radius * 0.25 + face_fwd, -base_spacing * 0.4 + eye_y_offset) + _eye_shake
-	var right_eye := Vector2(_cell_radius * 0.25 + face_fwd, base_spacing * 0.4 + eye_y_offset) + _eye_shake
-	var mouth_pos := Vector2(_cell_radius * 0.5 + face_fwd, 0)
+func _draw_membrane_damage(pts: PackedVector2Array, health_ratio: float) -> void:
+	## Draw cracks and tears on the membrane as health drops
+	var crack_intensity: float = 1.0 - health_ratio / 0.75  # 0 at 75%, 1 at 0%
+	var num_cracks: int = int(crack_intensity * 8.0) + 1
+	var crack_color := Color(0.9, 0.2, 0.15, 0.3 + crack_intensity * 0.5)
 
-	# Anime eye colors - brighter, more vibrant
+	for c_idx in range(num_cracks):
+		# Deterministic crack positions based on index (no randomness per frame)
+		var seed_val: float = float(c_idx) * 2.7 + 0.5
+		var pt_index: int = int(fmod(seed_val * 7.3, pts.size()))
+		var start: Vector2 = pts[pt_index]
+		var inward: Vector2 = -start.normalized()
+		# Crack extends inward with jagged path
+		var crack_len: float = (5.0 + crack_intensity * 10.0) * (0.7 + 0.3 * sin(seed_val * 3.1))
+		var segments: int = 3
+		var prev_pt: Vector2 = start
+		for seg in range(segments):
+			var t: float = float(seg + 1) / segments
+			var next_pt: Vector2 = start + inward * crack_len * t
+			# Jag perpendicular
+			var perp := Vector2(-inward.y, inward.x)
+			next_pt += perp * sin(seed_val * 5.0 + seg * 2.1) * 3.0
+			var seg_alpha: float = crack_color.a * (1.0 - t * 0.5)
+			draw_line(prev_pt, next_pt, Color(crack_color.r, crack_color.g, crack_color.b, seg_alpha), 1.0 + crack_intensity, true)
+			prev_pt = next_pt
+
+	# Low health: flickering membrane with breathing pulse
+	if health_ratio < 0.25:
+		var pulse: float = 0.1 + 0.15 * sin(_time * 4.0)
+		var warning_r: float = _cell_radius * _elongation + 2.0
+		draw_arc(Vector2.ZERO, warning_r, 0, TAU, 32, Color(0.9, 0.1, 0.1, pulse), 2.0, true)
+
+func _draw_face() -> void:
+	# --- EXPRESSIVE EYES (no mouth) ---
+	# Eye position uses customization angle + spacing
+	var eye_y_offset: float = 0.0
+	var custom_spacing: float = GameManager.creature_customization.get("eye_spacing", 5.5)
+	var custom_angle: float = GameManager.creature_customization.get("eye_angle", 0.0)
+	var base_spacing: float = custom_spacing * 1.2
+	var face_fwd: float = _cell_radius * (_elongation - 1.0) * 0.4
+	var face_center := Vector2(_cell_radius * 0.25 + face_fwd, 0)
+	var perp := Vector2(-sin(custom_angle), cos(custom_angle))
+	var left_eye := face_center + perp * (-base_spacing * 0.4) + Vector2(0, eye_y_offset) + _eye_shake
+	var right_eye := face_center + perp * (base_spacing * 0.4) + Vector2(0, eye_y_offset) + _eye_shake
+
+	# Anime eye colors — use customization iris color
+	var custom_iris: Color = GameManager.creature_customization.get("iris_color", Color(0.2, 0.5, 0.9))
 	var eye_white_color := Color(1.0, 1.0, 1.0, 1.0)
-	var iris_color := Color(0.2, 0.5, 0.9, 1.0)  # Blue iris
+	var iris_color := Color(custom_iris.r, custom_iris.g, custom_iris.b, 1.0)
 	var pupil_color := Color(0.02, 0.02, 0.08, 1.0)
 	var eye_r: float = _eye_size * 1.4  # Bigger eyes
 	var pupil_r: float = _pupil_size * 1.2
@@ -600,73 +651,203 @@ func _draw_face() -> void:
 			show_spiral = true
 			iris_color = Color(0.5, 0.7, 0.3, 1.0)  # Sickly green
 
+	# Apply eye style from customization
+	var eye_style: String = GameManager.creature_customization.get("eye_style", "anime")
+	match eye_style:
+		"round":
+			eye_squash_y = clampf(eye_squash_y * 1.0, 0.05, 1.3)
+			iris_r = eye_r * 0.55
+			pupil_r *= 1.2
+		"compound":
+			eye_r *= 0.7
+		"googly":
+			eye_r *= 1.3
+			pupil_r *= 0.8
+			iris_r = eye_r * 0.5
+		"slit":
+			eye_squash_y *= 0.6
+			pupil_r *= 0.6
+		"lashed":
+			eye_r *= 1.05
+			iris_r = eye_r * 0.6
+		"fierce":
+			eye_squash_y *= 0.65
+			eye_r *= 1.1
+			iris_r = eye_r * 0.55
+		"dot":
+			eye_r *= 0.5
+			pupil_r *= 1.8
+			iris_r = eye_r * 0.3
+		"star":
+			iris_r = eye_r * 0.7
+
 	if _is_blinking:
 		eye_squash_y = 0.05
 
 	# --- DRAW EYES ---
 	var mouse_local := (get_global_mouse_position() - global_position).rotated(-rotation)
 	var look_dir := mouse_local.normalized() * minf(eye_r * 0.25, mouse_local.length() * 0.015)
+	# Googly eyes: pupil rolls with gravity-like jiggle
+	if eye_style == "googly":
+		look_dir += Vector2(sin(_time * 3.7) * eye_r * 0.15, cos(_time * 2.9) * eye_r * 0.15)
 
-	for idx in range(2):
-		var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
-		var ew: float = eye_r
-		var eh: float = eye_r * eye_squash_y
+	# Compound eyes: draw cluster of small facets instead of two big eyes
+	if eye_style == "compound" and not _is_blinking:
+		for eye_pos_v: Vector2 in [left_eye, right_eye]:
+			var facet_r: float = eye_r * 0.35
+			for row in range(3):
+				for col in range(3):
+					if row == 0 and (col == 0 or col == 2):
+						continue
+					if row == 2 and (col == 0 or col == 2):
+						continue
+					var c_offset: Vector2 = Vector2((col - 1) * facet_r * 1.8, (row - 1) * facet_r * 1.6)
+					var fp: Vector2 = eye_pos_v + c_offset
+					draw_circle(fp, facet_r, Color(iris_color.r * 0.8, iris_color.g * 0.8, iris_color.b, 0.7))
+					draw_circle(fp, facet_r * 0.5, Color(0.05, 0.05, 0.1, 0.9))
+					draw_arc(fp, facet_r, 0, TAU, 8, Color(0.2, 0.2, 0.3, 0.5), 0.5, true)
+	elif eye_style == "dot" and not _is_blinking:
+		# Minimalist dot eyes — just solid dark circles with subtle highlight
+		for eye_pos_v: Vector2 in [left_eye, right_eye]:
+			draw_circle(eye_pos_v, eye_r, pupil_color)
+			draw_circle(eye_pos_v + Vector2(-eye_r * 0.2, -eye_r * 0.25), eye_r * 0.3, Color(1, 1, 1, 0.35))
+	elif eye_style == "fierce" and not _is_blinking:
+		# Angular aggressive eyes with heavy brow ridge
+		for idx in range(2):
+			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+			var hw: float = eye_r * 1.1
+			var hh: float = eye_r * eye_squash_y * 0.7
+			var side_flip: float = -1.0 if idx == 0 else 1.0
+			# Angular eye shape
+			var eye_pts: PackedVector2Array = PackedVector2Array([
+				eye_pos + Vector2(-hw, 0),
+				eye_pos + Vector2(-hw * 0.5, -hh),
+				eye_pos + Vector2(hw * 0.7, -hh * 0.6),
+				eye_pos + Vector2(hw, 0),
+				eye_pos + Vector2(hw * 0.5, hh * 0.7),
+				eye_pos + Vector2(-hw * 0.4, hh * 0.5),
+			])
+			draw_colored_polygon(eye_pts, eye_white_color)
+			if eye_squash_y > 0.15:
+				var p_pos: Vector2 = eye_pos + look_dir + pupil_offset
+				draw_circle(p_pos, iris_r * 0.8, iris_color)
+				draw_circle(p_pos, pupil_r, pupil_color)
+				draw_circle(p_pos + Vector2(-pupil_r * 0.4, -pupil_r * 0.4), pupil_r * 0.3, Color(1, 1, 1, 0.7))
+			# Heavy brow line
+			draw_line(eye_pos + Vector2(-hw, -hh * 1.1), eye_pos + Vector2(hw * 0.8, -hh * 1.3), Color(0.1, 0.1, 0.18, 0.85), 2.5, true)
+			# Eye outline
+			for i in range(eye_pts.size()):
+				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.1, 0.2, 0.6), 0.8, true)
+	elif eye_style == "star" and not _is_blinking:
+		# Star-shaped decorative iris
+		for idx in range(2):
+			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+			var ew: float = eye_r
+			var eh: float = eye_r * eye_squash_y
+			# White sclera
+			var eye_pts: PackedVector2Array = PackedVector2Array()
+			for i in range(16):
+				var a: float = TAU * i / 16.0
+				eye_pts.append(eye_pos + Vector2(cos(a) * ew, sin(a) * eh))
+			draw_colored_polygon(eye_pts, eye_white_color)
+			if eye_squash_y > 0.15:
+				var p_pos: Vector2 = eye_pos + look_dir + pupil_offset
+				# Star iris
+				var star_pts: PackedVector2Array = PackedVector2Array()
+				for i in range(10):
+					var a: float = -PI * 0.5 + TAU * i / 10.0
+					var r_v: float = iris_r if i % 2 == 0 else iris_r * 0.4
+					star_pts.append(p_pos + Vector2(cos(a) * r_v, sin(a) * r_v * eye_squash_y))
+				draw_colored_polygon(star_pts, Color(iris_color.r, iris_color.g * 0.8, iris_color.b * 0.3, 0.9))
+				draw_circle(p_pos, pupil_r * 0.8, pupil_color)
+				draw_circle(p_pos + Vector2(-iris_r * 0.3, -iris_r * 0.3), pupil_r * 0.3, Color(1, 1, 1, 0.6))
+			for i in range(eye_pts.size()):
+				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.15, 0.25, 0.6), 0.8, true)
+	else:
+		for idx in range(2):
+			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+			var ew: float = eye_r
+			var eh: float = eye_r * eye_squash_y
+			# Slit pupil: override pupil shape to vertical slit
+			var _slit_style: bool = eye_style == "slit"
 
-		# Eye white (sclera) - clean oval
-		var eye_pts: PackedVector2Array = PackedVector2Array()
-		for i in range(16):
-			var a: float = TAU * i / 16.0
-			eye_pts.append(eye_pos + Vector2(cos(a) * ew, sin(a) * eh))
+			# Eye white (sclera) - clean oval
+			var eye_pts: PackedVector2Array = PackedVector2Array()
+			for i in range(16):
+				var a: float = TAU * i / 16.0
+				eye_pts.append(eye_pos + Vector2(cos(a) * ew, sin(a) * eh))
 
-		# Slight shadow under eye for depth
-		draw_colored_polygon(eye_pts, Color(0.85, 0.85, 0.9, 0.3))
-		# Main white
-		var offset_pts: PackedVector2Array = PackedVector2Array()
-		for p in eye_pts:
-			offset_pts.append(p + Vector2(-0.3, -0.3))
-		draw_colored_polygon(offset_pts, eye_white_color)
+			# Slight shadow under eye for depth
+			draw_colored_polygon(eye_pts, Color(0.85, 0.85, 0.9, 0.3))
+			# Main white
+			var offset_pts: PackedVector2Array = PackedVector2Array()
+			for p in eye_pts:
+				offset_pts.append(p + Vector2(-0.3, -0.3))
+			draw_colored_polygon(offset_pts, eye_white_color)
 
-		# Only draw iris/pupil if not fully squashed (blinking)
-		if eye_squash_y > 0.15:
-			var p_pos: Vector2 = eye_pos + look_dir + pupil_offset
+			# Only draw iris/pupil if not fully squashed (blinking)
+			if eye_squash_y > 0.15:
+				var p_pos: Vector2 = eye_pos + look_dir + pupil_offset
 
-			if show_spiral:
-				# Spiral dizzy eyes for sick mood
-				_draw_spiral_eye(p_pos, iris_r * 0.8, iris_color)
-			else:
-				# Iris (colored part) - large for anime look
-				var iris_pts: PackedVector2Array = PackedVector2Array()
-				var i_eh: float = iris_r * eye_squash_y
-				for i in range(16):
-					var a: float = TAU * i / 16.0
-					iris_pts.append(p_pos + Vector2(cos(a) * iris_r, sin(a) * i_eh))
-				draw_colored_polygon(iris_pts, iris_color)
-
-				# Iris gradient/depth - darker ring
-				draw_arc(p_pos, iris_r * 0.9, 0, TAU, 16, Color(iris_color.r * 0.6, iris_color.g * 0.6, iris_color.b * 0.8, 0.5), iris_r * 0.2, true)
-
-				# Pupil - sharp black center
-				var p_eh: float = pupil_r * eye_squash_y
-				var pupil_pts: PackedVector2Array = PackedVector2Array()
-				for i in range(12):
-					var a: float = TAU * i / 12.0
-					pupil_pts.append(p_pos + Vector2(cos(a) * pupil_r, sin(a) * p_eh))
-				draw_colored_polygon(pupil_pts, pupil_color)
-
-				# Anime sparkle highlights - two white dots
-				if show_sparkles or mood == Mood.IDLE:
-					var sparkle1 := p_pos + Vector2(-iris_r * 0.35, -iris_r * 0.35)
-					var sparkle2 := p_pos + Vector2(iris_r * 0.2, iris_r * 0.3)
-					var sparkle_pulse: float = 0.7 + 0.3 * sin(_eye_sparkle_timer * 3.0 + idx)
-					draw_circle(sparkle1, pupil_r * 0.5 * sparkle_pulse, Color(1, 1, 1, 0.95))
-					draw_circle(sparkle2, pupil_r * 0.25 * sparkle_pulse, Color(1, 1, 1, 0.8))
+				if show_spiral:
+					# Spiral dizzy eyes for sick mood
+					_draw_spiral_eye(p_pos, iris_r * 0.8, iris_color)
 				else:
-					# Basic highlight
-					draw_circle(p_pos + Vector2(-pupil_r * 0.4, -pupil_r * 0.4), pupil_r * 0.35, Color(1, 1, 1, 0.8))
+					# Iris (colored part)
+					var iris_pts: PackedVector2Array = PackedVector2Array()
+					var i_eh: float = iris_r * eye_squash_y
+					for i in range(16):
+						var a: float = TAU * i / 16.0
+						iris_pts.append(p_pos + Vector2(cos(a) * iris_r, sin(a) * i_eh))
+					draw_colored_polygon(iris_pts, iris_color)
 
-		# Eye outline for definition
-		for i in range(eye_pts.size()):
-			draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.15, 0.25, 0.6), 0.8, true)
+					# Iris gradient/depth - darker ring
+					draw_arc(p_pos, iris_r * 0.9, 0, TAU, 16, Color(iris_color.r * 0.6, iris_color.g * 0.6, iris_color.b * 0.8, 0.5), iris_r * 0.2, true)
+
+					# Pupil - slit or round
+					if _slit_style:
+						# Vertical slit pupil
+						var slit_h: float = pupil_r * eye_squash_y * 1.8
+						var slit_w: float = pupil_r * 0.35
+						var slit_pts: PackedVector2Array = PackedVector2Array([
+							p_pos + Vector2(-slit_w, 0),
+							p_pos + Vector2(0, -slit_h),
+							p_pos + Vector2(slit_w, 0),
+							p_pos + Vector2(0, slit_h),
+						])
+						draw_colored_polygon(slit_pts, pupil_color)
+					else:
+						var p_eh: float = pupil_r * eye_squash_y
+						var pupil_pts: PackedVector2Array = PackedVector2Array()
+						for i in range(12):
+							var a: float = TAU * i / 12.0
+							pupil_pts.append(p_pos + Vector2(cos(a) * pupil_r, sin(a) * p_eh))
+						draw_colored_polygon(pupil_pts, pupil_color)
+
+					# Anime sparkle highlights - two white dots
+					if show_sparkles or mood == Mood.IDLE:
+						var sparkle1 := p_pos + Vector2(-iris_r * 0.35, -iris_r * 0.35)
+						var sparkle2 := p_pos + Vector2(iris_r * 0.2, iris_r * 0.3)
+						var sparkle_pulse: float = 0.7 + 0.3 * sin(_eye_sparkle_timer * 3.0 + idx)
+						draw_circle(sparkle1, pupil_r * 0.5 * sparkle_pulse, Color(1, 1, 1, 0.95))
+						draw_circle(sparkle2, pupil_r * 0.25 * sparkle_pulse, Color(1, 1, 1, 0.8))
+					else:
+						# Basic highlight
+						draw_circle(p_pos + Vector2(-pupil_r * 0.4, -pupil_r * 0.4), pupil_r * 0.35, Color(1, 1, 1, 0.8))
+
+			# Eye outline for definition
+			for i in range(eye_pts.size()):
+				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.15, 0.25, 0.6), 0.8, true)
+
+			# Lashed style: add eyelashes on top arc
+			if eye_style == "lashed" and not _is_blinking:
+				for li in range(3):
+					var la: float = -PI * 0.6 + li * PI * 0.3
+					var lash_base: Vector2 = eye_pos + Vector2(cos(la) * ew, sin(la) * eh)
+					var lash_tip: Vector2 = eye_pos + Vector2(cos(la) * (ew + 2.5), sin(la) * (eh + 2.5))
+					draw_line(lash_base, lash_tip, Color(0.08, 0.08, 0.12, 0.9), 1.3, true)
+				# Subtle lower lash line
+				draw_arc(eye_pos, ew * 0.95, PI * 0.15, PI * 0.85, 6, Color(0.1, 0.1, 0.15, 0.4), 0.7, true)
 
 	# --- EYEBROWS ---
 	if _has_eyebrows:
@@ -698,8 +879,7 @@ func _draw_face() -> void:
 		draw_circle(Vector2(sweat_y, sweat_x), 1.8 * sweat_alpha, Color(0.6, 0.8, 1.0, sweat_alpha * 0.7))
 		draw_circle(Vector2(sweat_y - 1.0, sweat_x - 0.5), 1.0 * sweat_alpha, Color(0.7, 0.9, 1.0, sweat_alpha * 0.5))
 
-	# --- MOUTH ---
-	_draw_mouth(mouth_pos)
+	# Mouth removed — creature expression is all about the eyes
 
 func _draw_spiral_eye(center: Vector2, size: float, color: Color) -> void:
 	# Draw spiral/swirly eye for sick/dizzy state
@@ -715,64 +895,11 @@ func _draw_spiral_eye(center: Vector2, size: float, color: Color) -> void:
 		draw_line(prev_pt, pt, spiral_col, 1.5 + (1.0 - t) * 1.5, true)
 		prev_pt = pt
 
-func _draw_mouth(mouth_pos: Vector2) -> void:
-	var mouth_width: float = 5.0
-	var mouth_curve: float = 0.0
-	var mouth_open_amt: float = _mouth_open
-
-	match mood:
-		Mood.IDLE: mouth_curve = 1.0  # Slight smile
-		Mood.HAPPY: mouth_curve = 4.0
-		Mood.EXCITED: mouth_curve = 4.5; mouth_open_amt = maxf(mouth_open_amt, 0.5)
-		Mood.ZOOM: mouth_curve = 0.0; mouth_width = 4.0  # Determined line
-		Mood.STRESSED: mouth_curve = -2.0; mouth_width = 3.5
-		Mood.SCARED: mouth_curve = -1.5; mouth_open_amt = maxf(mouth_open_amt, 0.7); mouth_width = 3.0
-		Mood.ANGRY: mouth_curve = -4.0; mouth_width = 6.0; mouth_open_amt = maxf(mouth_open_amt, 0.3)
-		Mood.EATING: mouth_curve = 2.5; mouth_open_amt = maxf(mouth_open_amt, 1.0)
-		Mood.HURT: mouth_curve = -3.0; mouth_open_amt = maxf(mouth_open_amt, 0.4)
-		Mood.DEPLETED: mouth_curve = -3.5; mouth_width = 4.0
-		Mood.SICK: mouth_curve = -2.0; mouth_width = 3.0  # Queasy frown
-
-	if mouth_open_amt > 0.1:
-		var mo_w: float = mouth_width * (0.5 + mouth_open_amt * 0.5)
-		var mo_h: float = 2.0 + mouth_open_amt * 3.5
-		var mo_pts: PackedVector2Array = PackedVector2Array()
-		for i in range(12):
-			var a: float = TAU * i / 12.0
-			mo_pts.append(mouth_pos + Vector2(cos(a) * mo_w * 0.4, sin(a) * mo_h))
-		draw_colored_polygon(mo_pts, Color(0.1, 0.02, 0.08, 0.95))
-		# Tongue for eating
-		if mood == Mood.EATING:
-			draw_circle(mouth_pos + Vector2(0, mo_h * 0.2), mo_w * 0.3, Color(0.85, 0.4, 0.45, 0.9))
-		# Teeth when angry
-		if mood == Mood.ANGRY:
-			for t in range(3):
-				var tx: float = mouth_pos.x - mo_w * 0.15 + mo_w * 0.15 * t
-				var ty: float = mouth_pos.y - mo_h * 0.5
-				var tooth_pts: PackedVector2Array = PackedVector2Array([
-					Vector2(tx - 0.7, ty),
-					Vector2(tx, ty + 1.2),
-					Vector2(tx + 0.7, ty),
-				])
-				draw_colored_polygon(tooth_pts, Color(0.98, 0.95, 0.9, 0.95))
-	else:
-		# Closed mouth - clean curved line
-		var m_left := mouth_pos + Vector2(0, -mouth_width * 0.5)
-		var m_right := mouth_pos + Vector2(0, mouth_width * 0.5)
-		var m_mid := mouth_pos + Vector2(mouth_curve, 0)
-		var mouth_col := Color(0.12, 0.15, 0.35, 0.9)
-		if mood == Mood.DEPLETED:
-			m_mid.y += sin(_time * 2.0) * 0.5
-			mouth_col = Color(0.2, 0.2, 0.35, 0.85)
-		draw_line(m_left, m_mid, mouth_col, 2.0, true)
-		draw_line(m_mid, m_right, mouth_col, 2.0, true)
-
 func _fire_toxin() -> void:
 	energy -= toxin_cost
 	toxin_timer = TOXIN_COOLDOWN
 	_toxin_flash = 1.0
 	_set_mood(Mood.ANGRY, 0.8)
-	_mouth_open = 0.9
 	AudioManager.play_toxin()
 	if camera and camera.has_method("shake"):
 		camera.shake(4.0, 0.2)
@@ -798,7 +925,6 @@ func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
 	_set_mood(Mood.HURT, 0.6)
-	_mouth_open = 0.7
 	AudioManager.play_hurt()
 	if camera and camera.has_method("shake"):
 		camera.shake(clampf(amount * 0.4, 2.0, 8.0), 0.25)
@@ -815,7 +941,6 @@ func heal(amount: float) -> void:
 func attach_parasite(parasite: Node2D) -> void:
 	attached_parasites.append(parasite)
 	_set_mood(Mood.SCARED, 1.0)
-	_mouth_open = 0.8
 	parasites_changed.emit(attached_parasites.size())
 
 func feed(component: Dictionary) -> void:
@@ -823,7 +948,6 @@ func feed(component: Dictionary) -> void:
 	energy = minf(energy + energy_value, max_energy)
 	_feed_flash = 1.0
 	_set_mood(Mood.EATING, 0.6)
-	_mouth_open = 1.0
 	var is_rare: bool = component.get("rarity", "common") in ["rare", "legendary"]
 	AudioManager.play_collect(is_rare)
 	food_consumed.emit()
@@ -836,11 +960,28 @@ func feed(component: Dictionary) -> void:
 	# Track in inventory by type
 	if component.has("category"):
 		GameManager.collect_biomolecule(component)
+		biomolecule_category_collected.emit(component.get("category", ""))
 	elif comp_id in ["Mitochondrion", "Chloroplast", "Ribosome", "Nucleus", "ER", "Flagellum", "Vacuole"]:
 		GameManager.collect_organelle_item(component)
 		organelle_collected.emit()
 
 	collected_components.append(comp_id)
+
+func _update_biomolecule_magnet(delta: float) -> void:
+	## Gently pull nearby food particles toward the player based on sensory level
+	var magnet_range: float = 60.0 + GameManager.sensory_level * 20.0  # 100-160 range
+	var magnet_strength: float = 30.0 + GameManager.sensory_level * 15.0  # Gentle pull
+	var food_nodes := get_tree().get_nodes_in_group("food")
+	for food in food_nodes:
+		if not is_instance_valid(food):
+			continue
+		if food.get("is_being_beamed"):  # Don't interfere with beam
+			continue
+		var dist: float = global_position.distance_to(food.global_position)
+		if dist < magnet_range and dist > 10.0:
+			var pull: float = magnet_strength * (1.0 - dist / magnet_range) * delta
+			var dir: Vector2 = (global_position - food.global_position).normalized()
+			food.global_position += dir * pull
 
 func _try_eat_prey() -> void:
 	var prey_nodes := get_tree().get_nodes_in_group("prey")
@@ -857,7 +998,6 @@ func _try_eat_prey() -> void:
 				energy = minf(energy + nutrition.get("energy_restore", 5.0), max_energy)
 				_feed_flash = 1.0
 				_set_mood(Mood.EATING, 0.8)
-				_mouth_open = 1.0
 				_spawn_collection_vfx(nutrition)
 				AudioManager.play_eat()
 				if camera and camera.has_method("shake"):
@@ -1019,7 +1159,6 @@ func _update_beam(delta: float) -> void:
 		_beam_target = _target_candidate
 		_beam_active = true
 		_set_mood(Mood.EXCITED, 0.3)
-		_mouth_open = 0.5
 
 	# Auto-pull active beam target (no need to hold button)
 	if _beam_active:
@@ -1070,7 +1209,6 @@ func _consume_beam_target() -> void:
 		energy = minf(energy + nutrition.get("energy_restore", 5.0), max_energy)
 		_feed_flash = 1.0
 		_set_mood(Mood.EATING, 0.8)
-		_mouth_open = 1.0
 		_spawn_collection_vfx(nutrition)
 		_beam_target.queue_free()
 
@@ -1231,7 +1369,6 @@ func _on_evolution_applied(mutation: Dictionary) -> void:
 	# Visual feedback: flash and grow briefly
 	_feed_flash = 1.0
 	_set_mood(Mood.EXCITED, 2.0)
-	_mouth_open = 0.8
 	if camera and camera.has_method("shake"):
 		camera.shake(6.0, 0.4)
 	# Grow cell slightly for larger_membrane
@@ -1282,49 +1419,105 @@ func _draw_ellipse(center: Vector2, rx: float, ry: float, color: Color, segments
 		pts.append(center + Vector2(cos(a) * rx, sin(a) * ry))
 	draw_colored_polygon(pts, color)
 
+## Mutations that draw around the whole body — always at default position
+const GLOBAL_MUTATIONS: Array = [
+	"extra_cilia", "spikes", "armor_plates", "color_shift", "bioluminescence",
+	"thick_membrane", "regeneration", "pili_network", "absorption_villi",
+	"electroreceptors", "electric_organ", "side_barbs", "lateral_line",
+	"larger_membrane",
+]
+
+func _draw_mutation_visual(vis: String) -> void:
+	match vis:
+		"extra_cilia": _draw_mut_extra_cilia()
+		"spikes": _draw_mut_spikes()
+		"armor_plates": _draw_mut_armor_plates()
+		"color_shift": _draw_mut_color_shift()
+		"bioluminescence": _draw_mut_bioluminescence()
+		"flagellum": _draw_mut_flagellum()
+		"third_eye": _draw_mut_third_eye()
+		"eye_stalks": _draw_mut_eye_stalks()
+		"tentacles": _draw_mut_tentacles()
+		"larger_membrane": pass
+		"toxin_glands": _draw_mut_toxin_glands()
+		"photoreceptor": _draw_mut_photoreceptor()
+		"thick_membrane": _draw_mut_thick_membrane()
+		"enzyme_boost": _draw_mut_enzyme_boost()
+		"regeneration": _draw_mut_regeneration()
+		"sprint_boost": _draw_mut_sprint_boost()
+		"compound_eye": _draw_mut_compound_eye()
+		"absorption_villi": _draw_mut_absorption_villi()
+		"dorsal_fin": _draw_mut_dorsal_fin()
+		"ink_sac": _draw_mut_ink_sac()
+		"electric_organ": _draw_mut_electric_organ()
+		"symbiont_pouch": _draw_mut_symbiont_pouch()
+		"hardened_nucleus": _draw_mut_hardened_nucleus()
+		"pili_network": _draw_mut_pili_network()
+		"chrono_enzyme": _draw_mut_chrono_enzyme()
+		"thermal_vent_organ": _draw_mut_thermal_vent_organ()
+		"lateral_line": _draw_mut_lateral_line()
+		"beak": _draw_mut_beak()
+		"gas_vacuole": _draw_mut_gas_vacuole()
+		"front_spike": _draw_mut_front_spike()
+		"mandibles": _draw_mut_mandibles()
+		"side_barbs": _draw_mut_side_barbs()
+		"rear_stinger": _draw_mut_rear_stinger()
+		"ramming_crest": _draw_mut_ramming_crest()
+		"proboscis": _draw_mut_proboscis()
+		"tail_club": _draw_mut_tail_club()
+		"electroreceptors": _draw_mut_electroreceptors()
+		"antenna": _draw_mut_antenna()
+
 func _draw_mutations() -> void:
 	for m in GameManager.active_mutations:
 		var vis: String = m.get("visual", "")
-		match vis:
-			"extra_cilia": _draw_mut_extra_cilia()
-			"spikes": _draw_mut_spikes()
-			"armor_plates": _draw_mut_armor_plates()
-			"color_shift": _draw_mut_color_shift()
-			"bioluminescence": _draw_mut_bioluminescence()
-			"flagellum": _draw_mut_flagellum()
-			"third_eye": _draw_mut_third_eye()
-			"eye_stalks": _draw_mut_eye_stalks()
-			"tentacles": _draw_mut_tentacles()
-			"larger_membrane": pass
-			"toxin_glands": _draw_mut_toxin_glands()
-			"photoreceptor": _draw_mut_photoreceptor()
-			"thick_membrane": _draw_mut_thick_membrane()
-			"enzyme_boost": _draw_mut_enzyme_boost()
-			"regeneration": _draw_mut_regeneration()
-			"sprint_boost": _draw_mut_sprint_boost()
-			"compound_eye": _draw_mut_compound_eye()
-			"absorption_villi": _draw_mut_absorption_villi()
-			"dorsal_fin": _draw_mut_dorsal_fin()
-			"ink_sac": _draw_mut_ink_sac()
-			"electric_organ": _draw_mut_electric_organ()
-			"symbiont_pouch": _draw_mut_symbiont_pouch()
-			"hardened_nucleus": _draw_mut_hardened_nucleus()
-			"pili_network": _draw_mut_pili_network()
-			"chrono_enzyme": _draw_mut_chrono_enzyme()
-			"thermal_vent_organ": _draw_mut_thermal_vent_organ()
-			"lateral_line": _draw_mut_lateral_line()
-			"beak": _draw_mut_beak()
-			"gas_vacuole": _draw_mut_gas_vacuole()
-			# Directional mutations
-			"front_spike": _draw_mut_front_spike()
-			"mandibles": _draw_mut_mandibles()
-			"side_barbs": _draw_mut_side_barbs()
-			"rear_stinger": _draw_mut_rear_stinger()
-			"ramming_crest": _draw_mut_ramming_crest()
-			"proboscis": _draw_mut_proboscis()
-			"tail_club": _draw_mut_tail_club()
-			"electroreceptors": _draw_mut_electroreceptors()
-			"antenna": _draw_mut_antenna()
+		var mid: String = m.get("id", "")
+		# Global mutations always draw at default position
+		if vis in GLOBAL_MUTATIONS:
+			_draw_mutation_visual(vis)
+			continue
+		# Check if this mutation has placement data
+		var placement: Dictionary = GameManager.mutation_placements.get(mid, {})
+		if placement.is_empty():
+			_draw_mutation_visual(vis)
+			continue
+		# Angular placement system (new)
+		if placement.has("angle"):
+			var angle: float = placement.get("angle", 0.0)
+			var distance: float = placement.get("distance", 1.0)
+			var mirrored: bool = placement.get("mirrored", false)
+			var mut_scale: float = placement.get("scale", 1.0)
+			var rot_offset: float = placement.get("rotation_offset", 0.0)
+			var pos: Vector2 = SnapPointSystem.angle_to_perimeter_position(angle, _cell_radius, _elongation, distance)
+			var outward_rot: float = SnapPointSystem.get_outward_rotation(angle) + rot_offset
+			draw_set_transform(pos, outward_rot, Vector2(mut_scale, mut_scale))
+			_draw_mutation_visual(vis)
+			if mirrored:
+				var mirror_angle: float = SnapPointSystem.get_mirror_angle(angle)
+				var mirror_pos: Vector2 = SnapPointSystem.angle_to_perimeter_position(mirror_angle, _cell_radius, _elongation, distance)
+				var mirror_rot: float = SnapPointSystem.get_outward_rotation(mirror_angle) - rot_offset
+				draw_set_transform(mirror_pos, mirror_rot, Vector2(mut_scale, mut_scale))
+				_draw_mutation_visual(vis)
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			continue
+		# Legacy snap_slot fallback
+		var slot: int = placement.get("snap_slot", -1)
+		var mirrored: bool = placement.get("mirrored", false)
+		if slot < 0:
+			_draw_mutation_visual(vis)
+			continue
+		var snap_pos: Vector2 = SnapPointSystem.get_snap_position(slot, _cell_radius, _elongation)
+		var mut_scale: float = placement.get("scale", 1.0)
+		var scale_vec: Vector2 = Vector2(mut_scale, mut_scale)
+		draw_set_transform(snap_pos, 0.0, scale_vec)
+		_draw_mutation_visual(vis)
+		if mirrored:
+			var mirror_slot: int = SnapPointSystem.get_mirrored_slot(slot)
+			if mirror_slot >= 0:
+				var mirror_pos: Vector2 = SnapPointSystem.get_snap_position(mirror_slot, _cell_radius, _elongation)
+				draw_set_transform(mirror_pos, 0.0, scale_vec)
+				_draw_mutation_visual(vis)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 func _draw_mut_extra_cilia() -> void:
 	for i in range(8):

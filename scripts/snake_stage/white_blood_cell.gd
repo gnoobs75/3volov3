@@ -13,12 +13,12 @@ var _speed: float = 0.0
 var health: float = 50.0
 
 # Detection
-const BASE_DETECT_RADIUS: float = 15.0
+const BASE_DETECT_RADIUS: float = 10.0  # Reduced: horror atmosphere, less aggro
 const ALERT_HOLD_TIME: float = 1.0
-const CHASE_SPEED: float = 6.0
+const CHASE_SPEED: float = 5.0
 const PATROL_SPEED: float = 2.0
 const ATTACK_RANGE: float = 2.0
-const ATTACK_DAMAGE: float = 10.0
+const ATTACK_DAMAGE: float = 5.0  # Reduced: annoying not deadly
 const STUN_DURATION: float = 3.0
 const GRAVITY: float = 20.0
 

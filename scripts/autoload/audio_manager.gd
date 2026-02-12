@@ -72,6 +72,9 @@ var _buf_observer_hmm: PackedFloat32Array
 var _buf_observer_laugh: PackedFloat32Array
 var _buf_observer_impressed: PackedFloat32Array
 var _buf_observer_distressed: PackedFloat32Array
+var _buf_observer_grunt: PackedFloat32Array
+var _buf_observer_chirp: PackedFloat32Array
+var _buf_observer_mutter: PackedFloat32Array
 
 # Observer sound cooldown
 var _observer_cooldown: float = 0.0
@@ -101,6 +104,12 @@ var _buf_cave_footstep: PackedFloat32Array
 var _buf_mode_switch: PackedFloat32Array
 var _buf_spore_release: PackedFloat32Array
 var _buf_creature_echolocation: PackedFloat32Array
+
+# Combat audio
+var _buf_victory_sting: PackedFloat32Array
+var _buf_combat_percussion: PackedFloat32Array
+var _buf_boss_intro_sting: PackedFloat32Array
+var _combat_intensity: float = 0.0
 
 # Beam looping state
 var _beam_playing: bool = false
@@ -161,6 +170,9 @@ func _ready() -> void:
 	_buf_observer_laugh = SynthSounds.gen_observer_laugh()
 	_buf_observer_impressed = SynthSounds.gen_observer_impressed()
 	_buf_observer_distressed = SynthSounds.gen_observer_distressed()
+	_buf_observer_grunt = SynthSounds.gen_observer_grunt()
+	_buf_observer_chirp = SynthSounds.gen_observer_chirp()
+	_buf_observer_mutter = SynthSounds.gen_observer_mutter()
 
 	# Pre-generate snake stage environment sounds
 	_buf_grass_rustle = SynthSounds.gen_grass_rustle()
@@ -186,6 +198,11 @@ func _ready() -> void:
 	_buf_mode_switch = SynthSounds.gen_mode_switch()
 	_buf_spore_release = SynthSounds.gen_spore_release()
 	_buf_creature_echolocation = SynthSounds.gen_creature_echolocation()
+
+	# Pre-generate combat audio
+	_buf_victory_sting = SynthSounds.gen_victory_sting()
+	_buf_combat_percussion = SynthSounds.gen_combat_percussion()
+	_buf_boss_intro_sting = SynthSounds.gen_boss_intro_sting()
 
 	# Setup music players for file-based music
 	_setup_music_players()
@@ -290,6 +307,17 @@ func _fill_bgm_buffer(_delta: float) -> void:
 		# Gentle high shimmer
 		var shimmer_freq: float = 2200.0 + sin(_bgm_time * 0.3) * 400.0
 		sample += sin(_bgm_time * shimmer_freq * TAU) * 0.008 * (0.5 + 0.5 * sin(_bgm_time * 0.7))
+
+		# Combat tension layer
+		if _combat_intensity > 0.0:
+			# Tense low pulse
+			sample += sin(_bgm_time * 55.0 * TAU) * 0.08 * _combat_intensity
+			# Dissonant overtone
+			sample += sin(_bgm_time * 233.0 * TAU) * 0.03 * _combat_intensity
+			# Rhythmic pulse (heartbeat-like)
+			var pulse_rate: float = 2.0 + _combat_intensity * 3.0
+			var pulse: float = exp(-fmod(_bgm_time * pulse_rate, 1.0) * 8.0)
+			sample += pulse * 0.06 * _combat_intensity
 
 		# Slow LFO volume swell
 		var lfo: float = 0.7 + 0.3 * sin(_bgm_time * 0.15 * TAU)
@@ -431,6 +459,15 @@ func play_observer_impressed() -> void:
 func play_observer_distressed() -> void:
 	_play_observer_sound(_buf_observer_distressed, -3.0)
 
+func play_observer_grunt() -> void:
+	_play_observer_sound(_buf_observer_grunt, -4.0)
+
+func play_observer_chirp() -> void:
+	_play_observer_sound(_buf_observer_chirp, -5.0)
+
+func play_observer_mutter() -> void:
+	_play_observer_sound(_buf_observer_mutter, -5.0)
+
 ## === SNAKE STAGE ENVIRONMENT SOUNDS ===
 
 func play_grass_rustle() -> void:
@@ -495,6 +532,23 @@ func play_spore_release() -> void:
 
 func play_creature_echolocation() -> void:
 	_play_buffer(_buf_creature_echolocation, -6.0)
+
+## === COMBAT AUDIO ===
+
+## Set combat music intensity (0.0 = calm, 0.3 = alert, 1.0 = full combat)
+func set_combat_intensity(intensity: float) -> void:
+	_combat_intensity = clampf(intensity, 0.0, 1.0)
+	if intensity > 0.5:
+		_play_buffer(_buf_combat_percussion, -6.0)
+
+## Play ominous boss intro sting for title cards
+func play_boss_intro_sting() -> void:
+	_play_buffer(_buf_boss_intro_sting, -1.0)
+
+## Play victory fanfare sting
+func play_victory_sting() -> void:
+	_combat_intensity = 0.0
+	_play_buffer(_buf_victory_sting, -2.0)
 
 ## === MUSIC FILE PLAYBACK ===
 
@@ -587,6 +641,41 @@ func toggle_music_mode() -> void:
 
 func is_using_music_files() -> bool:
 	return use_music_files
+
+## === VOLUME CONTROL ===
+## Uses Godot's Master audio bus. Values are 0.0 to 1.0 (linear).
+
+var _master_volume: float = 1.0
+var _sfx_volume: float = 1.0
+var _music_volume: float = 1.0
+
+func set_master_volume(vol: float) -> void:
+	_master_volume = clampf(vol, 0.0, 1.0)
+	var db: float = linear_to_db(_master_volume) if _master_volume > 0.001 else -80.0
+	AudioServer.set_bus_volume_db(0, db)
+
+func get_master_volume() -> float:
+	return _master_volume
+
+func set_sfx_volume(vol: float) -> void:
+	_sfx_volume = clampf(vol, 0.0, 1.0)
+	for player in _sfx_players:
+		player.volume_db = linear_to_db(_sfx_volume) if _sfx_volume > 0.001 else -80.0
+
+func get_sfx_volume() -> float:
+	return _sfx_volume
+
+func set_music_volume(vol: float) -> void:
+	_music_volume = clampf(vol, 0.0, 1.0)
+	var db: float = linear_to_db(_music_volume) if _music_volume > 0.001 else -80.0
+	_bgm_player.volume_db = db
+	if _music_player_a:
+		_music_player_a.volume_db = db
+	if _music_player_b:
+		_music_player_b.volume_db = db
+
+func get_music_volume() -> float:
+	return _music_volume
 
 ## === STAGE-BASED MUSIC ===
 

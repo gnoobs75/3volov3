@@ -429,6 +429,75 @@ static func gen_observer_distressed() -> PackedFloat32Array:
 		buf[i] = s * env * 0.45
 	return buf
 
+## Observer grunt - deep villager "hrmm" sound
+static func gen_observer_grunt() -> PackedFloat32Array:
+	var dur: float = 0.45
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	var phase3: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.04, 0.08, 0.65, 0.2, dur)
+		# Low rumbling pitch with slight drop — classic villager grunt
+		var freq: float = 95.0 + sin(t * 6.0) * 8.0 - t / dur * 15.0
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 2.02) / SAMPLE_RATE  # Slightly detuned overtone
+		phase3 += (freq * 3.0) / SAMPLE_RATE
+		# Thick nasal resonance
+		var s: float = sine(phase) * 0.35 + sine(phase2) * 0.2 + triangle(phase3) * 0.08
+		# Add chest rumble
+		s += sine(phase * 0.5) * 0.12
+		buf[i] = s * env * 0.5
+	return buf
+
+## Observer chirp - short rising "hmm?" inquisitive sound
+static func gen_observer_chirp() -> PackedFloat32Array:
+	var dur: float = 0.3
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.02, 0.05, 0.7, 0.12, dur)
+		# Sharp rising pitch at the end — questioning inflection
+		var rise: float = 0.0
+		if t > dur * 0.6:
+			rise = (t - dur * 0.6) / (dur * 0.4)
+		var freq: float = 150.0 + rise * 80.0 + sin(t * 12.0) * 10.0
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 1.5) / SAMPLE_RATE
+		var s: float = sine(phase) * 0.3 + triangle(phase2) * 0.15 + noise() * 0.03 * env
+		buf[i] = s * env * 0.45
+	return buf
+
+## Observer mutter - low mumbled thought, like writing notes
+static func gen_observer_mutter() -> PackedFloat32Array:
+	var dur: float = 0.65
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.03, 0.1, 0.4, 0.3, dur)
+		# Mumbling: pitch wobbles around low frequency
+		var wobble: float = sin(t * 20.0) * 15.0 + sin(t * 7.0) * 8.0
+		var freq: float = 110.0 + wobble
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 2.0) / SAMPLE_RATE
+		# Mix of nasal tone and slight breathiness
+		var s: float = sine(phase) * 0.25 + sine(phase2) * 0.1 + noise() * 0.04 * env
+		# Pulsing syllables — creates "mm-mm-mm" feel
+		var syllable: float = 0.6 + 0.4 * sin(t * 14.0)
+		buf[i] = s * env * syllable * 0.4
+	return buf
+
 static func gen_splice_success() -> PackedFloat32Array:
 	var dur: float = 0.6
 	var samples: int = int(dur * SAMPLE_RATE)
@@ -834,6 +903,76 @@ static func gen_wbc_alert() -> PackedFloat32Array:
 		# Gurgle effect
 		s *= 0.5 + 0.5 * sin(t * 20.0)
 		buf[i] = s * env * 0.5
+	return buf
+
+## Boss intro sting: ominous descending brass hit for boss title cards
+static func gen_boss_intro_sting() -> PackedFloat32Array:
+	var dur: float = 1.5
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.01, 0.2, 0.6, 0.8, dur)
+		# Descending low brass tone
+		var freq: float = lerpf(220.0, 110.0, minf(t / 0.8, 1.0))
+		phase += freq / SAMPLE_RATE
+		var s: float = 0.0
+		# Main tone with harmonics for brass character
+		s += sawtooth(phase) * 0.3
+		s += sine(phase * 0.5) * 0.3  # Sub octave
+		s += sine(phase * 3.0) * 0.08  # 3rd harmonic
+		# Impact transient
+		s += noise() * 0.5 * exp(-t * 15.0)
+		# Reverb-like tail
+		s += sine(t * 82.0) * 0.1 * exp(-t * 2.0)
+		buf[i] = s * env * 0.5
+	return buf
+
+## Victory sting: short triumphant fanfare (major chord arpeggio)
+static func gen_victory_sting() -> PackedFloat32Array:
+	var dur: float = 1.2
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	# Major chord arpeggio: C5, E5, G5, C6
+	var notes: Array = [523.25, 659.25, 783.99, 1046.5]
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.02, 0.1, 0.7, dur - 0.3, dur)
+		var s: float = 0.0
+		for n_idx in range(notes.size()):
+			var note_start: float = n_idx * 0.12
+			if t >= note_start:
+				var nt: float = t - note_start
+				var note_env: float = adsr(nt, 0.01, 0.05, 0.8, dur - note_start - 0.3, dur - note_start)
+				s += sine(notes[n_idx] * nt) * note_env * 0.25
+		# Shimmer overtone
+		s += sine(1046.5 * t * 2.0) * 0.05 * env * (0.5 + 0.5 * sine(t * 6.0))
+		buf[i] = s * env * 0.6
+	return buf
+
+## Combat percussion: tense rhythmic hit for combat state transitions
+static func gen_combat_percussion() -> PackedFloat32Array:
+	var dur: float = 0.6
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.005, 0.05, 0.3, 0.2, dur)
+		# Deep impact drum
+		var drum_freq: float = lerpf(120.0, 50.0, minf(t * 4.0, 1.0))
+		phase += drum_freq / SAMPLE_RATE
+		var s: float = sine(phase) * 0.5 * exp(-t * 8.0)
+		# Noise layer for attack transient
+		s += noise() * 0.4 * exp(-t * 25.0)
+		# Sub-bass rumble
+		s += sine(t * 40.0) * 0.15 * exp(-t * 3.0)
+		buf[i] = s * env * 0.7
 	return buf
 
 ## Creature echolocation: rapid clicks for Abyss Lurker

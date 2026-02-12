@@ -18,6 +18,7 @@ const SNAKE_SCENE := preload("res://scenes/snake_prey.tscn")
 const CURRENT_SCENE := preload("res://scenes/current_zone.tscn")
 const DART_PREDATOR_SCENE := preload("res://scenes/dart_predator.tscn")
 const LEVIATHAN_SCENE := preload("res://scenes/leviathan.tscn")
+const DANGER_ZONE_SCENE := preload("res://scenes/danger_zone.tscn")
 
 enum Biome { NORMAL, THERMAL_VENT, DEEP_ABYSS, SHALLOWS, NUTRIENT_RICH }
 
@@ -240,6 +241,22 @@ func _spawn_chunk_population(coord: Vector2i) -> void:
 		add_child(cz)
 		chunk["organisms"].append(cz)
 
+	# Environmental danger zones (biome-specific)
+	if biome == Biome.DEEP_ABYSS and rng.randf() < 0.4:
+		# Acid pools in deep abyss
+		var dz := DANGER_ZONE_SCENE.instantiate()
+		dz.setup(0, rng.randf_range(60.0, 100.0))  # 0 = ACID_POOL
+		dz.global_position = center + Vector2(rng.randf_range(-250, 250), rng.randf_range(-250, 250))
+		add_child(dz)
+		chunk["organisms"].append(dz)
+	elif biome == Biome.THERMAL_VENT and rng.randf() < 0.3:
+		# Static fields near thermal vents
+		var dz := DANGER_ZONE_SCENE.instantiate()
+		dz.setup(1, rng.randf_range(50.0, 90.0))  # 1 = STATIC_FIELD
+		dz.global_position = center + Vector2(rng.randf_range(-200, 200), rng.randf_range(-200, 200))
+		add_child(dz)
+		chunk["organisms"].append(dz)
+
 func _spawn_organism(type_key: String, pos: Vector2, rng: RandomNumberGenerator) -> Node2D:
 	var org: Node2D = null
 	match type_key:
@@ -254,6 +271,9 @@ func _spawn_organism(type_key: String, pos: Vector2, rng: RandomNumberGenerator)
 		"enemy":
 			org = ENEMY_SCENE.instantiate()
 			org.add_to_group("enemies")
+			# 10% chance of Titan variant (not during safe zone)
+			if not GameManager.safe_zone_active and rng.randf() < 0.10:
+				org.call_deferred("make_titan")
 		"competitor":
 			org = COMPETITOR_SCENE.instantiate()
 		"snake":

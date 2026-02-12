@@ -67,25 +67,37 @@ func _draw() -> void:
 			if is_rare:
 				draw_circle(p.pos - p.vel.normalized() * 2.0, p.size * 0.4 * pa, Color(1, 1, 0.8, pa * 0.4))
 
-	# Floating text
+	# Floating text with bounce and color-coded outline
 	if item_name != "":
-		var text_y: float = -15.0 - _time * 25.0
+		var text_y: float = -15.0 - _time * 28.0
 		var text_alpha: float = alpha
-		var font := ThemeDB.fallback_font
-		var fsize: int = 10 if not is_rare else 12
+		var font := UIConstants.get_display_font()
+		# Scale bounce: starts large, settles to normal
+		var bounce_scale: float = 1.0
+		if _time < 0.3:
+			var bt: float = _time / 0.3
+			bounce_scale = 1.0 + (1.0 - bt) * (1.0 - bt) * 0.6  # ease-out bounce
+		var base_size: int = 10 if not is_rare else 13
+		var fsize: int = int(base_size * bounce_scale)
 		var tw: float = font.get_string_size(item_name, HORIZONTAL_ALIGNMENT_CENTER, -1, fsize).x
-		# Text shadow
-		draw_string(font, Vector2(-tw * 0.5 + 1, text_y + 1), item_name, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, Color(0, 0, 0, text_alpha * 0.5))
-		# Text
+		var tx: float = -tw * 0.5
+		# Color-coded outline
+		var outline_col: Color = Color(item_color.r * 0.3, item_color.g * 0.3, item_color.b * 0.3, text_alpha * 0.7)
+		if is_rare:
+			outline_col = Color(0.4, 0.35, 0.05, text_alpha * 0.8)
+		for ox in [-1.0, 1.0]:
+			for oy in [-1.0, 1.0]:
+				draw_string(font, Vector2(tx + ox, text_y + oy), item_name, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, outline_col)
+		# Main text
 		var text_color := Color(item_color.r, item_color.g, item_color.b, text_alpha)
 		if is_rare:
 			text_color = text_color.lerp(Color(1.0, 1.0, 0.5, text_alpha), 0.3)
-		draw_string(font, Vector2(-tw * 0.5, text_y), item_name, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, text_color)
+		draw_string(font, Vector2(tx, text_y), item_name, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, text_color)
 
 	# "+" energy text slightly below
 	if _time < 0.6:
 		var ea: float = 1.0 - _time / 0.6
-		var font2 := ThemeDB.fallback_font
+		var font2 := UIConstants.get_display_font()
 		var etxt: String = "+FUEL"
 		var etw: float = font2.get_string_size(etxt, HORIZONTAL_ALIGNMENT_CENTER, -1, 8).x
 		draw_string(font2, Vector2(-etw * 0.5, -5.0 - _time * 10.0), etxt, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(0.3, 1.0, 0.6, ea * 0.7))

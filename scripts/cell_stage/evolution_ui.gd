@@ -1,37 +1,106 @@
 extends CanvasLayer
-## Evolution choice UI: shows 3 procedurally drawn mutation cards when a vial fills.
-## Pauses game, player picks one, mutation applied, game resumes.
+## Unified Creature Editor — handles both initial customization and evolution upgrades.
+## Modes: CARD_SELECT (pick 1 of 3 cards at bottom), CUSTOMIZE (full editor with preview + color picker).
+## Pauses game. Player interacts. Game resumes on save.
 
-const CARD_WIDTH: float = 200.0
-const CARD_HEIGHT: float = 300.0
-const CARD_SPACING: float = 30.0
-const CARD_Y: float = 150.0
+signal initial_customization_completed
+
+enum EditorMode { CARD_SELECT, CUSTOMIZE }
+
+const CARD_WIDTH: float = 180.0
+const CARD_HEIGHT: float = 240.0
+const CARD_SPACING: float = 20.0
+const SMALL_CARD_W: float = 150.0
+const SMALL_CARD_H: float = 180.0
+
+# Alien glyphs for sci-fi labels (matching organism_card.gd aesthetic)
+const ALIEN_GLYPHS: Array = [
+	"◊", "∆", "Ω", "Σ", "Φ", "Ψ", "λ", "π", "θ", "ξ",
+	"╬", "╫", "╪", "┼", "╋", "╂", "╁", "╀", "┿", "┾",
+	"⊕", "⊗", "⊙", "⊚", "⊛", "⊜", "⊝", "⊞", "⊟", "⊠",
+]
 
 var _active: bool = false
+var _mode: EditorMode = EditorMode.CARD_SELECT
 var _choices: Array[Dictionary] = []
 var _category: String = ""
 var _hover_index: int = -1
 var _time: float = 0.0
-var _appear_t: float = 0.0  # 0→1 animation
+var _appear_t: float = 0.0
 var _card_draw: Control = null
-var _bg_particles: Array = []  # [{pos, vel, life, color, size}]
+var _bg_particles: Array = []
 var _selected_index: int = -1
-var _select_anim: float = 0.0  # 0→1 selection flash
-var _flash_alpha: float = 0.0  # Screen flash on open
-var _prev_hover: int = -1  # Track hover changes for sound
+var _select_anim: float = 0.0
+var _flash_alpha: float = 0.0
+var _prev_hover: int = -1
+var _is_initial_customize: bool = false  # True if opened from tutorial
+
+# Freeform placement state (Spore-style)
+var _sidebar_hover: int = -1
+var _sidebar_scroll: int = 0
+var _is_dragging: bool = false
+var _dragging_mutation: Dictionary = {}
+var _drag_source: String = ""  # "palette" or "placed"
+var _drag_pos: Vector2 = Vector2.ZERO
+var _drag_ghost_angle: float = 0.0
+
+# Selected placed mutation for rotation ring
+var _selected_mutation_id: String = ""
+var _hover_placed_mutation: String = ""  # mutation_id under cursor
+var _hover_angle: float = 0.0
+var _hover_mutation_id: String = ""  # for scaling
+
+# Symmetry toggle
+var _symmetry_enabled: bool = true
+
+# Placement particles
+var _place_particles: Array = []  # [{pos, vel, life, color}]
+
+# Preview zoom
+var _preview_zoom: float = 5.0
+
+# Creature preview + color picker
+var _preview: Control = null
+var _color_picker: Control = null
+
+# Confirm/Save button
+var _confirm_hover: bool = false
+
+# Sci-fi background state
+var _glyph_columns: Array = []  # [{x, glyphs, offset, speed, alpha}]
+var _scan_line_y: float = 0.0
+var _diagram_rot: Array = [0.0, 0.0]
+var _helix_phase: float = 0.0
+var _scifi_initialized: bool = false
 
 func _ready() -> void:
 	visible = false
 	layer = 10
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	GameManager.evolution_triggered.connect(_on_evolution_triggered)
-	# Create a Control child for drawing cards
 	_card_draw = Control.new()
 	_card_draw.name = "CardDraw"
 	_card_draw.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_card_draw.mouse_filter = Control.MOUSE_FILTER_STOP
-	_card_draw.draw.connect(_draw_cards)
+	_card_draw.draw.connect(_draw_ui)
 	_card_draw.gui_input.connect(_on_gui_input)
 	add_child(_card_draw)
+
+## Open for initial creature customization (after tutorial, no cards)
+func open_initial_customization() -> void:
+	if _active:
+		return
+	_active = true
+	_is_initial_customize = true
+	_mode = EditorMode.CUSTOMIZE
+	_choices = []
+	_appear_t = 0.0
+	_flash_alpha = 0.5
+	visible = true
+	get_tree().paused = true
+	_setup_preview()
+	_setup_color_picker()
+	AudioManager.play_ui_open()
 
 func _on_evolution_triggered(category_key: String) -> void:
 	if _active:
@@ -41,9 +110,13 @@ func _on_evolution_triggered(category_key: String) -> void:
 	if _choices.is_empty():
 		return
 	_active = true
+	_is_initial_customize = false
+	_mode = EditorMode.CARD_SELECT
 	_appear_t = 0.0
 	_hover_index = -1
 	_prev_hover = -1
+	_selected_index = -1
+	_select_anim = 0.0
 	_flash_alpha = 1.0
 	visible = true
 	get_tree().paused = true
@@ -55,25 +128,36 @@ func _process(delta: float) -> void:
 		return
 	_time += delta
 	_appear_t = minf(_appear_t + delta * 3.0, 1.0)
-
-	# Flash decay
 	_flash_alpha = maxf(_flash_alpha - delta * 3.0, 0.0)
 
-	# Selection animation
-	if _selected_index >= 0:
+	# Card selection animation
+	if _mode == EditorMode.CARD_SELECT and _selected_index >= 0:
 		_select_anim += delta * 4.0
 		if _select_anim >= 1.0:
-			_finalize_selection()
+			_enter_customize_mode()
 			return
+
+	# Initialize sci-fi background on first activation
+	if not _scifi_initialized:
+		_init_glyph_columns()
+		_scifi_initialized = true
+
+	# Sci-fi background animation
+	var vp := get_viewport().get_visible_rect().size
+	_scan_line_y = fmod(_scan_line_y + delta * 50.0, vp.y + 40.0)
+	_diagram_rot[0] += delta * 0.4
+	_diagram_rot[1] -= delta * 0.25
+	_helix_phase += delta * 1.5
+	for col in _glyph_columns:
+		col.offset += delta * col.speed
 
 	# Background particles
 	if _appear_t > 0.3 and randf() < 0.3:
-		var vp := get_viewport().get_visible_rect().size
 		_bg_particles.append({
 			"pos": Vector2(randf() * vp.x, vp.y + 10),
 			"vel": Vector2(randf_range(-20, 20), randf_range(-60, -30)),
 			"life": 1.0,
-			"color": Color(randf_range(0.2, 0.5), randf_range(0.5, 0.9), randf_range(0.7, 1.0), 0.3),
+			"color": Color(randf_range(0.2, 0.5), randf_range(0.5, 0.9), randf_range(0.7, 1.0), 0.15),
 			"size": randf_range(1.0, 3.0),
 		})
 	var alive: Array = []
@@ -84,109 +168,923 @@ func _process(delta: float) -> void:
 			alive.append(p)
 	_bg_particles = alive
 
+	# Sync preview rotation from color picker, zoom from local state
+	if _mode == EditorMode.CUSTOMIZE and _preview and _color_picker:
+		_preview.preview_scale = _preview_zoom
+		_preview.preview_rotation = _color_picker.preview_rotation
+		_color_picker.preview_zoom = _preview_zoom
+
+	# Update placement particles
+	var alive_pp: Array = []
+	for pp in _place_particles:
+		pp.life -= delta * 2.5
+		pp.pos += pp.vel * delta
+		pp.vel *= 0.92
+		if pp.life > 0:
+			alive_pp.append(pp)
+	_place_particles = alive_pp
+
 	_card_draw.queue_redraw()
 
+func _enter_customize_mode() -> void:
+	if _selected_index >= 0 and _selected_index < _choices.size():
+		var pending: Dictionary = _choices[_selected_index]
+		GameManager.consume_vial_for_evolution(_category)
+		var vis: String = pending.get("visual", "")
+		var angle: float = SnapPointSystem.get_default_angle_for_visual(vis)
+		var distance: float = SnapPointSystem.get_default_distance_for_visual(vis)
+		GameManager.apply_mutation_with_angle(pending, angle, distance)
+
+	_mode = EditorMode.CUSTOMIZE
+	_selected_index = -1
+	_select_anim = 0.0
+	_appear_t = 0.8
+	_setup_preview()
+	_setup_color_picker()
+
+func _setup_preview() -> void:
+	if _preview:
+		_preview.queue_free()
+	var PreviewScript := preload("res://scripts/cell_stage/creature_preview.gd")
+	_preview = Control.new()
+	_preview.set_script(PreviewScript)
+	_preview.name = "CreaturePreview"
+	_preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_card_draw.add_child(_preview)
+	var vp := get_viewport().get_visible_rect().size
+	_preview.preview_center = Vector2(vp.x * 0.43, vp.y * 0.42)
+	_preview.preview_scale = _preview_zoom
+
+func _setup_color_picker() -> void:
+	if _color_picker:
+		if _color_picker.color_changed.is_connected(_on_color_changed):
+			_color_picker.color_changed.disconnect(_on_color_changed)
+		if _color_picker.style_changed.is_connected(_on_style_changed):
+			_color_picker.style_changed.disconnect(_on_style_changed)
+		if _color_picker.eye_placement_changed.is_connected(_on_eye_placement_changed):
+			_color_picker.eye_placement_changed.disconnect(_on_eye_placement_changed)
+		if _color_picker.eye_size_changed.is_connected(_on_eye_size_changed):
+			_color_picker.eye_size_changed.disconnect(_on_eye_size_changed)
+		_color_picker.queue_free()
+	var PickerScript := preload("res://scripts/cell_stage/color_picker_ui.gd")
+	_color_picker = Control.new()
+	_color_picker.set_script(PickerScript)
+	_color_picker.name = "ColorPicker"
+	_color_picker.mouse_filter = Control.MOUSE_FILTER_STOP
+	_card_draw.add_child(_color_picker)
+	var vp := get_viewport().get_visible_rect().size
+	_color_picker.position = Vector2(vp.x * 0.68, 0)
+	_color_picker.size = Vector2(vp.x * 0.32, vp.y)
+	_color_picker.setup(GameManager.creature_customization)
+	_color_picker.color_changed.connect(_on_color_changed)
+	_color_picker.style_changed.connect(_on_style_changed)
+	_color_picker.eye_placement_changed.connect(_on_eye_placement_changed)
+	_color_picker.eye_size_changed.connect(_on_eye_size_changed)
+
+func _on_color_changed(target: String, color: Color) -> void:
+	GameManager.update_creature_customization({target: color})
+
+func _on_style_changed(target: String, style: String) -> void:
+	GameManager.update_creature_customization({target: style})
+
+func _on_eye_placement_changed(angle: float, spacing: float) -> void:
+	GameManager.update_creature_customization({"eye_angle": angle, "eye_spacing": spacing})
+
+func _on_eye_size_changed(new_size: float) -> void:
+	GameManager.update_creature_customization({"eye_size": new_size})
+
+func _close_editor() -> void:
+	if _preview:
+		_preview.queue_free()
+		_preview = null
+	if _color_picker:
+		if _color_picker.color_changed.is_connected(_on_color_changed):
+			_color_picker.color_changed.disconnect(_on_color_changed)
+		if _color_picker.style_changed.is_connected(_on_style_changed):
+			_color_picker.style_changed.disconnect(_on_style_changed)
+		if _color_picker.eye_placement_changed.is_connected(_on_eye_placement_changed):
+			_color_picker.eye_placement_changed.disconnect(_on_eye_placement_changed)
+		if _color_picker.eye_size_changed.is_connected(_on_eye_size_changed):
+			_color_picker.eye_size_changed.disconnect(_on_eye_size_changed)
+		_color_picker.queue_free()
+		_color_picker = null
+	_active = false
+	_is_initial_customize = false
+	_choices = []
+	_dragging_mutation = {}
+	_is_dragging = false
+	_drag_source = ""
+	_bg_particles.clear()
+	_place_particles.clear()
+	_hover_mutation_id = ""
+	_hover_placed_mutation = ""
+	_selected_mutation_id = ""
+	visible = false
+	get_tree().paused = false
+
+# --- Layout helpers ---
+
+func _get_vp() -> Vector2:
+	return get_viewport().get_visible_rect().size
+
 func _get_card_rect(index: int) -> Rect2:
-	var total_w: float = _choices.size() * CARD_WIDTH + (_choices.size() - 1) * CARD_SPACING
-	var vp_size := get_viewport().get_visible_rect().size
-	var start_x: float = (vp_size.x - total_w) * 0.5
-	var x: float = start_x + index * (CARD_WIDTH + CARD_SPACING)
-	var y: float = CARD_Y + (1.0 - _appear_t) * 80.0
-	return Rect2(x, y, CARD_WIDTH, CARD_HEIGHT)
+	var vp := _get_vp()
+	if _mode == EditorMode.CARD_SELECT:
+		var total_w: float = _choices.size() * CARD_WIDTH + (_choices.size() - 1) * CARD_SPACING
+		var start_x: float = (vp.x - total_w) * 0.5
+		var x: float = start_x + index * (CARD_WIDTH + CARD_SPACING)
+		var y: float = vp.y * 0.2 + (1.0 - _appear_t) * 80.0
+		return Rect2(x, y, CARD_WIDTH, CARD_HEIGHT)
+	else:
+		# Cards at bottom in customize mode, centered in the preview area
+		var cw: float = SMALL_CARD_W
+		var ch: float = SMALL_CARD_H
+		var sp: float = 12.0
+		var total_w: float = _choices.size() * cw + (_choices.size() - 1) * sp
+		var center_x: float = vp.x * 0.43  # Center of preview area
+		var start_x: float = center_x - total_w * 0.5
+		var x: float = start_x + index * (cw + sp)
+		var y: float = vp.y - ch - 16.0
+		return Rect2(x, y, cw, ch)
+
+func _get_preview_center() -> Vector2:
+	var vp := _get_vp()
+	return Vector2(vp.x * 0.43, vp.y * 0.42)
+
+func _get_preview_cell_radius() -> float:
+	return 18.0
+
+func _get_preview_elongation() -> float:
+	return minf(1.0 + GameManager.evolution_level * 0.15, 2.5)
+
+func _get_preview_scale() -> float:
+	return _preview_zoom
+
+func _get_angle_screen_pos(angle: float, distance: float) -> Vector2:
+	var center := _get_preview_center()
+	var s: float = _get_preview_scale()
+	var cr: float = _get_preview_cell_radius()
+	var elong: float = _get_preview_elongation()
+	return center + SnapPointSystem.angle_to_perimeter_position(angle, cr, elong, distance) * s
+
+func _screen_pos_to_angle(screen_pos: Vector2) -> float:
+	var center := _get_preview_center()
+	var delta: Vector2 = screen_pos - center
+	return atan2(delta.y, delta.x)
+
+func _screen_pos_to_distance(screen_pos: Vector2) -> float:
+	var center := _get_preview_center()
+	var s: float = _get_preview_scale()
+	var cr: float = _get_preview_cell_radius()
+	var elong: float = _get_preview_elongation()
+	var delta: Vector2 = screen_pos - center
+	# Normalize by ellipse radii
+	var nx: float = delta.x / (cr * elong * s) if cr * elong * s > 0.01 else 0.0
+	var ny: float = delta.y / (cr * s) if cr * s > 0.01 else 0.0
+	return clampf(sqrt(nx * nx + ny * ny), 0.0, 1.2)
+
+func _get_confirm_rect() -> Rect2:
+	var vp := _get_vp()
+	var btn_w: float = 180.0
+	var btn_h: float = 48.0
+	return Rect2(vp.x * 0.43 - btn_w * 0.5, vp.y * 0.78, btn_w, btn_h)
+
+func _get_palette_rect() -> Rect2:
+	var vp := _get_vp()
+	return Rect2(vp.x * 0.01, 68, vp.x * 0.17, vp.y - 84)
+
+func _get_palette_item_rect(index: int) -> Rect2:
+	var vp := _get_vp()
+	var pr := _get_palette_rect()
+	var row: int = index - _sidebar_scroll
+	return Rect2(pr.position.x + 4, pr.position.y + 28 + row * 36.0, pr.size.x - 8, 32.0)
+
+func _get_mutation_at_angle(screen_pos: Vector2) -> String:
+	# Find the placed mutation closest to this screen position
+	var best_id: String = ""
+	var best_dist: float = 22.0  # Hit radius
+	for mid in GameManager.mutation_placements:
+		var p: Dictionary = GameManager.mutation_placements[mid]
+		var angle: float = p.get("angle", 0.0)
+		var distance: float = p.get("distance", 1.0)
+		var sp: Vector2 = _get_angle_screen_pos(angle, distance)
+		var d: float = screen_pos.distance_to(sp)
+		if d < best_dist:
+			best_dist = d
+			best_id = mid
+		# Also check mirror
+		if p.get("mirrored", false):
+			var ma: float = SnapPointSystem.get_mirror_angle(angle)
+			var msp: Vector2 = _get_angle_screen_pos(ma, distance)
+			if screen_pos.distance_to(msp) < best_dist:
+				best_dist = screen_pos.distance_to(msp)
+				best_id = mid
+	return best_id
+
+# --- Input handling ---
 
 func _on_gui_input(event: InputEvent) -> void:
 	if not _active:
 		return
+	match _mode:
+		EditorMode.CARD_SELECT:
+			_handle_card_input(event)
+		EditorMode.CUSTOMIZE:
+			_handle_customize_input(event)
+
+func _handle_card_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		_hover_index = -1
 		for i in range(_choices.size()):
 			if _get_card_rect(i).has_point(event.position):
 				_hover_index = i
 				break
-		# Play hover sound when hovering a new card
 		if _hover_index != _prev_hover and _hover_index >= 0:
 			AudioManager.play_ui_hover()
 		_prev_hover = _hover_index
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		if _hover_index >= 0 and _hover_index < _choices.size():
+		if _hover_index >= 0 and _hover_index < _choices.size() and _selected_index < 0:
 			AudioManager.play_ui_select()
-			_select_choice(_hover_index)
+			_selected_index = _hover_index
+			_select_anim = 0.0
 
-func _select_choice(index: int) -> void:
-	if _selected_index >= 0:
-		return  # Already selecting
-	_selected_index = index
-	_select_anim = 0.0
+func _handle_customize_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		var pos: Vector2 = event.position
+		_sidebar_hover = -1
+		_confirm_hover = false
+		_hover_placed_mutation = ""
+		_hover_mutation_id = ""
 
-func _finalize_selection() -> void:
-	var mutation: Dictionary = _choices[_selected_index]
-	GameManager.consume_vial_for_evolution(_category)
-	GameManager.apply_mutation(mutation)
-	_active = false
-	_selected_index = -1
-	_select_anim = 0.0
-	_bg_particles.clear()
-	visible = false
-	get_tree().paused = false
+		# Check palette items (left panel)
+		var palette_rect := _get_palette_rect()
+		if palette_rect.has_point(pos):
+			var max_visible: int = mini(8, GameManager.active_mutations.size() - _sidebar_scroll)
+			for i in range(max_visible):
+				var idx: int = i + _sidebar_scroll
+				if idx >= GameManager.active_mutations.size():
+					break
+				if _get_palette_item_rect(idx).has_point(pos):
+					_sidebar_hover = idx
+					break
 
-func _draw_cards() -> void:
+		# Check placed mutations on the creature
+		var placed_mid: String = _get_mutation_at_angle(pos)
+		if placed_mid != "":
+			_hover_placed_mutation = placed_mid
+			_hover_mutation_id = placed_mid
+
+		# Check confirm button
+		if _get_confirm_rect().has_point(pos):
+			_confirm_hover = true
+
+		# Update drag
+		if _is_dragging:
+			_drag_pos = pos
+			_drag_ghost_angle = _screen_pos_to_angle(pos)
+
+	elif event is InputEventMouseButton:
+		var pos: Vector2 = event.position
+		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			# Click palette item to start drag
+			if _sidebar_hover >= 0 and _sidebar_hover < GameManager.active_mutations.size():
+				_dragging_mutation = GameManager.active_mutations[_sidebar_hover]
+				_is_dragging = true
+				_drag_source = "palette"
+				_drag_pos = pos
+				_selected_mutation_id = ""
+				AudioManager.play_ui_hover()
+			# Click placed mutation to select it (for rotation ring)
+			elif _hover_placed_mutation != "":
+				_selected_mutation_id = _hover_placed_mutation
+				# Start drag to reposition
+				var m_data: Dictionary = {}
+				for m in GameManager.active_mutations:
+					if m.get("id", "") == _hover_placed_mutation:
+						m_data = m
+						break
+				if not m_data.is_empty():
+					_dragging_mutation = m_data
+					_is_dragging = true
+					_drag_source = "placed"
+					_drag_pos = pos
+				AudioManager.play_ui_hover()
+			# Click confirm/save
+			elif _get_confirm_rect().has_point(pos):
+				AudioManager.play_ui_select()
+				var was_initial := _is_initial_customize
+				if _is_initial_customize:
+					GameManager.initial_customization_done = true
+				_close_editor()
+				if was_initial:
+					initial_customization_completed.emit()
+			# Click symmetry toggle
+			elif _get_symmetry_toggle_rect().has_point(pos):
+				_symmetry_enabled = not _symmetry_enabled
+				AudioManager.play_ui_select()
+			# Click empty area — deselect
+			else:
+				_selected_mutation_id = ""
+
+		elif not event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			# Drop mutation
+			if _is_dragging:
+				var mid: String = _dragging_mutation.get("id", "")
+				var preview_area := _get_preview_area_rect()
+				if preview_area.has_point(pos) and mid != "":
+					var angle: float = _screen_pos_to_angle(pos)
+					var distance: float = clampf(_screen_pos_to_distance(pos), 0.0, 1.0)
+					var mirrored: bool = _symmetry_enabled and not SnapPointSystem.is_center_angle(angle) and distance >= 0.5
+					GameManager.update_mutation_angle(mid, angle, distance, mirrored)
+					AudioManager.play_ui_select()
+					_spawn_place_particles(pos)
+					_selected_mutation_id = mid
+			_is_dragging = false
+			_dragging_mutation = {}
+			_drag_source = ""
+
+		# Right-click: unplace mutation (remove placement, stays in inventory)
+		if event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+			if _hover_placed_mutation != "":
+				GameManager.remove_mutation_placement(_hover_placed_mutation)
+				if _selected_mutation_id == _hover_placed_mutation:
+					_selected_mutation_id = ""
+				_hover_placed_mutation = ""
+				AudioManager.play_ui_hover()
+
+		# Mouse wheel: rotate or scale placed mutations
+		if event.pressed and _hover_mutation_id != "":
+			if event.shift_pressed:
+				# Shift+scroll = scale
+				if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+					var cur_scale: float = GameManager.mutation_placements.get(_hover_mutation_id, {}).get("scale", 1.0)
+					GameManager.update_mutation_scale(_hover_mutation_id, cur_scale + 0.15)
+				elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+					var cur_scale: float = GameManager.mutation_placements.get(_hover_mutation_id, {}).get("scale", 1.0)
+					GameManager.update_mutation_scale(_hover_mutation_id, cur_scale - 0.15)
+			else:
+				# Normal scroll = rotate
+				if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+					var cur_rot: float = GameManager.mutation_placements.get(_hover_mutation_id, {}).get("rotation_offset", 0.0)
+					GameManager.update_mutation_rotation(_hover_mutation_id, cur_rot + 0.15)
+				elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+					var cur_rot: float = GameManager.mutation_placements.get(_hover_mutation_id, {}).get("rotation_offset", 0.0)
+					GameManager.update_mutation_rotation(_hover_mutation_id, cur_rot - 0.15)
+
+		# Scroll-over-preview to zoom (when not hovering a mutation)
+		elif event.pressed and _hover_mutation_id == "":
+			var preview_rect := _get_preview_area_rect()
+			if preview_rect.has_point(pos):
+				if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+					_preview_zoom = clampf(_preview_zoom + 0.3, 2.5, 7.0)
+					if _preview:
+						_preview.preview_scale = _preview_zoom
+				elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+					_preview_zoom = clampf(_preview_zoom - 0.3, 2.5, 7.0)
+					if _preview:
+						_preview.preview_scale = _preview_zoom
+			elif _get_palette_rect().has_point(pos):
+				# Palette scroll
+				if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+					_sidebar_scroll = maxi(_sidebar_scroll - 1, 0)
+				elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+					_sidebar_scroll = mini(_sidebar_scroll + 1, maxi(0, GameManager.active_mutations.size() - 8))
+
+func _get_preview_area_rect() -> Rect2:
+	var vp := _get_vp()
+	return Rect2(vp.x * 0.18, 68, vp.x * 0.50, vp.y * 0.65)
+
+func _get_symmetry_toggle_rect() -> Rect2:
+	var vp := _get_vp()
+	return Rect2(vp.x * 0.43 - 60, 68, 120, 24)
+
+func _spawn_place_particles(pos: Vector2) -> void:
+	for i in range(12):
+		var angle: float = randf() * TAU
+		var speed: float = randf_range(30, 80)
+		_place_particles.append({
+			"pos": pos,
+			"vel": Vector2(cos(angle) * speed, sin(angle) * speed),
+			"life": 1.0,
+			"color": Color(0.4, 0.9, 1.0, 0.8),
+		})
+
+# --- Drawing ---
+
+func _draw_ui() -> void:
 	if not _active:
 		return
-	var vp_size := get_viewport().get_visible_rect().size
+	var vp := _get_vp()
+	var font := UIConstants.get_display_font()
 
-	# Dim background
-	_card_draw.draw_rect(Rect2(0, 0, vp_size.x, vp_size.y), Color(0.0, 0.02, 0.05, 0.75 * _appear_t))
+	# Sci-fi background with tech blueprints and alien diagrams
+	_draw_scifi_bg(vp)
 
-	# Evolution flash overlay (bright white/cyan flash that fades out)
+	# Flash
 	if _flash_alpha > 0.01:
-		_card_draw.draw_rect(Rect2(0, 0, vp_size.x, vp_size.y), Color(0.4, 0.8, 1.0, _flash_alpha * 0.4))
+		_card_draw.draw_rect(Rect2(0, 0, vp.x, vp.y), Color(0.4, 0.8, 1.0, _flash_alpha * 0.3))
 
-	# Background floating particles
+	# Background particles
 	for p in _bg_particles:
 		_card_draw.draw_circle(p.pos, p.size, Color(p.color.r, p.color.g, p.color.b, p.life * p.color.a))
 
-	# Title
-	var font := ThemeDB.fallback_font
-	var title := "EVOLUTION — Choose a Mutation"
-	var title_size := font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 22)
-	var title_x: float = (vp_size.x - title_size.x) * 0.5
-	var title_a: float = _appear_t
-	_card_draw.draw_string(font, Vector2(title_x, 100 + (1.0 - _appear_t) * 30.0), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(0.3, 0.9, 1.0, title_a))
+	match _mode:
+		EditorMode.CARD_SELECT:
+			_draw_card_select(vp, font)
+		EditorMode.CUSTOMIZE:
+			_draw_customize_mode(vp, font)
+
+func _init_glyph_columns() -> void:
+	_glyph_columns.clear()
+	var num_cols := 10
+	for i in range(num_cols):
+		var col := {
+			"x": 30.0 + float(i) * 120.0 + randf_range(-20, 20),
+			"offset": randf() * 400.0,
+			"speed": randf_range(8.0, 18.0),
+			"alpha": randf_range(0.08, 0.16),
+			"glyphs": [],
+		}
+		for j in range(24):
+			col.glyphs.append(str(ALIEN_GLYPHS[randi() % ALIEN_GLYPHS.size()]))
+		_glyph_columns.append(col)
+
+func _draw_scifi_bg(vp: Vector2) -> void:
+	var a := _appear_t
+
+	# 1. Dark base
+	_card_draw.draw_rect(Rect2(0, 0, vp.x, vp.y), Color(0.01, 0.02, 0.05, 0.96 * a))
+
+	# 2. Blueprint grid (bolder)
+	var grid_alpha := 0.09 * a
+	var grid_spacing := 40.0
+	var gx_count := int(vp.x / grid_spacing) + 1
+	var gy_count := int(vp.y / grid_spacing) + 1
+	for i in range(gx_count):
+		var x := float(i) * grid_spacing
+		var is_major := (i % 4 == 0)
+		var ga := grid_alpha * (1.55 if is_major else 1.0)
+		var gw := 1.5 if is_major else 1.0
+		_card_draw.draw_line(Vector2(x, 0), Vector2(x, vp.y), Color(0.12, 0.25, 0.35, ga), gw)
+	for i in range(gy_count):
+		var y := float(i) * grid_spacing
+		var is_major := (i % 4 == 0)
+		var ga := grid_alpha * (1.55 if is_major else 1.0)
+		var gw := 1.5 if is_major else 1.0
+		_card_draw.draw_line(Vector2(0, y), Vector2(vp.x, y), Color(0.12, 0.25, 0.35, ga), gw)
+
+	# 3. Horizontal scan line with glow band (bolder)
+	var scan_alpha := (0.25 + 0.12 * sin(_time * 3.0)) * a
+	_card_draw.draw_line(Vector2(0, _scan_line_y), Vector2(vp.x, _scan_line_y), Color(0.3, 0.8, 1.0, scan_alpha), 2.5)
+	for i in range(6):
+		var off := float(i + 1) * 3.0
+		var band_a := scan_alpha * (1.0 - float(i) / 6.0) * 0.3
+		_card_draw.draw_line(Vector2(0, _scan_line_y + off), Vector2(vp.x, _scan_line_y + off), Color(0.2, 0.6, 0.8, band_a), 1.5)
+
+	# 4. Scrolling alien glyph columns
+	_draw_glyph_columns(vp)
+
+	# 5. Rotating tech diagrams (bolder)
+	_draw_tech_diagram(Vector2(vp.x * 0.15, vp.y * 0.28), 110.0, _diagram_rot[0], a * 0.22)
+	_draw_tech_diagram(Vector2(vp.x * 0.82, vp.y * 0.72), 90.0, _diagram_rot[1], a * 0.18)
+
+	# 6. DNA helix decoration along left edge
+	_draw_dna_helix(vp)
+
+	# 7. Tech readouts along bottom edge
+	_draw_edge_readouts(vp)
+
+	# 8. Corner bracket tech frame (bolder)
+	_draw_corner_frame(Rect2(6, 6, vp.x - 12, vp.y - 12), Color(0.2, 0.5, 0.7, 0.4 * a))
+
+	# 9. Subtle vignette gradient (darker edges)
+	for i in range(4):
+		var t := float(i) / 4.0
+		var edge_a := 0.06 * (1.0 - t) * a
+		_card_draw.draw_rect(Rect2(0, 0, vp.x, 30 - i * 6), Color(0.0, 0.0, 0.0, edge_a))
+		_card_draw.draw_rect(Rect2(0, vp.y - 30 + i * 6, vp.x, 30 - i * 6), Color(0.0, 0.0, 0.0, edge_a))
+
+	# 10. Top header bar (styled with scan accent)
+	_card_draw.draw_rect(Rect2(0, 0, vp.x, 60), Color(0.02, 0.04, 0.08, 0.85 * a))
+	_card_draw.draw_line(Vector2(0, 59), Vector2(vp.x, 59), Color(0.2, 0.5, 0.7, 0.35 * a), 1.0)
+	# Moving accent light on header line
+	var header_scan := fmod(_time * 120.0, vp.x + 200.0) - 100.0
+	_card_draw.draw_line(Vector2(header_scan, 59), Vector2(header_scan + 120.0, 59), Color(0.4, 0.9, 1.0, 0.7 * a), 3.0)
+	# Alien timestamp in header corner
+	var mono_font := UIConstants.get_mono_font()
+	var alien_ts: String = UIConstants.random_glyphs(8, _time)
+	_card_draw.draw_string(mono_font, Vector2(vp.x - 140, 20), alien_ts, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(0.25, 0.45, 0.55, 0.35 * a))
+	# Status text top-left
+	_card_draw.draw_string(mono_font, Vector2(12, 20), "SYS.ACTIVE", HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(0.3, 0.6, 0.4, 0.4 * a))
+	var status_val := "%.2f" % fmod(_time * 7.3, 99.99)
+	_card_draw.draw_string(mono_font, Vector2(72, 20), status_val, HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(0.3, 0.9, 0.5, 0.5 * a))
+
+func _draw_glyph_columns(vp: Vector2) -> void:
+	var font := UIConstants.get_mono_font()
+	var a := _appear_t
+	for col in _glyph_columns:
+		var x: float = col.x
+		if x > vp.x:
+			continue
+		for i in range(col.glyphs.size()):
+			var y: float = fmod(col.offset + float(i) * 18.0, float(col.glyphs.size()) * 18.0 + vp.y) - 36.0
+			if y < -18.0 or y > vp.y + 18.0:
+				continue
+			# Fade near top/bottom edges
+			var edge_fade := 1.0
+			if y < 80.0:
+				edge_fade = clampf(y / 80.0, 0.0, 1.0)
+			elif y > vp.y - 60.0:
+				edge_fade = clampf((vp.y - y) / 60.0, 0.0, 1.0)
+			_card_draw.draw_string(font, Vector2(x, y), str(col.glyphs[i]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.2, 0.5, 0.6, col.alpha * edge_fade * a))
+
+func _draw_tech_diagram(center: Vector2, radius: float, angle: float, alpha: float) -> void:
+	if alpha < 0.005:
+		return
+	# Outer ring
+	_card_draw.draw_arc(center, radius, 0, TAU, 32, Color(0.2, 0.5, 0.7, alpha), 1.0, true)
+	# Inner concentric rings
+	_card_draw.draw_arc(center, radius * 0.7, 0, TAU, 24, Color(0.15, 0.4, 0.6, alpha * 0.7), 0.8, true)
+	_card_draw.draw_arc(center, radius * 0.4, 0, TAU, 16, Color(0.12, 0.3, 0.5, alpha * 0.5), 0.5, true)
+	# Tick marks on outer ring (rotating)
+	for i in range(12):
+		var tick_a := angle + TAU * float(i) / 12.0
+		var p1 := center + Vector2(cos(tick_a), sin(tick_a)) * radius
+		var p2 := center + Vector2(cos(tick_a), sin(tick_a)) * (radius - 8.0)
+		_card_draw.draw_line(p1, p2, Color(0.3, 0.6, 0.8, alpha), 1.0, true)
+	# Cross-hairs (slower rotation)
+	for i in range(4):
+		var ch_a := angle * 0.5 + TAU * float(i) / 4.0
+		var p1 := center + Vector2(cos(ch_a), sin(ch_a)) * radius * 0.15
+		var p2 := center + Vector2(cos(ch_a), sin(ch_a)) * radius * 0.65
+		_card_draw.draw_line(p1, p2, Color(0.2, 0.4, 0.6, alpha * 0.5), 0.5, true)
+	# Rotating data arc (partial arc that sweeps)
+	var arc_start := fmod(angle * 1.5, TAU)
+	_card_draw.draw_arc(center, radius * 0.85, arc_start, arc_start + PI * 0.6, 12, Color(0.3, 0.7, 0.9, alpha * 0.7), 2.0, true)
+	# Center dot
+	_card_draw.draw_circle(center, 2.5, Color(0.3, 0.7, 0.9, alpha))
+	# Small orbiting dot
+	var orbit_a := angle * 2.0
+	var orbit_pos := center + Vector2(cos(orbit_a), sin(orbit_a)) * radius * 0.55
+	_card_draw.draw_circle(orbit_pos, 2.0, Color(0.4, 0.9, 1.0, alpha * 0.8))
+
+func _draw_dna_helix(vp: Vector2) -> void:
+	var x_base := vp.x * 0.97
+	var helix_width := 12.0
+	var a := _appear_t * 0.18
+	var strand1 := PackedVector2Array()
+	var strand2 := PackedVector2Array()
+	var num_pts := 30
+
+	for i in range(num_pts):
+		var t := float(i) / float(num_pts - 1)
+		var y := t * vp.y
+		var phase := _helix_phase + t * 8.0
+		var x1 := x_base + sin(phase) * helix_width
+		var x2 := x_base + sin(phase + PI) * helix_width
+		strand1.append(Vector2(x1, y))
+		strand2.append(Vector2(x2, y))
+		# Cross rungs
+		if i % 3 == 0 and i > 0:
+			_card_draw.draw_line(Vector2(x1, y), Vector2(x2, y), Color(0.2, 0.5, 0.7, a * 0.7), 1.0, true)
+
+	if strand1.size() >= 2:
+		_card_draw.draw_polyline(strand1, Color(0.3, 0.7, 0.9, a), 2.5, true)
+		_card_draw.draw_polyline(strand2, Color(0.2, 0.6, 0.8, a), 2.5, true)
+
+func _draw_edge_readouts(vp: Vector2) -> void:
+	var font := UIConstants.get_mono_font()
+	var a := _appear_t * 0.7
+
+	# Bottom-right tech readouts
+	var rx := vp.x - 165.0
+	var ry := vp.y - 38.0
+	var val1 := 50.0 + sin(_time * 1.3) * 30.0
+	var val2 := 75.0 + cos(_time * 0.9) * 20.0
+	var val3 := 30.0 + sin(_time * 2.1) * 25.0
+
+	_card_draw.draw_string(font, Vector2(rx, ry), "BIO.SIG", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.3, 0.5, 0.6, a * 0.6))
+	_card_draw.draw_string(font, Vector2(rx + 46, ry), "%.1f" % val1, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.3, 0.9, 0.5, a))
+	_card_draw.draw_string(font, Vector2(rx + 86, ry), "MTB.RT", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.3, 0.5, 0.6, a * 0.6))
+	_card_draw.draw_string(font, Vector2(rx + 128, ry), "%.1f" % val2, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.3, 0.9, 0.5, a))
+	ry += 14.0
+	_card_draw.draw_string(font, Vector2(rx, ry), "STAB.IX", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.3, 0.5, 0.6, a * 0.6))
+	_card_draw.draw_string(font, Vector2(rx + 48, ry), "%.1f%%" % val3, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.3, 0.9, 0.5, a))
+	# Alien label
+	var alien_lbl: String = ""
+	for i in range(6):
+		alien_lbl += str(ALIEN_GLYPHS[int(fmod(_time * 0.5 + float(i), float(ALIEN_GLYPHS.size())))])
+	_card_draw.draw_string(font, Vector2(rx + 100, ry), alien_lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(0.2, 0.4, 0.5, a * 0.35))
+
+	# Bottom-left alien readout
+	var lx := 12.0
+	var ly := vp.y - 26.0
+	var alien_bl: String = ""
+	for i in range(10):
+		alien_bl += str(ALIEN_GLYPHS[int(fmod(_time * 0.2 + float(i) * 2.3, float(ALIEN_GLYPHS.size())))])
+	_card_draw.draw_string(font, Vector2(lx, ly), alien_bl, HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(0.2, 0.4, 0.5, a * 0.3))
+
+func _draw_corner_frame(rect: Rect2, color: Color) -> void:
+	var corner_len := 30.0
+	var x := rect.position.x
+	var y := rect.position.y
+	var w := rect.size.x
+	var h := rect.size.y
+	# Top-left
+	_card_draw.draw_line(Vector2(x, y), Vector2(x + corner_len, y), color, 2.0)
+	_card_draw.draw_line(Vector2(x, y), Vector2(x, y + corner_len), color, 2.0)
+	# Top-right
+	_card_draw.draw_line(Vector2(x + w, y), Vector2(x + w - corner_len, y), color, 2.0)
+	_card_draw.draw_line(Vector2(x + w, y), Vector2(x + w, y + corner_len), color, 2.0)
+	# Bottom-left
+	_card_draw.draw_line(Vector2(x, y + h), Vector2(x + corner_len, y + h), color, 2.0)
+	_card_draw.draw_line(Vector2(x, y + h), Vector2(x, y + h - corner_len), color, 2.0)
+	# Bottom-right
+	_card_draw.draw_line(Vector2(x + w, y + h), Vector2(x + w - corner_len, y + h), color, 2.0)
+	_card_draw.draw_line(Vector2(x + w, y + h), Vector2(x + w, y + h - corner_len), color, 2.0)
+
+func _draw_card_select(vp: Vector2, font: Font) -> void:
+	# Alien glyph accent before title
+	var glyph_pre: String = str(ALIEN_GLYPHS[int(fmod(_time * 0.7, ALIEN_GLYPHS.size()))]) + " "
+	var glyph_post: String = " " + str(ALIEN_GLYPHS[int(fmod(_time * 0.7 + 5, ALIEN_GLYPHS.size()))])
+	var title := glyph_pre + "EVOLUTION — Choose a Mutation" + glyph_post
+	var ts := font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 22)
+	_card_draw.draw_string(font, Vector2((vp.x - ts.x) * 0.5, 38), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(0.3, 0.9, 1.0, _appear_t))
 
 	# Category subtitle
 	var cat_label: String = GameManager.CATEGORY_LABELS.get(_category, _category)
 	var sub := "Vial filled: " + cat_label
-	var sub_size := font.get_string_size(sub, HORIZONTAL_ALIGNMENT_CENTER, -1, 14)
-	_card_draw.draw_string(font, Vector2((vp_size.x - sub_size.x) * 0.5, 125 + (1.0 - _appear_t) * 20.0), sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.6, 0.8, 0.9, title_a * 0.7))
+	var ss := font.get_string_size(sub, HORIZONTAL_ALIGNMENT_CENTER, -1, 12)
+	_card_draw.draw_string(font, Vector2((vp.x - ss.x) * 0.5, 54), sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.5, 0.7, 0.8, _appear_t * 0.7))
 
-	# Draw each card
+	# Cards
 	for i in range(_choices.size()):
-		_draw_single_card(i)
+		_draw_single_card(i, true)
 
-func _draw_single_card(index: int) -> void:
+func _draw_customize_mode(vp: Vector2, font: Font) -> void:
+	# Header title with alien glyph accents
+	var glyph_l: String = str(ALIEN_GLYPHS[int(fmod(_time * 0.5, ALIEN_GLYPHS.size()))]) + " "
+	var glyph_r: String = " " + str(ALIEN_GLYPHS[int(fmod(_time * 0.5 + 7, ALIEN_GLYPHS.size()))])
+	var title := glyph_l + "CREATURE EDITOR" + glyph_r
+	if _is_initial_customize:
+		title = glyph_l + "DESIGN YOUR ORGANISM" + glyph_r
+	var title_cx: float = vp.x * 0.43
+	var ts := font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 20)
+	_card_draw.draw_string(font, Vector2(title_cx - ts.x * 0.5, 38), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.3, 0.9, 1.0, _appear_t))
+
+	# Subtitle/hint
+	var hint := "Drag parts onto creature. Scroll=rotate, Shift+Scroll=scale, Right-click=remove"
+	if _is_initial_customize:
+		hint = "Choose your colors and eyes — make it yours!"
+	var hs := font.get_string_size(hint, HORIZONTAL_ALIGNMENT_CENTER, -1, 9)
+	_card_draw.draw_string(font, Vector2(title_cx - hs.x * 0.5, 54), hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.6, 0.7, _appear_t * 0.6))
+
+	# Symmetry toggle
+	_draw_symmetry_toggle(vp, font)
+
+	# Tech frame around preview area
+	var preview_frame := Rect2(vp.x * 0.18, 68, vp.x * 0.50, vp.y * 0.65)
+	_draw_corner_frame(preview_frame, Color(0.2, 0.5, 0.7, 0.15 * _appear_t))
+	_card_draw.draw_string(font, Vector2(preview_frame.position.x + 8, preview_frame.position.y + 14), "SPECIMEN VIEW", HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(0.3, 0.5, 0.6, 0.4 * _appear_t))
+	var spec_glyph: String = ""
+	for i in range(5):
+		spec_glyph += str(ALIEN_GLYPHS[int(fmod(_time * 0.15 + float(i) * 3.1, float(ALIEN_GLYPHS.size())))])
+	_card_draw.draw_string(font, Vector2(preview_frame.position.x + preview_frame.size.x - 65, preview_frame.position.y + 14), spec_glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(0.25, 0.45, 0.55, 0.3 * _appear_t))
+
+	# Draw placement handles on creature
+	_draw_placement_handles(vp, font)
+
+	# Parts palette (left panel)
+	_draw_parts_palette(vp, font)
+
+	# Save/Done button
+	_draw_confirm_button(vp, font)
+
+	# Drag ghost + mirror ghost
+	if _is_dragging:
+		_draw_drag_ghost(vp, font)
+
+	# Placement particles
+	_draw_placement_particles()
+
+	# Cards at bottom (if this came from an evolution, show the chosen card)
+	if _choices.size() > 0:
+		var card_top: float = vp.y - SMALL_CARD_H - 24.0
+		_card_draw.draw_line(Vector2(vp.x * 0.18, card_top), Vector2(vp.x * 0.68 - 8, card_top), Color(0.2, 0.5, 0.7, 0.2), 1.0)
+		var lbl := "MUTATIONS AVAILABLE"
+		var ls := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_CENTER, -1, 9)
+		_card_draw.draw_string(font, Vector2(vp.x * 0.43 - ls.x * 0.5, card_top - 4), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.6, 0.7, 0.5))
+		for i in range(_choices.size()):
+			_draw_single_card(i, false)
+
+func _draw_placement_handles(vp: Vector2, font: Font) -> void:
+	# Draw handles on each placed mutation
+	for mid in GameManager.mutation_placements:
+		var p: Dictionary = GameManager.mutation_placements[mid]
+		if not p.has("angle"):
+			continue
+		var angle: float = p.get("angle", 0.0)
+		var distance: float = p.get("distance", 1.0)
+		var sp: Vector2 = _get_angle_screen_pos(angle, distance)
+		var is_selected: bool = mid == _selected_mutation_id
+		var is_hover: bool = mid == _hover_placed_mutation
+
+		var handle_r: float = 12.0
+		var base_col: Color = Color(0.4, 0.9, 0.5, 0.5)
+		if is_hover:
+			base_col = Color(0.5, 1.0, 0.6, 0.7)
+		if is_selected:
+			base_col = Color(1.0, 0.9, 0.3, 0.8)
+
+		# Handle circle
+		_card_draw.draw_arc(sp, handle_r, 0, TAU, 16, base_col, 1.5, true)
+		_card_draw.draw_circle(sp, 3.0, base_col)
+
+		# Rotation ring on selected mutation
+		if is_selected:
+			var rot_ring_r: float = handle_r + 8.0
+			var rot_offset: float = p.get("rotation_offset", 0.0)
+			_card_draw.draw_arc(sp, rot_ring_r, 0, TAU, 24, Color(1.0, 0.85, 0.3, 0.3), 1.0, true)
+			# Rotation indicator dot
+			var rot_dot: Vector2 = sp + Vector2(cos(angle + rot_offset), sin(angle + rot_offset)) * rot_ring_r
+			_card_draw.draw_circle(rot_dot, 4.0, Color(1.0, 0.9, 0.3, 0.9))
+			# Scale + rotation info
+			var scale_val: float = p.get("scale", 1.0)
+			var info_str: String = "%.0f%% | %d°" % [scale_val * 100.0, int(rad_to_deg(rot_offset))]
+			var is_sz := font.get_string_size(info_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 8)
+			_card_draw.draw_string(font, Vector2(sp.x - is_sz.x * 0.5, sp.y + handle_r + 14), info_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(0.5, 0.9, 0.6, 0.7))
+
+		# Hover tooltip
+		if is_hover and not is_selected:
+			var mname: String = ""
+			for m in GameManager.active_mutations:
+				if m.get("id", "") == mid:
+					mname = m.get("name", mid)
+					break
+			if mname != "":
+				var ns := font.get_string_size(mname, HORIZONTAL_ALIGNMENT_CENTER, -1, 9)
+				_card_draw.draw_string(font, Vector2(sp.x - ns.x * 0.5, sp.y - handle_r - 6), mname, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.6, 0.8, 0.9, 0.7))
+
+		# Mirror handle
+		if p.get("mirrored", false):
+			var ma: float = SnapPointSystem.get_mirror_angle(angle)
+			var msp: Vector2 = _get_angle_screen_pos(ma, distance)
+			_card_draw.draw_arc(msp, handle_r * 0.8, 0, TAU, 12, Color(base_col.r, base_col.g, base_col.b, base_col.a * 0.5), 1.0, true)
+			# "M" marker
+			var m_sz := font.get_string_size("M", HORIZONTAL_ALIGNMENT_CENTER, -1, 7)
+			_card_draw.draw_string(font, Vector2(msp.x - m_sz.x * 0.5, msp.y + 4), "M", HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(1.0, 0.9, 0.3, 0.4))
+
+func _draw_parts_palette(vp: Vector2, font: Font) -> void:
+	var pr := _get_palette_rect()
+
+	# Panel background
+	_card_draw.draw_rect(pr, Color(0.02, 0.04, 0.08, 0.85))
+	_draw_corner_frame(Rect2(pr.position.x - 2, pr.position.y - 2, pr.size.x + 4, pr.size.y + 4), Color(0.2, 0.5, 0.7, 0.15))
+
+	# Header
+	var side_glyph: String = str(ALIEN_GLYPHS[int(fmod(_time * 0.4 + 3.0, ALIEN_GLYPHS.size()))])
+	_card_draw.draw_string(font, Vector2(pr.position.x + 6, pr.position.y + 18), side_glyph + " PARTS", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.4, 0.8, 1.0, 0.9))
+	_card_draw.draw_line(Vector2(pr.position.x + 4, pr.position.y + 24), Vector2(pr.position.x + pr.size.x - 4, pr.position.y + 24), Color(0.2, 0.5, 0.7, 0.3), 1.0)
+
+	if GameManager.active_mutations.is_empty():
+		_card_draw.draw_string(font, Vector2(pr.position.x + 8, pr.position.y + 50), "No mutations yet", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.5, 0.6, 0.5))
+		return
+
+	var max_visible: int = mini(8, GameManager.active_mutations.size() - _sidebar_scroll)
+	for i in range(max_visible):
+		var idx: int = i + _sidebar_scroll
+		if idx >= GameManager.active_mutations.size():
+			break
+		var m: Dictionary = GameManager.active_mutations[idx]
+		var mid: String = m.get("id", "")
+		var rect := _get_palette_item_rect(idx)
+		var is_hover: bool = idx == _sidebar_hover
+		var is_placed: bool = mid in GameManager.mutation_placements
+
+		var bg: Color = Color(0.08, 0.15, 0.25, 0.7) if is_hover else Color(0.03, 0.06, 0.12, 0.5)
+		_card_draw.draw_rect(rect, bg)
+		if is_hover:
+			_card_draw.draw_rect(rect, Color(0.3, 0.7, 1.0, 0.4), false, 1.0)
+
+		# Drag handle indicator
+		_card_draw.draw_rect(Rect2(rect.position.x + 2, rect.position.y + 8, 3, 16), Color(0.3, 0.6, 0.8, 0.4))
+		_card_draw.draw_rect(Rect2(rect.position.x + 7, rect.position.y + 8, 3, 16), Color(0.3, 0.6, 0.8, 0.4))
+
+		# Mutation name
+		var name_str: String = m.get("name", "Unknown")
+		var name_col: Color = Color(0.7, 0.9, 1.0, 0.9) if is_hover else Color(0.5, 0.7, 0.8, 0.7)
+		if is_placed:
+			name_col = Color(0.4, 0.9, 0.5, 0.8) if not is_hover else Color(0.5, 1.0, 0.6, 0.95)
+		_card_draw.draw_string(font, Vector2(rect.position.x + 14, rect.position.y + 20), name_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, name_col)
+
+		# Placed indicator
+		if is_placed:
+			var placed_label := "PLACED"
+			_card_draw.draw_string(font, Vector2(rect.position.x + rect.size.x - 42, rect.position.y + 20), placed_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(0.3, 0.8, 0.4, 0.6))
+
+	# Scroll indicators
+	if _sidebar_scroll > 0:
+		_card_draw.draw_string(font, Vector2(pr.position.x + pr.size.x * 0.5 - 4, pr.position.y + 32), "^", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.5, 0.7, 0.8, 0.5))
+	if _sidebar_scroll + 8 < GameManager.active_mutations.size():
+		_card_draw.draw_string(font, Vector2(pr.position.x + pr.size.x * 0.5 - 4, pr.position.y + pr.size.y - 8), "v", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.5, 0.7, 0.8, 0.5))
+
+func _draw_drag_ghost(vp: Vector2, font: Font) -> void:
+	var vis: String = _dragging_mutation.get("visual", "")
+	var name_str: String = _dragging_mutation.get("name", "")
+
+	# Ghost at cursor
+	_card_draw.draw_circle(_drag_pos, 16.0, Color(0.2, 0.5, 0.8, 0.25))
+	_card_draw.draw_arc(_drag_pos, 16.0, 0, TAU, 16, Color(0.4, 0.8, 1.0, 0.5), 1.5, true)
+	var ns := font.get_string_size(name_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 10)
+	_card_draw.draw_string(font, Vector2(_drag_pos.x - ns.x * 0.5, _drag_pos.y + 26), name_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.7, 0.9, 1.0, 0.7))
+
+	# If over preview area, show snapping ghost on perimeter + mirror
+	var preview_area := _get_preview_area_rect()
+	if preview_area.has_point(_drag_pos):
+		var angle: float = _screen_pos_to_angle(_drag_pos)
+		var distance: float = clampf(_screen_pos_to_distance(_drag_pos), 0.0, 1.0)
+		var snap_pos: Vector2 = _get_angle_screen_pos(angle, distance)
+		# Ghost circle on perimeter
+		_card_draw.draw_circle(snap_pos, 10.0, Color(0.4, 0.9, 1.0, 0.3))
+		_card_draw.draw_arc(snap_pos, 10.0, 0, TAU, 12, Color(0.4, 0.9, 1.0, 0.6), 2.0, true)
+		# Connecting line from cursor to snap point
+		_card_draw.draw_line(_drag_pos, snap_pos, Color(0.4, 0.8, 1.0, 0.2), 1.0, true)
+
+		# Mirror ghost
+		if _symmetry_enabled and not SnapPointSystem.is_center_angle(angle) and distance >= 0.5:
+			var mirror_angle: float = SnapPointSystem.get_mirror_angle(angle)
+			var mirror_pos: Vector2 = _get_angle_screen_pos(mirror_angle, distance)
+			_card_draw.draw_circle(mirror_pos, 8.0, Color(1.0, 0.9, 0.3, 0.2))
+			_card_draw.draw_arc(mirror_pos, 8.0, 0, TAU, 12, Color(1.0, 0.9, 0.3, 0.4), 1.5, true)
+			# "Mirror" label
+			var ml := "Mirror"
+			var mls := font.get_string_size(ml, HORIZONTAL_ALIGNMENT_CENTER, -1, 8)
+			_card_draw.draw_string(font, Vector2(mirror_pos.x - mls.x * 0.5, mirror_pos.y - 14), ml, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(1.0, 0.9, 0.3, 0.5))
+
+func _draw_symmetry_toggle(vp: Vector2, font: Font) -> void:
+	var rect := _get_symmetry_toggle_rect()
+	var bg: Color = Color(0.15, 0.3, 0.1, 0.7) if _symmetry_enabled else Color(0.1, 0.1, 0.15, 0.5)
+	_card_draw.draw_rect(rect, bg)
+	var border_col: Color = Color(1.0, 0.85, 0.3, 0.6) if _symmetry_enabled else Color(0.3, 0.3, 0.4, 0.4)
+	_card_draw.draw_rect(rect, border_col, false, 1.0)
+	var label: String = "SYMMETRY: ON" if _symmetry_enabled else "SYMMETRY: OFF"
+	var label_col: Color = Color(1.0, 0.9, 0.4, 0.9) if _symmetry_enabled else Color(0.5, 0.5, 0.6, 0.6)
+	var ls := font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 9)
+	_card_draw.draw_string(font, Vector2(rect.position.x + (rect.size.x - ls.x) * 0.5, rect.position.y + 16), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, label_col)
+
+func _draw_placement_particles() -> void:
+	for pp in _place_particles:
+		var alpha: float = pp.life * pp.color.a
+		_card_draw.draw_circle(pp.pos, 2.0 * pp.life, Color(pp.color.r, pp.color.g, pp.color.b, alpha))
+
+func _draw_confirm_button(vp: Vector2, font: Font) -> void:
+	var rect := _get_confirm_rect()
+
+	# Tech-styled button background
+	var bg: Color = Color(0.06, 0.2, 0.35, 0.9) if _confirm_hover else Color(0.03, 0.08, 0.18, 0.85)
+	_card_draw.draw_rect(rect, bg)
+
+	# Corner bracket frame around button
+	_draw_corner_frame(Rect2(rect.position.x - 2, rect.position.y - 2, rect.size.x + 4, rect.size.y + 4), Color(0.4, 0.9, 1.0, 0.7 if _confirm_hover else 0.35))
+
+	# Border
+	var border: Color = Color(0.4, 0.9, 1.0, 0.9) if _confirm_hover else Color(0.2, 0.5, 0.7, 0.5)
+	_card_draw.draw_rect(rect, border, false, 1.5)
+
+	# Hover glow + scan effect
+	if _confirm_hover:
+		var glow_rect := Rect2(rect.position.x - 4, rect.position.y - 4, rect.size.x + 8, rect.size.y + 8)
+		_card_draw.draw_rect(glow_rect, Color(0.3, 0.8, 1.0, 0.06))
+		# Scanning bar inside button
+		var scan_x := fmod(_time * 80.0, rect.size.x)
+		_card_draw.draw_line(Vector2(rect.position.x + scan_x, rect.position.y + 2), Vector2(rect.position.x + scan_x, rect.position.y + rect.size.y - 2), Color(0.4, 0.9, 1.0, 0.15), 2.0)
+
+	var glyph: String = str(ALIEN_GLYPHS[int(fmod(_time * 0.6, ALIEN_GLYPHS.size()))])
+	var label := glyph + " SAVE " + glyph if not _is_initial_customize else glyph + " CONFIRM " + glyph
+	var text_col: Color = Color(0.8, 1.0, 1.0, 1.0) if _confirm_hover else Color(0.5, 0.8, 0.9, 0.9)
+	var ls := font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 14)
+	_card_draw.draw_string(font, Vector2(rect.position.x + (rect.size.x - ls.x) * 0.5, rect.position.y + 26), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, text_col)
+
+# --- Card drawing ---
+
+func _draw_single_card(index: int, large: bool) -> void:
 	var m: Dictionary = _choices[index]
 	var rect := _get_card_rect(index)
 	var hovered: bool = index == _hover_index
-	var font := ThemeDB.fallback_font
-
-	# Card animation offset per card
+	var font := UIConstants.get_display_font()
 	var card_a: float = clampf(_appear_t * 3.0 - index * 0.5, 0.0, 1.0)
 
-	# Border color from category affinity
 	var affinities: Array = m.get("affinities", [])
 	var border_color := Color(0.3, 0.7, 0.9)
 	if affinities.size() > 0:
 		border_color = EvolutionData.CATEGORY_COLORS.get(affinities[0], border_color)
 
-	# Tier glow
 	var tier: int = m.get("tier", 1)
 	var tier_glow: float = 0.3 + tier * 0.15
-
-	# Selection state
 	var is_selected: bool = index == _selected_index
 	var is_rejected: bool = _selected_index >= 0 and not is_selected
 
-	# Card background
 	var bg_color := Color(0.03, 0.06, 0.12, 0.92 * card_a)
 	if hovered and _selected_index < 0:
 		bg_color = Color(0.06, 0.1, 0.18, 0.95 * card_a)
@@ -196,7 +1094,6 @@ func _draw_single_card(index: int) -> void:
 		card_a *= (1.0 - _select_anim)
 	_card_draw.draw_rect(rect, bg_color)
 
-	# Selection glow
 	if is_selected:
 		var glow_r: float = 20.0 + _select_anim * 40.0
 		_card_draw.draw_rect(Rect2(rect.position.x - glow_r * 0.5, rect.position.y - glow_r * 0.5, rect.size.x + glow_r, rect.size.y + glow_r), Color(border_color.r, border_color.g, border_color.b, (1.0 - _select_anim) * 0.15))
@@ -204,77 +1101,102 @@ func _draw_single_card(index: int) -> void:
 	# Border
 	var bw: float = 2.0 if not hovered else 3.0
 	var bc := Color(border_color.r, border_color.g, border_color.b, (tier_glow + 0.2 * sin(_time * 2.0 + index)) * card_a)
-	# Top
-	_card_draw.draw_line(rect.position, rect.position + Vector2(rect.size.x, 0), bc, bw)
-	# Bottom
-	_card_draw.draw_line(rect.position + Vector2(0, rect.size.y), rect.end, bc, bw)
-	# Left
-	_card_draw.draw_line(rect.position, rect.position + Vector2(0, rect.size.y), bc, bw)
-	# Right
-	_card_draw.draw_line(rect.position + Vector2(rect.size.x, 0), rect.end, bc, bw)
+	_card_draw.draw_rect(rect, bc, false, bw)
 
-	# Hover glow
 	if hovered:
 		_card_draw.draw_rect(rect, Color(border_color.r, border_color.g, border_color.b, 0.08))
 
 	var cx: float = rect.position.x + rect.size.x * 0.5
 	var cy: float = rect.position.y
 
-	# Tier stars
-	var star_y: float = cy + 18.0
-	for s in range(tier):
-		var sx: float = cx - (tier - 1) * 8.0 + s * 16.0
-		_draw_star(Vector2(sx, star_y), 5.0, Color(1.0, 0.9, 0.3, card_a))
+	if large:
+		# Full-size card layout
+		# Tier stars
+		var star_y: float = cy + 16.0
+		for s in range(tier):
+			var sx: float = cx - (tier - 1) * 8.0 + s * 16.0
+			_draw_star(Vector2(sx, star_y), 4.0, Color(1.0, 0.9, 0.3, card_a))
 
-	# Mutation visual preview (centered icon area)
-	var preview_center := Vector2(cx, cy + 80.0)
-	_draw_mutation_preview(m.get("visual", ""), preview_center, card_a, border_color)
+		# Preview
+		var preview_center := Vector2(cx, cy + 65.0)
+		_draw_mutation_preview(m.get("visual", ""), preview_center, card_a, border_color)
 
-	# Name
-	var name_str: String = m.get("name", "Unknown")
-	var name_size := font.get_string_size(name_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 14)
-	_card_draw.draw_string(font, Vector2(cx - name_size.x * 0.5, cy + 145.0), name_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.9, 0.95, 1.0, card_a))
+		# Name
+		var name_str: String = m.get("name", "Unknown")
+		var ns := font.get_string_size(name_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 13)
+		_card_draw.draw_string(font, Vector2(cx - ns.x * 0.5, cy + 115.0), name_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.9, 0.95, 1.0, card_a))
 
-	# Description
-	var desc: String = m.get("desc", "")
-	var desc_size := font.get_string_size(desc, HORIZONTAL_ALIGNMENT_CENTER, -1, 10)
-	# Word wrap manually if too wide
-	if desc_size.x > CARD_WIDTH - 20:
-		var words: PackedStringArray = desc.split(" ")
+		# Description (word-wrapped)
+		var desc: String = m.get("desc", "")
+		_draw_wrapped_text(font, desc, cx, cy + 132.0, CARD_WIDTH - 16.0, 9, card_a)
+
+		# Stats
+		var stat: Dictionary = m.get("stat", {})
+		var stat_y: float = cy + 170.0
+		for key in stat:
+			var val: float = stat[key]
+			var sign: String = "+" if val > 0 else ""
+			var stat_str: String = "%s%s: %s%.0f%%" % [_stat_icon(key), _stat_label(key), sign, val * 100.0]
+			var stat_s := font.get_string_size(stat_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 10)
+			_card_draw.draw_string(font, Vector2(cx - stat_s.x * 0.5, stat_y), stat_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.4, 1.0, 0.6, card_a))
+			stat_y += 14.0
+
+		# Sensory badge
+		if m.get("sensory_upgrade", false):
+			var badge := "SENSORY+"
+			var bs := font.get_string_size(badge, HORIZONTAL_ALIGNMENT_CENTER, -1, 9)
+			var badge_y: float = cy + CARD_HEIGHT - 20.0
+			_card_draw.draw_rect(Rect2(cx - bs.x * 0.5 - 4, badge_y - 10, bs.x + 8, 14), Color(0.2, 0.1, 0.4, 0.6 * card_a))
+			_card_draw.draw_string(font, Vector2(cx - bs.x * 0.5, badge_y), badge, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.7, 0.5, 1.0, card_a))
+	else:
+		# Small card layout for bottom strip
+		# Name
+		var name_str: String = m.get("name", "Unknown")
+		var ns := font.get_string_size(name_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 11)
+		_card_draw.draw_string(font, Vector2(cx - ns.x * 0.5, cy + 18), name_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.9, 0.95, 1.0, card_a))
+
+		# Mini preview
+		var preview_center := Vector2(cx, cy + 50.0)
+		_draw_mutation_preview(m.get("visual", ""), preview_center, card_a, border_color)
+
+		# Description
+		var desc: String = m.get("desc", "")
+		_draw_wrapped_text(font, desc, cx, cy + 80.0, SMALL_CARD_W - 12.0, 8, card_a * 0.8)
+
+		# Stats
+		var stat: Dictionary = m.get("stat", {})
+		var stat_y: float = cy + 115.0
+		for key in stat:
+			var val: float = stat[key]
+			var sign: String = "+" if val > 0 else ""
+			var stat_str: String = "%s: %s%.0f%%" % [_stat_label(key), sign, val * 100.0]
+			var stat_s := font.get_string_size(stat_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 8)
+			_card_draw.draw_string(font, Vector2(cx - stat_s.x * 0.5, stat_y), stat_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(0.4, 1.0, 0.6, card_a))
+			stat_y += 12.0
+
+		# Tier dots
+		for s in range(tier):
+			_card_draw.draw_circle(Vector2(cx - (tier - 1) * 5.0 + s * 10.0, cy + SMALL_CARD_H - 14.0), 2.5, Color(1.0, 0.9, 0.3, card_a))
+
+func _draw_wrapped_text(font: Font, text: String, cx: float, start_y: float, max_width: float, font_size: int, alpha: float) -> void:
+	var desc_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_CENTER, -1, font_size)
+	if desc_size.x > max_width:
+		var words: PackedStringArray = text.split(" ")
 		var lines: Array[String] = [""]
 		for word in words:
 			var test: String = lines[-1] + (" " if lines[-1] != "" else "") + word
-			if font.get_string_size(test, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x > CARD_WIDTH - 20:
+			if font.get_string_size(test, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > max_width:
 				lines.append(word)
 			else:
 				lines[-1] = test
 		for li in range(lines.size()):
-			var ls := font.get_string_size(lines[li], HORIZONTAL_ALIGNMENT_CENTER, -1, 10)
-			_card_draw.draw_string(font, Vector2(cx - ls.x * 0.5, cy + 165.0 + li * 14.0), lines[li], HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.6, 0.75, 0.85, card_a * 0.8))
+			var ls := font.get_string_size(lines[li], HORIZONTAL_ALIGNMENT_CENTER, -1, font_size)
+			_card_draw.draw_string(font, Vector2(cx - ls.x * 0.5, start_y + li * (font_size + 3)), lines[li], HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.6, 0.75, 0.85, alpha * 0.8))
 	else:
-		_card_draw.draw_string(font, Vector2(cx - desc_size.x * 0.5, cy + 165.0), desc, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.6, 0.75, 0.85, card_a * 0.8))
-
-	# Stat bonuses
-	var stat: Dictionary = m.get("stat", {})
-	var stat_y: float = cy + 210.0
-	for key in stat:
-		var val: float = stat[key]
-		var sign: String = "+" if val > 0 else ""
-		var stat_str: String = "%s%s: %s%.0f%%" % [_stat_icon(key), _stat_label(key), sign, val * 100.0]
-		var ss := font.get_string_size(stat_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 11)
-		_card_draw.draw_string(font, Vector2(cx - ss.x * 0.5, stat_y), stat_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.4, 1.0, 0.6, card_a))
-		stat_y += 16.0
-
-	# Sensory upgrade badge
-	if m.get("sensory_upgrade", false):
-		var badge := "👁 SENSORY UPGRADE"
-		var bs := font.get_string_size(badge, HORIZONTAL_ALIGNMENT_CENTER, -1, 10)
-		var badge_y: float = cy + CARD_HEIGHT - 25.0
-		_card_draw.draw_rect(Rect2(cx - bs.x * 0.5 - 6, badge_y - 12, bs.x + 12, 16), Color(0.2, 0.1, 0.4, 0.6 * card_a))
-		_card_draw.draw_string(font, Vector2(cx - bs.x * 0.5, badge_y), badge, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.7, 0.5, 1.0, card_a))
+		_card_draw.draw_string(font, Vector2(cx - desc_size.x * 0.5, start_y), text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.6, 0.75, 0.85, alpha * 0.8))
 
 func _draw_star(center: Vector2, radius: float, color: Color) -> void:
-	var pts: PackedVector2Array = PackedVector2Array()
+	var pts := PackedVector2Array()
 	for i in range(10):
 		var angle: float = -PI / 2.0 + TAU * i / 10.0
 		var r: float = radius if i % 2 == 0 else radius * 0.4
@@ -282,7 +1204,6 @@ func _draw_star(center: Vector2, radius: float, color: Color) -> void:
 	_card_draw.draw_colored_polygon(pts, color)
 
 func _draw_mutation_preview(visual: String, center: Vector2, alpha: float, accent: Color) -> void:
-	## Draw a small iconic preview of the mutation
 	var c := Color(accent.r, accent.g, accent.b, alpha)
 	var dim := Color(accent.r * 0.5, accent.g * 0.5, accent.b * 0.5, alpha * 0.5)
 
@@ -291,258 +1212,71 @@ func _draw_mutation_preview(visual: String, center: Vector2, alpha: float, accen
 			for i in range(8):
 				var a: float = TAU * i / 8.0 + sin(_time * 3.0) * 0.2
 				var p1 := center + Vector2(cos(a), sin(a)) * 12.0
-				var p2 := center + Vector2(cos(a), sin(a)) * 30.0 + Vector2(sin(_time * 4.0 + i) * 3.0, 0)
+				var p2 := center + Vector2(cos(a), sin(a)) * 28.0 + Vector2(sin(_time * 4.0 + i) * 3.0, 0)
 				_card_draw.draw_line(p1, p2, c, 1.5, true)
 			_card_draw.draw_circle(center, 12.0, dim)
 		"spikes":
 			_card_draw.draw_circle(center, 14.0, dim)
 			for i in range(10):
 				var a: float = TAU * i / 10.0
-				var base := center + Vector2(cos(a), sin(a)) * 14.0
-				var tip := center + Vector2(cos(a), sin(a)) * 30.0
-				_card_draw.draw_line(base, tip, c, 2.0, true)
-		"armor_plates":
-			_card_draw.draw_circle(center, 18.0, dim)
-			for i in range(6):
-				var a: float = TAU * i / 6.0 + 0.3
-				var p := center + Vector2(cos(a), sin(a)) * 16.0
-				_card_draw.draw_rect(Rect2(p.x - 5, p.y - 3, 10, 6), c)
+				_card_draw.draw_line(center + Vector2(cos(a), sin(a)) * 14.0, center + Vector2(cos(a), sin(a)) * 28.0, c, 2.0, true)
+		"flagellum":
+			_card_draw.draw_circle(center + Vector2(0, -8), 10.0, dim)
+			for i in range(10):
+				var t: float = float(i) / 9.0
+				var px: float = center.x + sin(_time * 5.0 + t * 4.0) * 7.0 * t
+				var py: float = center.y + t * 30.0
+				if i > 0:
+					var pt: float = float(i - 1) / 9.0
+					_card_draw.draw_line(Vector2(center.x + sin(_time * 5.0 + pt * 4.0) * 7.0 * pt, center.y + pt * 30.0), Vector2(px, py), c, 2.0 - t, true)
+		"third_eye":
+			_card_draw.draw_circle(center, 14.0, dim)
+			_card_draw.draw_circle(center, 8.0, Color(1, 1, 1, alpha * 0.9))
+			_card_draw.draw_circle(center, 4.0, Color(0.1, 0.1, 0.3, alpha))
+			_card_draw.draw_circle(center + Vector2(1.5, -1), 1.5, Color(1, 1, 1, alpha))
+		"bioluminescence":
+			var pulse: float = 0.5 + 0.5 * sin(_time * 3.0)
+			_card_draw.draw_circle(center, 20.0 * pulse, Color(c.r, c.g, c.b, alpha * 0.2))
+			_card_draw.draw_circle(center, 12.0 * pulse, Color(c.r, c.g, c.b, alpha * 0.4))
+			_card_draw.draw_circle(center, 5.0, Color(1, 1, 0.8, alpha))
 		"color_shift":
 			for i in range(3):
 				var hue: float = fmod(_time * 0.3 + i * 0.33, 1.0)
-				var col := Color.from_hsv(hue, 0.7, 0.9, alpha * 0.6)
-				_card_draw.draw_circle(center + Vector2(cos(_time + i) * 6, sin(_time + i) * 6), 16.0 - i * 3, col)
-		"bioluminescence":
-			var pulse: float = 0.5 + 0.5 * sin(_time * 3.0)
-			_card_draw.draw_circle(center, 22.0 * pulse, Color(c.r, c.g, c.b, alpha * 0.2))
-			_card_draw.draw_circle(center, 14.0 * pulse, Color(c.r, c.g, c.b, alpha * 0.4))
-			_card_draw.draw_circle(center, 6.0, Color(1.0, 1.0, 0.8, alpha))
-		"flagellum":
-			_card_draw.draw_circle(center + Vector2(0, -10), 10.0, dim)
-			for i in range(12):
-				var t: float = float(i) / 11.0
-				var px: float = center.x + sin(_time * 5.0 + t * 4.0) * 8.0 * t
-				var py: float = center.y + t * 35.0
-				if i > 0:
-					var prev_t: float = float(i - 1) / 11.0
-					var ppx: float = center.x + sin(_time * 5.0 + prev_t * 4.0) * 8.0 * prev_t
-					var ppy: float = center.y + prev_t * 35.0
-					_card_draw.draw_line(Vector2(ppx, ppy), Vector2(px, py), c, 2.0 - t, true)
-		"third_eye":
-			_card_draw.draw_circle(center, 14.0, dim)
-			_card_draw.draw_circle(center, 8.0, Color(1.0, 1.0, 1.0, alpha * 0.9))
-			_card_draw.draw_circle(center, 4.0, Color(0.1, 0.1, 0.3, alpha))
-			_card_draw.draw_circle(center + Vector2(1.5, -1), 1.5, Color(1, 1, 1, alpha))
-		"eye_stalks":
-			_card_draw.draw_circle(center, 10.0, dim)
-			for side in [-1.0, 1.0]:
-				var stalk_end := center + Vector2(side * 22.0, -18.0 + sin(_time * 2.0 + side) * 3.0)
-				_card_draw.draw_line(center + Vector2(side * 6, -5), stalk_end, c, 2.0, true)
-				_card_draw.draw_circle(stalk_end, 5.0, Color(1, 1, 1, alpha * 0.9))
-				_card_draw.draw_circle(stalk_end, 2.5, Color(0.1, 0.1, 0.3, alpha))
-		"tentacles":
-			_card_draw.draw_circle(center + Vector2(0, -8), 10.0, dim)
-			for i in range(4):
-				var base_x: float = center.x + (i - 1.5) * 8.0
-				for s in range(8):
-					var t: float = float(s) / 7.0
-					var px: float = base_x + sin(_time * 3.0 + i + t * 3.0) * 6.0 * t
-					var py: float = center.y + 2.0 + t * 30.0
-					if s > 0:
-						var pt: float = float(s - 1) / 7.0
-						var ppx: float = base_x + sin(_time * 3.0 + i + pt * 3.0) * 6.0 * pt
-						var ppy: float = center.y + 2.0 + pt * 30.0
-						_card_draw.draw_line(Vector2(ppx, ppy), Vector2(px, py), c, 2.0 - t * 1.2, true)
-		"larger_membrane":
-			_card_draw.draw_circle(center, 24.0, Color(c.r, c.g, c.b, alpha * 0.15))
-			_card_draw.draw_arc(center, 24.0, 0, TAU, 24, c, 1.5, true)
-			_card_draw.draw_circle(center, 14.0, dim)
-		"toxin_glands":
-			_card_draw.draw_circle(center, 12.0, dim)
-			for i in range(4):
-				var a: float = TAU * i / 4.0 + _time * 0.5
-				var gp := center + Vector2(cos(a), sin(a)) * 18.0
-				var pulse: float = 0.7 + 0.3 * sin(_time * 4.0 + i * 1.5)
-				_card_draw.draw_circle(gp, 5.0 * pulse, Color(0.6, 0.9, 0.1, alpha * 0.7))
-		"photoreceptor":
-			_card_draw.draw_circle(center, 14.0, dim)
-			for i in range(3):
-				var a: float = -PI * 0.4 + PI * 0.4 * i
-				var ep := center + Vector2(cos(a), sin(a)) * 10.0
-				_card_draw.draw_circle(ep, 4.0, Color(0.8, 0.9, 1.0, alpha * (0.5 + 0.3 * sin(_time * 3.0 + i))))
-				_card_draw.draw_circle(ep, 2.0, Color(0.1, 0.2, 0.4, alpha))
-		"thick_membrane":
-			_card_draw.draw_arc(center, 20.0, 0, TAU, 24, Color(c.r, c.g, c.b, alpha * 0.5), 4.0, true)
-			_card_draw.draw_arc(center, 16.0, 0, TAU, 24, c, 2.0, true)
-			_card_draw.draw_circle(center, 12.0, dim)
-		"enzyme_boost":
-			_card_draw.draw_circle(center, 14.0, dim)
-			for i in range(5):
-				var a: float = TAU * i / 5.0 + _time * 2.0
-				var r: float = 6.0 + 3.0 * sin(_time * 5.0 + i)
-				var ep := center + Vector2(cos(a), sin(a)) * r
-				_card_draw.draw_circle(ep, 2.5, Color(1.0, 0.8, 0.2, alpha * 0.8))
-		"regeneration":
-			_card_draw.draw_circle(center, 14.0, dim)
-			var pulse: float = 0.3 + 0.3 * sin(_time * 2.5)
-			_card_draw.draw_circle(center, 20.0, Color(0.2, 0.9, 0.3, alpha * pulse))
-			# Plus sign
-			_card_draw.draw_line(center + Vector2(-6, 0), center + Vector2(6, 0), Color(0.3, 1.0, 0.4, alpha), 2.5)
-			_card_draw.draw_line(center + Vector2(0, -6), center + Vector2(0, 6), Color(0.3, 1.0, 0.4, alpha), 2.5)
-		"sprint_boost":
-			_card_draw.draw_circle(center, 10.0, dim)
-			for i in range(3):
-				var off: float = float(i) * 10.0
-				_card_draw.draw_line(center + Vector2(-20 - off, -3 + i * 3), center + Vector2(-8 - off, -3 + i * 3), Color(c.r, c.g, c.b, alpha * (0.8 - i * 0.2)), 1.5, true)
+				_card_draw.draw_circle(center + Vector2(cos(_time + i) * 5, sin(_time + i) * 5), 14.0 - i * 3, Color.from_hsv(hue, 0.7, 0.9, alpha * 0.6))
 		"compound_eye":
 			for row in range(3):
 				for col in range(3):
-					var ep := center + Vector2((col - 1) * 10.0, (row - 1) * 10.0)
-					_card_draw.draw_circle(ep, 5.0, Color(0.9, 0.9, 1.0, alpha * 0.7))
-					_card_draw.draw_circle(ep, 2.5, Color(0.1, 0.1, 0.3, alpha))
-		"absorption_villi":
-			_card_draw.draw_circle(center, 14.0, dim)
-			for i in range(12):
-				var a: float = TAU * i / 12.0
-				var base := center + Vector2(cos(a), sin(a)) * 14.0
-				var tip := center + Vector2(cos(a), sin(a)) * (22.0 + sin(_time * 3.0 + i) * 3.0)
-				_card_draw.draw_line(base, tip, c, 1.2, true)
-				_card_draw.draw_circle(tip, 1.5, c)
-		"dorsal_fin":
-			_card_draw.draw_circle(center, 12.0, dim)
-			var fin_pts: PackedVector2Array = PackedVector2Array([center + Vector2(6, -10), center + Vector2(-4, -24), center + Vector2(-10, -10)])
-			_card_draw.draw_colored_polygon(fin_pts, Color(c.r, c.g, c.b, alpha * 0.6))
-		"ink_sac":
-			_card_draw.draw_circle(center, 14.0, dim)
-			_card_draw.draw_circle(center, 8.0, Color(0.1, 0.05, 0.2, alpha * 0.7))
-			_card_draw.draw_circle(center + Vector2(3, 2), 4.0, Color(0.15, 0.1, 0.25, alpha * 0.5))
-		"electric_organ":
-			_card_draw.draw_circle(center, 14.0, dim)
-			for i in range(4):
-				var ea: float = TAU * i / 4.0 + _time * 3.0
-				var p1 := center + Vector2(cos(ea), sin(ea)) * 14.0
-				var jit := Vector2(sin(_time * 15.0 + i * 5) * 5, cos(_time * 12.0 + i * 3) * 5)
-				_card_draw.draw_line(p1, p1 + Vector2(cos(ea), sin(ea)) * 10.0 + jit, Color(0.5, 0.8, 1.0, alpha * 0.7), 1.5, true)
-		"symbiont_pouch":
-			_card_draw.draw_circle(center, 14.0, dim)
-			for i in range(5):
-				var ea: float = _time * 1.5 + TAU * i / 5.0
-				var p := center + Vector2(cos(ea), sin(ea)) * 9.0
-				_card_draw.draw_circle(p, 2.5, Color(0.3, 0.9, 0.5, alpha * 0.6))
-		"hardened_nucleus":
-			_card_draw.draw_circle(center, 14.0, dim)
-			_card_draw.draw_circle(center, 7.0, Color(0.5, 0.4, 0.7, alpha * 0.5))
-			for i in range(6):
-				var a1: float = TAU * i / 6.0
-				var a2: float = TAU * (i + 1) / 6.0
-				_card_draw.draw_line(center + Vector2(cos(a1), sin(a1)) * 7.0, center + Vector2(cos(a2), sin(a2)) * 7.0, c, 1.5, true)
-		"pili_network":
-			_card_draw.draw_circle(center, 12.0, dim)
-			for i in range(16):
-				var ea: float = TAU * i / 16.0
-				var b := center + Vector2(cos(ea), sin(ea)) * 12.0
-				var t := b + Vector2(cos(ea), sin(ea)) * 8.0
-				_card_draw.draw_line(b, t, Color(c.r, c.g, c.b, alpha * 0.4), 0.8, true)
-		"chrono_enzyme":
-			_card_draw.draw_circle(center, 14.0, dim)
-			for i in range(6):
-				var ea: float = _time * 4.0 + TAU * i / 6.0
-				var r: float = 8.0 + sin(_time * 6.0 + i) * 2.0
-				_card_draw.draw_circle(center + Vector2(cos(ea), sin(ea)) * r, 2.0, Color(1.0, 0.6, 0.2, alpha * 0.6))
-		"thermal_vent_organ":
-			_card_draw.draw_circle(center, 14.0, dim)
-			for i in range(3):
-				var ea: float = TAU * i / 3.0 + 0.5
-				var p := center + Vector2(cos(ea), sin(ea)) * 9.0
-				_card_draw.draw_circle(p, 4.0, Color(0.9, 0.4, 0.1, alpha * 0.4))
-		"lateral_line":
-			_card_draw.draw_circle(center, 14.0, dim)
-			for i in range(7):
-				var px: float = center.x - 12.0 + i * 4.0
-				_card_draw.draw_circle(Vector2(px, center.y), 1.5, Color(0.5, 0.7, 1.0, alpha * 0.6))
-		"beak":
-			_card_draw.draw_circle(center + Vector2(-4, 0), 12.0, dim)
-			var bk: PackedVector2Array = PackedVector2Array([center + Vector2(8, -4), center + Vector2(20, 0), center + Vector2(8, 4)])
-			_card_draw.draw_colored_polygon(bk, Color(0.7, 0.5, 0.2, alpha * 0.8))
-		"gas_vacuole":
-			_card_draw.draw_circle(center, 14.0, dim)
-			_card_draw.draw_circle(center, 8.0, Color(0.7, 0.85, 1.0, alpha * 0.15))
-			_card_draw.draw_arc(center, 8.0, 0, TAU, 12, Color(0.7, 0.9, 1.0, alpha * 0.3), 1.0, true)
-		# Directional mutations
-		"front_spike":
-			_card_draw.draw_circle(center + Vector2(-6, 0), 12.0, dim)
-			var spike_pts: PackedVector2Array = PackedVector2Array([center + Vector2(6, -5), center + Vector2(25, 0), center + Vector2(6, 5)])
-			_card_draw.draw_colored_polygon(spike_pts, Color(0.85, 0.7, 0.4, alpha * 0.9))
-			_card_draw.draw_line(spike_pts[0], spike_pts[1], c, 1.5, true)
-			_card_draw.draw_line(spike_pts[2], spike_pts[1], c, 1.5, true)
-		"mandibles":
-			_card_draw.draw_circle(center, 10.0, dim)
-			for side in [-1.0, 1.0]:
-				var open: float = 0.3 + sin(_time * 3.0) * 0.2
-				_card_draw.draw_line(center + Vector2(8, side * 4), center + Vector2(18, side * (6 + open * 8)), c, 2.0, true)
-				_card_draw.draw_line(center + Vector2(18, side * (6 + open * 8)), center + Vector2(22, side * (3 + open * 4)), c, 1.5, true)
-		"side_barbs":
-			_card_draw.draw_circle(center, 12.0, dim)
-			for side in [-1.0, 1.0]:
-				for i in range(3):
-					var x: float = -8.0 + i * 8.0
-					_card_draw.draw_line(center + Vector2(x, side * 12), center + Vector2(x, side * 20), Color(0.9, 0.4, 0.3, alpha * 0.8), 1.5, true)
-		"rear_stinger":
-			_card_draw.draw_circle(center + Vector2(6, 0), 10.0, dim)
-			var prev := center + Vector2(-4, 0)
-			for i in range(4):
-				var t: float = float(i + 1) / 4.0
-				var cur := center + Vector2(-4 - t * 18, sin(_time * 3.0 + t * 2) * 5 * t)
-				_card_draw.draw_line(prev, cur, Color(0.3, 0.8, 0.2, alpha * 0.9), 2.5 - t, true)
-				prev = cur
-			_card_draw.draw_circle(prev, 2.5, Color(0.2, 0.9, 0.3, alpha * 0.7))
-		"ramming_crest":
-			_card_draw.draw_circle(center + Vector2(-4, 0), 10.0, dim)
-			var crest_pts: PackedVector2Array = PackedVector2Array([center + Vector2(6, -8), center + Vector2(16, -4), center + Vector2(18, 0), center + Vector2(16, 4), center + Vector2(6, 8)])
-			_card_draw.draw_polyline(crest_pts, Color(0.5, 0.55, 0.6, alpha * 0.8), 3.0, true)
-		"proboscis":
-			_card_draw.draw_circle(center + Vector2(-6, 0), 10.0, dim)
-			var pv := center + Vector2(4, 0)
-			for i in range(5):
-				var t: float = float(i + 1) / 5.0
-				var nc := center + Vector2(4 + t * 22, sin(_time * 4 + t * 3) * 2 * t)
-				_card_draw.draw_line(pv, nc, Color(0.8, 0.5, 0.6, alpha * 0.8), 2.0 - t, true)
-				pv = nc
-		"tail_club":
-			_card_draw.draw_circle(center + Vector2(6, 0), 10.0, dim)
-			_card_draw.draw_line(center + Vector2(-4, 0), center + Vector2(-14, sin(_time * 2) * 3), c, 2.5, true)
-			_card_draw.draw_circle(center + Vector2(-17, sin(_time * 2) * 3), 6.0, Color(0.55, 0.45, 0.35, alpha * 0.85))
-		"electroreceptors":
-			_card_draw.draw_circle(center, 12.0, dim)
-			for i in range(5):
-				var ea: float = TAU * i / 5.0 + _time * 0.3
-				var ep := center + Vector2(cos(ea) * 10, sin(ea) * 10)
-				var pulse: float = 0.4 + 0.3 * sin(_time * 5 + i)
-				_card_draw.draw_circle(ep, 2.5, Color(0.4, 0.7, 1.0, alpha * pulse))
-		"antenna":
-			_card_draw.draw_circle(center + Vector2(-4, 0), 10.0, dim)
-			for side in [-1.0, 1.0]:
-				var ap := center + Vector2(6, side * 3)
-				for i in range(4):
-					var t: float = float(i + 1) / 4.0
-					var np := center + Vector2(6 + t * 20, side * 3 + sin(_time * 5 + t * 3) * 4 * t)
-					_card_draw.draw_line(ap, np, Color(0.6, 0.7, 0.5, alpha * 0.7), 1.5 - t * 0.8, true)
-					ap = np
-				_card_draw.draw_circle(ap, 1.5, Color(0.5, 0.9, 0.6, alpha * 0.6))
+					var ep := center + Vector2((col - 1) * 9.0, (row - 1) * 9.0)
+					_card_draw.draw_circle(ep, 4.5, Color(0.9, 0.9, 1.0, alpha * 0.7))
+					_card_draw.draw_circle(ep, 2.0, Color(0.1, 0.1, 0.3, alpha))
 		_:
-			_card_draw.draw_circle(center, 16.0, c)
+			_card_draw.draw_circle(center, 14.0, dim)
+			_card_draw.draw_arc(center, 14.0, 0, TAU, 16, c, 1.5, true)
+
+func _default_slot_for(visual: String) -> int:
+	# Legacy helper, kept for backward compat in card drawing
+	match visual:
+		"flagellum", "rear_stinger", "tail_club": return 9
+		"front_spike", "mandibles", "ramming_crest", "proboscis", "beak", "antenna": return 8
+		"spikes", "armor_plates", "thick_membrane", "absorption_villi", "pili_network": return 0
+		"tentacles": return 4
+		"third_eye", "eye_stalks", "compound_eye", "photoreceptor": return 8
+		"side_barbs": return 2
+		"dorsal_fin": return 0
+		"electroreceptors", "lateral_line": return 2
+	return 10
 
 func _stat_icon(key: String) -> String:
 	match key:
-		"speed": return "⚡"
-		"attack": return "⚔"
-		"max_health": return "❤"
-		"armor": return "🛡"
-		"stealth": return "👻"
-		"detection": return "🔍"
-		"beam_range": return "🎯"
-		"energy_efficiency": return "⚗"
-		"health_regen": return "💚"
+		"speed": return ">"
+		"attack": return "X"
+		"max_health": return "+"
+		"armor": return "#"
+		"stealth": return "~"
+		"detection": return "?"
+		"beam_range": return "O"
+		"energy_efficiency": return "*"
+		"health_regen": return "+"
 	return ""
 
 func _stat_label(key: String) -> String:

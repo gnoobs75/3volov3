@@ -126,6 +126,8 @@ func _build_hazard() -> void:
 		_hazard_node.set_meta("dps", dps)
 	elif hazard_type == "bile":
 		_hazard_node.set_meta("slow_factor", slow_factor)
+	elif hazard_type == "slow":
+		_hazard_node.set_meta("slow_factor", slow_factor)
 	add_child(_hazard_node)
 	# Will be added to group after entering tree
 	call_deferred("_add_hazard_group")

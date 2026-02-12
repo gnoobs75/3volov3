@@ -76,6 +76,50 @@ var _victory_timer: float = 0.0
 
 var _competitor_scan_timer: float = 0.0
 
+# --- FEATURE: Dynamic World Events ---
+var _world_event_timer: float = 0.0
+var _world_event_active: bool = false
+var _world_event_name: String = ""
+var _world_event_duration: float = 0.0
+var _world_event_remaining: float = 0.0
+const WORLD_EVENT_INTERVAL_MIN: float = 120.0  # 2 min between events
+const WORLD_EVENT_INTERVAL_MAX: float = 180.0  # 3 min max
+const WORLD_EVENTS: Array = [
+	{"name": "FEEDING FRENZY", "duration": 15.0, "color": Color(1.0, 0.5, 0.2), "desc": "Competitors converge on nearby food!"},
+	{"name": "NUTRIENT BLOOM", "duration": 30.0, "color": Color(0.3, 1.0, 0.4), "desc": "Double food spawns!"},
+	{"name": "PARASITE SWARM", "duration": 20.0, "color": Color(0.7, 0.2, 0.5), "desc": "Parasites surge from the deep!"},
+	{"name": "THERMAL ERUPTION", "duration": 10.0, "color": Color(1.0, 0.4, 0.1), "desc": "Vent eruption! Damage pulse + bonus loot!"},
+]
+var _world_event_color: Color = Color.WHITE
+
+# --- FEATURE: Chain Combo System ---
+var _chain_category: String = ""
+var _chain_count: int = 0
+var _chain_timer: float = 0.0
+var _chain_display_timer: float = 0.0
+var _chain_display_alpha: float = 0.0
+const CHAIN_TIMEOUT: float = 8.0  # Seconds before chain resets
+
+# --- FEATURE: Kill Streak Announcements ---
+var _kill_streak: int = 0
+var _kill_streak_timer: float = 0.0  # Resets after 10 sec of no kills
+var _streak_announce_text: String = ""
+var _streak_announce_timer: float = 0.0
+var _streak_announce_alpha: float = 0.0
+var _streak_announce_color: Color = Color(1.0, 0.3, 0.3)
+var _streak_announce_scale: float = 1.0
+const KILL_STREAK_TIMEOUT: float = 10.0
+const STREAK_ANNOUNCEMENTS: Dictionary = {
+	1: {"text": "FIRST BLOOD!", "color": Color(0.9, 0.4, 0.3)},
+	3: {"text": "TRIPLE KILL!", "color": Color(1.0, 0.5, 0.2)},
+	5: {"text": "RAMPAGE!", "color": Color(1.0, 0.3, 0.1)},
+	10: {"text": "UNSTOPPABLE!", "color": Color(1.0, 0.2, 0.6)},
+	15: {"text": "APEX PREDATOR!", "color": Color(1.0, 0.1, 0.9)},
+}
+
+# --- FEATURE: Floating Text Popups ---
+var _floating_texts: Array = []  # [{text, pos, life, color, size}]
+
 func _ready() -> void:
 	add_to_group("cell_stage_manager")
 	player.reproduced.connect(_on_player_reproduced)
@@ -84,6 +128,11 @@ func _ready() -> void:
 	player.parasites_changed.connect(_on_parasites_changed)
 	player.prey_killed.connect(_on_prey_killed)
 	player.food_consumed.connect(_on_food_collected)
+	if player.has_signal("biomolecule_category_collected"):
+		player.biomolecule_category_collected.connect(on_biomolecule_collected)
+
+	# Initialize world event timer
+	_world_event_timer = randf_range(60.0, 90.0)  # First event after 1-1.5 min
 
 	# Connect evolution signals
 	GameManager.evolution_applied.connect(_on_evolution_applied)
@@ -249,6 +298,53 @@ func _process(delta: float) -> void:
 		if _popup_timer < 0.5:
 			_popup_alpha = _popup_timer / 0.5
 
+	# --- Dynamic World Events ---
+	_world_event_timer -= delta
+	if _world_event_timer <= 0 and not _world_event_active and not GameManager.safe_zone_active:
+		_world_event_timer = randf_range(WORLD_EVENT_INTERVAL_MIN, WORLD_EVENT_INTERVAL_MAX)
+		_trigger_world_event()
+	if _world_event_active:
+		_world_event_remaining -= delta
+		if _world_event_remaining <= 0:
+			_end_world_event()
+
+	# --- Chain Combo ---
+	if _chain_timer > 0:
+		_chain_timer -= delta
+		if _chain_timer <= 0:
+			_chain_count = 0
+			_chain_category = ""
+	if _chain_display_timer > 0:
+		_chain_display_timer -= delta
+		_chain_display_alpha = clampf(_chain_display_timer / 1.5, 0.0, 1.0)
+		if _chain_display_timer < 0.4:
+			_chain_display_alpha = _chain_display_timer / 0.4
+
+	# --- Kill Streak ---
+	if _kill_streak > 0:
+		_kill_streak_timer -= delta
+		if _kill_streak_timer <= 0:
+			_kill_streak = 0
+	if _streak_announce_timer > 0:
+		_streak_announce_timer -= delta
+		_streak_announce_alpha = clampf(_streak_announce_timer / 2.0, 0.0, 1.0)
+		if _streak_announce_timer < 0.5:
+			_streak_announce_alpha = _streak_announce_timer / 0.5
+		_streak_announce_scale = 1.0 + 0.3 * clampf((_streak_announce_timer - 1.5) / 0.5, 0.0, 1.0)
+
+	# --- Floating Texts ---
+	var ft_i: int = _floating_texts.size() - 1
+	while ft_i >= 0:
+		var ft: Dictionary = _floating_texts[ft_i]
+		ft.life -= delta
+		ft.pos.y -= 35.0 * delta  # Float upward
+		ft.pos.x += ft.get("x_drift", 0.0) * delta  # Gentle horizontal drift
+		ft.scale = lerpf(ft.get("scale", 1.0), 1.0, delta * 6.0)  # Bounce settle
+		_floating_texts[ft_i] = ft
+		if ft.life <= 0:
+			_floating_texts.remove_at(ft_i)
+		ft_i -= 1
+
 	# Scan for new competitor cells to connect cleaner signal
 	_competitor_scan_timer -= delta
 	if _competitor_scan_timer <= 0:
@@ -262,7 +358,7 @@ func _process(delta: float) -> void:
 		_victory_timer -= delta
 
 	# Request overlay redraw only when an effect is active
-	if _overlay and (_low_health_pulse > 0 or _sensory_notify_timer > 0 or _death_recap_active or _victory_active or _mutation_popup_timer > 0 or _popup_timer > 0 or _biome_label_timer > 0):
+	if _overlay and (_low_health_pulse > 0 or _sensory_notify_timer > 0 or _death_recap_active or _victory_active or _mutation_popup_timer > 0 or _popup_timer > 0 or _biome_label_timer > 0 or _chain_display_timer > 0 or _streak_announce_timer > 0 or _world_event_active or _floating_texts.size() > 0):
 		_overlay.queue_redraw()
 
 	# Keep background centered on player for infinite world feel
@@ -337,9 +433,16 @@ func _process(delta: float) -> void:
 		else:
 			_pause()
 
-	# Toggle CRISPR editor
+	# Toggle CRISPR Mutation Workshop
 	if Input.is_action_just_pressed("toggle_crispr") and not _paused:
-		crispr_layer.visible = not crispr_layer.visible
+		var crispr_panel := crispr_layer.get_node_or_null("CRISPRPanel")
+		if crispr_panel:
+			if crispr_layer.visible:
+				crispr_panel.close()
+				crispr_layer.visible = false
+			else:
+				crispr_layer.visible = true
+				crispr_panel.open()
 
 func spawn_death_nutrients(pos: Vector2, count: int, base_color: Color) -> void:
 	## Spawn food particles at the death location of an organism
@@ -371,9 +474,54 @@ func _on_parasites_changed(count: int) -> void:
 
 func _on_prey_killed() -> void:
 	_session_kills += 1
+	# Gene fragment drop on kill (1-3 fragments)
+	var fragments: int = randi_range(1, 3)
+	GameManager.add_gene_fragments(fragments)
+	# Kill streak tracking
+	_kill_streak += 1
+	_kill_streak_timer = KILL_STREAK_TIMEOUT
+	if STREAK_ANNOUNCEMENTS.has(_kill_streak):
+		var ann: Dictionary = STREAK_ANNOUNCEMENTS[_kill_streak]
+		_streak_announce_text = ann.text
+		_streak_announce_color = ann.color
+		_streak_announce_timer = 2.5
+		_streak_announce_alpha = 1.0
+		AudioManager.play_sensory_upgrade()
+		var cam := player.get_node_or_null("Camera2D")
+		if cam and cam.has_method("shake"):
+			cam.shake(5.0, 0.2)
 
 func _on_food_collected() -> void:
 	_session_collections += 1
+
+func on_biomolecule_collected(category: String) -> void:
+	## Chain combo: track consecutive same-category collections
+	if category == _chain_category:
+		_chain_count += 1
+	else:
+		_chain_category = category
+		_chain_count = 1
+	_chain_timer = CHAIN_TIMEOUT
+	if _chain_count >= 2:
+		_chain_display_timer = 2.0
+		_chain_display_alpha = 1.0
+		# Bonus energy for chains
+		if _chain_count >= 3:
+			player.energy = minf(player.energy + 5.0 * _chain_count, player.max_energy)
+			_add_floating_text("+%d energy chain!" % (5 * _chain_count), player.global_position + Vector2(0, -40), Color(0.3, 1.0, 0.5), 14, _chain_count >= 5)
+
+func _add_floating_text(text: String, world_pos: Vector2, color: Color, size: int = 14, critical: bool = false) -> void:
+	_floating_texts.append({
+		"text": text,
+		"pos": world_pos + Vector2(randf_range(-12.0, 12.0), 0),  # Horizontal scatter
+		"life": 2.5 if critical else 2.0,
+		"max_life": 2.5 if critical else 2.0,
+		"color": color,
+		"size": size + (6 if critical else 0),
+		"scale": 1.8 if critical else 1.4,  # Start large, bounces down
+		"x_drift": randf_range(-8.0, 8.0),  # Gentle horizontal drift
+		"critical": critical,
+	})
 
 func _on_evolution_applied(mutation: Dictionary) -> void:
 	# Check if sensory level changed
@@ -385,11 +533,47 @@ func _on_evolution_applied(mutation: Dictionary) -> void:
 		AudioManager.play_sensory_upgrade()
 		_last_sensory_level = GameManager.sensory_level
 
+var _overlay_layer_ref: CanvasLayer = null
+
 func _on_showcase_finished(overlay_layer: CanvasLayer) -> void:
-	# Show HUD now that showcase is done
+	_overlay_layer_ref = overlay_layer
+	# Open creature editor BEFORE revealing the player
+	if not GameManager.initial_customization_done:
+		var evo_ui := get_node_or_null("EvolutionUI")
+		if is_instance_valid(evo_ui) and evo_ui.has_signal("initial_customization_completed"):
+			evo_ui.initial_customization_completed.connect(_on_initial_customize_done, CONNECT_ONE_SHOT)
+			evo_ui.open_initial_customization()
+			return
+	# Already customized — go straight to tutorial
+	_reveal_player_and_start_tutorial(overlay_layer)
+
+func _reveal_player_and_start_tutorial(overlay_layer: CanvasLayer) -> void:
+	# Reveal the player (was hidden during showcase)
+	if player and not player.visible:
+		player.visible = true
+		player.input_disabled = false
+		if not player.is_in_group("player"):
+			player.add_to_group("player")
+		var col := player.get_node_or_null("CollisionShape2D")
+		if col:
+			col.disabled = false
+		var toxin_shape := player.get_node_or_null("ToxinArea/ToxinShape")
+		if toxin_shape:
+			toxin_shape.disabled = false
+		var cam := player.get_node_or_null("Camera2D")
+		if cam:
+			cam.set_process(true)
+	_start_tutorial(overlay_layer)
+
+func _on_initial_customize_done() -> void:
+	if not is_inside_tree():
+		return
+	if _overlay_layer_ref and is_instance_valid(_overlay_layer_ref):
+		_reveal_player_and_start_tutorial(_overlay_layer_ref)
+
+func _start_tutorial(overlay_layer: CanvasLayer) -> void:
 	hud.visible = true
 
-	# Showcase done — now start the tutorial
 	var TutorialScript := preload("res://scripts/cell_stage/tutorial_overlay.gd")
 	var tut := Control.new()
 	tut.set_script(TutorialScript)
@@ -455,23 +639,42 @@ func _on_player_died() -> void:
 
 func _draw_overlay(ctl: Control) -> void:
 	var vp := ctl.get_viewport_rect().size
-	var font := ThemeDB.fallback_font
+	var font := UIConstants.get_display_font()
+
+	# --- Biome transition edge tint ---
+	if _biome_label_timer > 2.5 and _biome_label_alpha > 0.5:
+		var edge_a: float = (_biome_label_timer - 2.5) / 1.5 * 0.15
+		var edge_w: float = vp.x * 0.05
+		var edge_h: float = vp.y * 0.05
+		var edge_col := Color(_current_biome_color.r, _current_biome_color.g, _current_biome_color.b, edge_a)
+		ctl.draw_rect(Rect2(0, 0, vp.x, edge_h), edge_col)
+		ctl.draw_rect(Rect2(0, vp.y - edge_h, vp.x, edge_h), edge_col)
+		ctl.draw_rect(Rect2(0, 0, edge_w, vp.y), edge_col)
+		ctl.draw_rect(Rect2(vp.x - edge_w, 0, edge_w, vp.y), edge_col)
 
 	# --- Biome name banner ---
 	if _biome_label_timer > 0 and _biome_label_alpha > 0.01:
 		var biome_fs: int = 24
+		var prefix_fs: int = 16
+		var entering_text: String = "Entering:"
+		var prefix_size := font.get_string_size(entering_text, HORIZONTAL_ALIGNMENT_CENTER, -1, prefix_fs)
 		var biome_size := font.get_string_size(_current_biome_name, HORIZONTAL_ALIGNMENT_CENTER, -1, biome_fs)
-		var bx: float = (vp.x - biome_size.x) * 0.5
+		var total_w: float = maxf(prefix_size.x, biome_size.x)
+		var bx: float = (vp.x - total_w) * 0.5
 		var by: float = vp.y * 0.15
 		# Subtle background pill
-		var bpill_w: float = biome_size.x + 50.0
-		var bpill_h: float = 40.0
+		var bpill_w: float = total_w + 50.0
+		var bpill_h: float = 60.0
 		ctl.draw_rect(Rect2(bx - 25, by - 28, bpill_w, bpill_h), Color(0.02, 0.04, 0.06, 0.5 * _biome_label_alpha))
 		# Colored accent lines
 		ctl.draw_rect(Rect2(bx - 25, by - 29, bpill_w, 1), Color(_current_biome_color.r, _current_biome_color.g, _current_biome_color.b, 0.5 * _biome_label_alpha))
-		ctl.draw_rect(Rect2(bx - 25, by + 11, bpill_w, 1), Color(_current_biome_color.r, _current_biome_color.g, _current_biome_color.b, 0.5 * _biome_label_alpha))
+		ctl.draw_rect(Rect2(bx - 25, by + 31, bpill_w, 1), Color(_current_biome_color.r, _current_biome_color.g, _current_biome_color.b, 0.5 * _biome_label_alpha))
+		# "Entering:" prefix text
+		var prefix_x: float = (vp.x - prefix_size.x) * 0.5
+		ctl.draw_string(font, Vector2(prefix_x, by - 2), entering_text, HORIZONTAL_ALIGNMENT_LEFT, -1, prefix_fs, Color(0.6, 0.65, 0.7, 0.7 * _biome_label_alpha))
 		# Biome name text
-		ctl.draw_string(font, Vector2(bx, by), _current_biome_name, HORIZONTAL_ALIGNMENT_LEFT, -1, biome_fs, Color(_current_biome_color.r, _current_biome_color.g, _current_biome_color.b, 0.9 * _biome_label_alpha))
+		var name_x: float = (vp.x - biome_size.x) * 0.5
+		ctl.draw_string(font, Vector2(name_x, by + 22), _current_biome_name, HORIZONTAL_ALIGNMENT_LEFT, -1, biome_fs, Color(_current_biome_color.r, _current_biome_color.g, _current_biome_color.b, 0.9 * _biome_label_alpha))
 
 	# --- Low health red pulse vignette ---
 	if _low_health_pulse > 0:
@@ -549,6 +752,84 @@ func _draw_overlay(ctl: Control) -> void:
 		var vhs := font.get_string_size(v_hint, HORIZONTAL_ALIGNMENT_CENTER, -1, 13)
 		ctl.draw_string(font, Vector2((vp.x - vhs.x) * 0.5, vy + 20), v_hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.4, 0.7, 0.8, 0.5 * v_alpha))
 
+	# --- Chain Combo Display ---
+	if _chain_display_timer > 0 and _chain_display_alpha > 0.01 and _chain_count >= 2:
+		var chain_text: String = "CHAIN x%d!" % _chain_count
+		var chain_fs: int = 20 + mini(_chain_count, 5) * 2
+		var chain_size := font.get_string_size(chain_text, HORIZONTAL_ALIGNMENT_CENTER, -1, chain_fs)
+		var cx: float = (vp.x - chain_size.x) * 0.5
+		var cy: float = vp.y * 0.7
+		var chain_color := Color(0.3, 1.0, 0.5).lerp(Color(1.0, 0.9, 0.2), clampf((_chain_count - 2.0) / 5.0, 0.0, 1.0))
+		ctl.draw_string(font, Vector2(cx + 1, cy + 1), chain_text, HORIZONTAL_ALIGNMENT_LEFT, -1, chain_fs, Color(0, 0, 0, 0.5 * _chain_display_alpha))
+		ctl.draw_string(font, Vector2(cx, cy), chain_text, HORIZONTAL_ALIGNMENT_LEFT, -1, chain_fs, Color(chain_color.r, chain_color.g, chain_color.b, _chain_display_alpha))
+		var cat_text: String = _chain_category.replace("_", " ").capitalize()
+		var cat_size := font.get_string_size(cat_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 12)
+		ctl.draw_string(font, Vector2((vp.x - cat_size.x) * 0.5, cy + 22), cat_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.6, 0.9, 0.7, _chain_display_alpha * 0.7))
+
+	# --- Kill Streak Announcement ---
+	if _streak_announce_timer > 0 and _streak_announce_alpha > 0.01:
+		var s_fs: int = int(28 * _streak_announce_scale)
+		var s_size := font.get_string_size(_streak_announce_text, HORIZONTAL_ALIGNMENT_CENTER, -1, s_fs)
+		var sx: float = (vp.x - s_size.x) * 0.5
+		var sy: float = vp.y * 0.42
+		ctl.draw_rect(Rect2(sx - 20, sy - 30, s_size.x + 40, 46), Color(0.1, 0.02, 0.02, 0.6 * _streak_announce_alpha))
+		ctl.draw_rect(Rect2(sx - 21, sy - 31, s_size.x + 42, 1), Color(_streak_announce_color.r, _streak_announce_color.g, _streak_announce_color.b, _streak_announce_alpha * 0.7))
+		ctl.draw_rect(Rect2(sx - 21, sy + 15, s_size.x + 42, 1), Color(_streak_announce_color.r, _streak_announce_color.g, _streak_announce_color.b, _streak_announce_alpha * 0.7))
+		ctl.draw_string(font, Vector2(sx, sy), _streak_announce_text, HORIZONTAL_ALIGNMENT_LEFT, -1, s_fs, Color(_streak_announce_color.r, _streak_announce_color.g, _streak_announce_color.b, _streak_announce_alpha))
+
+	# --- World Event Banner ---
+	if _world_event_active:
+		var event_text: String = _world_event_name
+		var remaining_text: String = "%ds" % ceili(_world_event_remaining)
+		var e_fs: int = 16
+		var e_size := font.get_string_size(event_text, HORIZONTAL_ALIGNMENT_CENTER, -1, e_fs)
+		var r_size := font.get_string_size(remaining_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 12)
+		var total_w: float = e_size.x + r_size.x + 20
+		var ex: float = (vp.x - total_w) * 0.5
+		var ey: float = 32.0
+		# Animated background bar
+		var bar_pulse: float = 0.5 + 0.2 * sin(_session_time * 4.0)
+		ctl.draw_rect(Rect2(ex - 15, ey - 18, total_w + 30, 30), Color(0.05, 0.02, 0.02, 0.7))
+		ctl.draw_rect(Rect2(ex - 15, ey + 12, total_w + 30, 2), Color(_world_event_color.r, _world_event_color.g, _world_event_color.b, bar_pulse))
+		# Progress bar
+		var progress: float = _world_event_remaining / _world_event_duration
+		ctl.draw_rect(Rect2(ex - 15, ey + 12, (total_w + 30) * progress, 2), Color(_world_event_color.r * 1.5, _world_event_color.g * 1.5, _world_event_color.b * 1.5, 0.9))
+		ctl.draw_string(font, Vector2(ex, ey), event_text, HORIZONTAL_ALIGNMENT_LEFT, -1, e_fs, Color(_world_event_color.r, _world_event_color.g, _world_event_color.b, 0.95))
+		ctl.draw_string(font, Vector2(ex + e_size.x + 15, ey), remaining_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.7, 0.7, 0.7, 0.7))
+
+	# --- Floating Texts (world-space to screen-space) ---
+	if _floating_texts.size() > 0:
+		var cam := player.get_node_or_null("Camera2D")
+		if cam:
+			var cam_pos: Vector2 = cam.global_position
+			var zoom: Vector2 = cam.zoom if cam.zoom.x > 0 else Vector2.ONE
+			for ft in _floating_texts:
+				var screen_pos: Vector2 = (ft.pos - cam_pos) * zoom + vp * 0.5
+				var max_life: float = ft.get("max_life", 2.0)
+				var ft_alpha: float = clampf(ft.life / 1.0, 0.0, 1.0)
+				if ft.life > max_life - 0.5:
+					ft_alpha = clampf((max_life - ft.life) / 0.5, 0.0, 1.0)
+				var ft_scale: float = ft.get("scale", 1.0)
+				var draw_size: int = int(ft.size * ft_scale)
+				var ft_size := font.get_string_size(ft.text, HORIZONTAL_ALIGNMENT_CENTER, -1, draw_size)
+				var tx: float = screen_pos.x - ft_size.x * 0.5
+				var ty: float = screen_pos.y
+				var is_crit: bool = ft.get("critical", false)
+				# Color-coded outline (drawn in 4 directions)
+				var outline_col: Color = Color(ft.color.r * 0.3, ft.color.g * 0.3, ft.color.b * 0.3, ft_alpha * 0.7)
+				if is_crit:
+					outline_col = Color(ft.color.r, ft.color.g * 0.2, ft.color.b * 0.2, ft_alpha * 0.8)
+				for ox in [-1.0, 1.0]:
+					for oy in [-1.0, 1.0]:
+						ctl.draw_string(font, Vector2(tx + ox, ty + oy), ft.text, HORIZONTAL_ALIGNMENT_LEFT, -1, draw_size, outline_col)
+				# Main text
+				var text_col: Color = Color(ft.color.r, ft.color.g, ft.color.b, ft_alpha)
+				if is_crit:
+					# Pulsing brightness for critical hits
+					var pulse: float = 0.8 + sin(_session_time * 8.0) * 0.2
+					text_col = text_col.lightened(0.3 * pulse)
+				ctl.draw_string(font, Vector2(tx, ty), ft.text, HORIZONTAL_ALIGNMENT_LEFT, -1, draw_size, text_col)
+
 	# --- Death recap overlay ---
 	if _death_recap_active and _death_recap_data.size() > 0:
 		ctl.draw_rect(Rect2(0, 0, vp.x, vp.y), Color(0.0, 0.0, 0.02, 0.6))
@@ -569,6 +850,72 @@ func _draw_overlay(ctl: Control) -> void:
 			var ls := font.get_string_size(line, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
 			ctl.draw_string(font, Vector2((vp.x - ls.x) * 0.5, cy), line, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.6, 0.8, 0.9, 0.85))
 			cy += 24.0
+
+func _trigger_world_event() -> void:
+	var event: Dictionary = WORLD_EVENTS[randi() % WORLD_EVENTS.size()]
+	_world_event_active = true
+	_world_event_name = event.name
+	_world_event_duration = event.duration
+	_world_event_remaining = event.duration
+	_world_event_color = event.color
+	# Announce the event
+	_popup_text = event.desc
+	_popup_timer = 4.0
+	_popup_alpha = 1.0
+	_popup_color = event.color
+	AudioManager.play_sensory_upgrade()
+	var cam := player.get_node_or_null("Camera2D")
+	if cam and cam.has_method("shake"):
+		cam.shake(4.0, 0.3)
+	# Apply event-specific effects
+	match _world_event_name:
+		"NUTRIENT BLOOM":
+			_spawn_bloom_food(20)
+		"PARASITE SWARM":
+			_spawn_parasite_swarm(8)
+		"THERMAL ERUPTION":
+			_spawn_eruption_food(12)
+			# Damage pulse to everything nearby
+			for enemy in get_tree().get_nodes_in_group("enemies"):
+				if is_instance_valid(enemy) and enemy.global_position.distance_to(player.global_position) < 400.0:
+					if enemy.has_method("take_damage"):
+						enemy.take_damage(15.0)
+
+func _end_world_event() -> void:
+	_world_event_active = false
+	_world_event_name = ""
+
+func _spawn_bloom_food(count: int) -> void:
+	for i in range(count):
+		var food := FOOD_SCENE.instantiate()
+		food.setup(BiologyLoader.get_random_biomolecule(), false)
+		food.global_position = player.global_position + Vector2(
+			randf_range(-300, 300), randf_range(-300, 300)
+		)
+		food.add_to_group("food")
+		add_child(food)
+
+func _spawn_parasite_swarm(count: int) -> void:
+	var ParasiteScene := preload("res://scenes/parasite_organism.tscn")
+	var spawn_center: Vector2 = player.global_position + Vector2(randf_range(-200, 200), randf_range(-200, 200))
+	for i in range(count):
+		var p := ParasiteScene.instantiate()
+		p.global_position = spawn_center + Vector2(randf_range(-50, 50), randf_range(-50, 50))
+		add_child(p)
+
+func _spawn_eruption_food(count: int) -> void:
+	for i in range(count):
+		var food := FOOD_SCENE.instantiate()
+		var is_rare: bool = randf() < 0.3  # Higher rare chance from eruptions
+		if is_rare:
+			food.setup(BiologyLoader.get_random_organelle(), true)
+		else:
+			food.setup(BiologyLoader.get_random_biomolecule(), false)
+		food.global_position = player.global_position + Vector2(
+			randf_range(-250, 250), randf_range(-250, 250)
+		)
+		food.add_to_group("food")
+		add_child(food)
 
 func _pause() -> void:
 	_paused = true

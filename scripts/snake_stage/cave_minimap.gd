@@ -199,14 +199,14 @@ func _draw() -> void:
 			_draw_circle_outline(hc.center, hc.radius, border_col, 1.5)
 			# Biome label
 			var label: String = BIOME_NAMES.get(hc.biome, "?")
-			var font: Font = ThemeDB.fallback_font
+			var font: Font = UIConstants.get_display_font()
 			var label_size: Vector2 = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, LABEL_FONT_SIZE)
 			var label_pos: Vector2 = hc.center - label_size * 0.5 + Vector2(0, label_size.y * 0.3)
 			draw_string(font, label_pos, label, HORIZONTAL_ALIGNMENT_LEFT, -1, LABEL_FONT_SIZE, Color(0.8, 0.9, 0.8, 0.7))
 		else:
 			# Undiscovered: just a dim outline with "?"
 			_draw_circle_outline(hc.center, hc.radius, Color(0.1, 0.15, 0.15, 0.25), 1.0)
-			var font: Font = ThemeDB.fallback_font
+			var font: Font = UIConstants.get_display_font()
 			var q_size: Vector2 = font.get_string_size("?", HORIZONTAL_ALIGNMENT_LEFT, -1, LABEL_FONT_SIZE)
 			draw_string(font, hc.center - q_size * 0.5 + Vector2(0, q_size.y * 0.3), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, LABEL_FONT_SIZE, Color(0.3, 0.4, 0.4, 0.3))
 
@@ -233,7 +233,7 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), BORDER_COLOR, false, 1.5)
 
 	# Title
-	var font: Font = ThemeDB.fallback_font
+	var font: Font = UIConstants.get_display_font()
 	draw_string(font, Vector2(8, 14), "NEURAL MAP", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.3, 0.6, 0.5, 0.6))
 
 	# Discovery counter
