@@ -248,24 +248,11 @@ func _build_floor(colors: Dictionary) -> void:
 			var z0: float = (float(gz) / subdivs - 0.5) * radius * 2.0
 			var z1: float = (float(gz + 1) / subdivs - 0.5) * radius * 2.0
 
-			# Skip cells outside circle
+			# Skip cells outside circle (extend to wall boundary)
 			var cx: float = (x0 + x1) * 0.5
 			var cz: float = (z0 + z1) * 0.5
-			if Vector2(cx, cz).length() > radius * 1.05:
+			if Vector2(cx, cz).length() > radius * 1.12:
 				continue
-
-			# Skip edge floor cells at tunnel mouths (tunnel tube provides floor there)
-			var cell_dist: float = Vector2(cx, cz).length()
-			if cell_dist > radius * 0.9:
-				var cell_angle: float = atan2(cz, cx)
-				var skip_for_tunnel: bool = false
-				for t_idx in range(floor_tunnel_angles.size()):
-					var diff: float = fmod(cell_angle - floor_tunnel_angles[t_idx] + PI + TAU, TAU) - PI
-					if absf(diff) < floor_tunnel_half_angles[t_idx]:
-						skip_for_tunnel = true
-						break
-				if skip_for_tunnel:
-					continue
 
 			var y00: float = _floor_heightmap[gx][gz]
 			var y10: float = _floor_heightmap[gx + 1][gz]
@@ -378,15 +365,17 @@ func _build_floor(colors: Dictionary) -> void:
 		static_body.add_child(col_shape)
 		add_child(static_body)
 
-	# Safety floor plate: invisible flat box at hub center to prevent falling through.
+	# Safety floor plate: invisible flat box covering the entire hub to prevent
+	# falling through gaps at edges or tunnel mouths.
 	# Sits just below y=0 so the mesh floor takes priority but this catches any gaps.
 	var safety_body: StaticBody3D = StaticBody3D.new()
 	safety_body.name = "SafetyFloor"
 	var safety_shape: CollisionShape3D = CollisionShape3D.new()
 	var safety_box: BoxShape3D = BoxShape3D.new()
-	safety_box.size = Vector3(20.0, 0.5, 20.0)  # 20x20 unit safety zone at center
+	var safety_extent: float = radius * 2.2  # Cover entire hub plus margin
+	safety_box.size = Vector3(safety_extent, 0.5, safety_extent)
 	safety_shape.shape = safety_box
-	safety_shape.position = Vector3(0, -0.3, 0)  # Just below floor surface
+	safety_shape.position = Vector3(0, -0.5, 0)  # Just below floor surface
 	safety_body.add_child(safety_shape)
 	add_child(safety_body)
 
