@@ -19,6 +19,7 @@ const CURRENT_SCENE := preload("res://scenes/current_zone.tscn")
 const DART_PREDATOR_SCENE := preload("res://scenes/dart_predator.tscn")
 const LEVIATHAN_SCENE := preload("res://scenes/leviathan.tscn")
 const DANGER_ZONE_SCENE := preload("res://scenes/danger_zone.tscn")
+const KIN_SCENE := preload("res://scenes/kin_organism.tscn")
 
 enum Biome { NORMAL, THERMAL_VENT, DEEP_ABYSS, SHALLOWS, NUTRIENT_RICH }
 
@@ -191,6 +192,8 @@ func _get_organism_type(org: Node2D) -> String:
 		return "parasite"
 	elif org.is_in_group("blockers"):
 		return "blocker"
+	elif org.is_in_group("kin"):
+		return "kin"
 	return "blocker"
 
 # Types suppressed during the safe zone (no hostiles until player learns controls)
@@ -228,6 +231,27 @@ func _spawn_chunk_population(coord: Vector2i) -> void:
 				rng.randf_range(-CHUNK_SIZE * 0.45, CHUNK_SIZE * 0.45)
 			)
 			var org := _spawn_organism(type_key, pos, rng)
+			if org:
+				chunk["organisms"].append(org)
+
+	# Kin organisms — same-species NPCs, only after first evolution
+	var evo: int = GameManager.evolution_level
+	if evo >= 1:
+		var kin_key: String = "kin"
+		var kin_base: int = 0
+		if remaining_override.has(kin_key):
+			kin_base = remaining_override[kin_key]
+		else:
+			# More kin appear at higher evolution levels: 0-1 at evo1, 0-2 at evo2, 1-3 at evo3+
+			var kin_min: int = clampi(evo - 2, 0, 1)
+			var kin_max: int = clampi(evo, 1, 3)
+			kin_base = rng.randi_range(kin_min, kin_max)
+		for i in range(kin_base):
+			var pos := center + Vector2(
+				rng.randf_range(-CHUNK_SIZE * 0.45, CHUNK_SIZE * 0.45),
+				rng.randf_range(-CHUNK_SIZE * 0.45, CHUNK_SIZE * 0.45)
+			)
+			var org := _spawn_organism(kin_key, pos, rng)
 			if org:
 				chunk["organisms"].append(org)
 
@@ -295,6 +319,8 @@ func _spawn_organism(type_key: String, pos: Vector2, rng: RandomNumberGenerator)
 		"leviathan":
 			org = LEVIATHAN_SCENE.instantiate()
 			org.add_to_group("enemies")
+		"kin":
+			org = KIN_SCENE.instantiate()
 
 	if org:
 		org.global_position = pos
