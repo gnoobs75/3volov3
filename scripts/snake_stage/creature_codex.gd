@@ -87,6 +87,11 @@ var _hover_entry: int = -1
 var _hover_tab: int = -1
 var _hover_close: bool = false
 var _filtered_entries: Array = []
+var _hover_voice_type: int = -1
+var _voice_btn_rects: Array = []
+var _voice_playing_timer: float = 0.0
+var _voice_playing_type: int = -1
+const VOICE_TYPES: Array = ["idle", "alert", "attack", "hurt", "death"]
 
 func _ready() -> void:
 	visible = false
@@ -124,6 +129,8 @@ func _process(delta: float) -> void:
 	if not _active:
 		return
 	_time += delta
+	if _voice_playing_timer > 0.0:
+		_voice_playing_timer -= delta
 	queue_redraw()
 
 func _gui_input(event: InputEvent) -> void:
@@ -166,6 +173,14 @@ func _handle_click(pos: Vector2) -> void:
 				GameManager.upgrade_trait(trait_id)
 				return
 		return
+	# Voice preview
+	if _hover_voice_type >= 0 and _selected_idx >= 0 and _selected_idx < CREATURE_DATA.size():
+		var voice_entry: Dictionary = CREATURE_DATA[_selected_idx]
+		if VoiceGenerator.SPECIES_PRESETS.has(voice_entry.id):
+			AudioManager.play_voice_preview(voice_entry.id, VOICE_TYPES[_hover_voice_type])
+			_voice_playing_timer = 0.6
+			_voice_playing_type = _hover_voice_type
+		return
 	# Entry list
 	if _hover_entry >= 0 and _hover_entry < _filtered_entries.size():
 		var data_idx: int = _filtered_entries[_hover_entry]
@@ -177,6 +192,7 @@ func _handle_hover(pos: Vector2) -> void:
 	_hover_entry = -1
 	_hover_tab = -1
 	_hover_close = false
+	_hover_voice_type = -1
 
 	# Close button (top right)
 	var close_rect: Rect2 = Rect2(size.x - 50, 5, 40, 40)
@@ -191,6 +207,12 @@ func _handle_hover(pos: Vector2) -> void:
 		var tab_rect: Rect2 = Rect2(20 + i * tab_w, tab_y, tab_w - 2, TAB_H)
 		if tab_rect.has_point(pos):
 			_hover_tab = i
+			return
+
+	# Voice buttons in detail panel
+	for vi in range(_voice_btn_rects.size()):
+		if _voice_btn_rects[vi].has_point(pos):
+			_hover_voice_type = vi
 			return
 
 	# Entry list
@@ -312,6 +334,7 @@ func _draw_detail_panel(x: float, font: Font) -> void:
 
 	if _selected_idx < 0 or _selected_idx >= CREATURE_DATA.size():
 		# No selection
+		_voice_btn_rects.clear()
 		draw_string(font, Vector2(x + 40, s.y * 0.4), "Select a creature to view details", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.5))
 		# Draw decorative DNA helix
 		_draw_helix(Vector2(x + panel_w * 0.5, s.y * 0.5 + 30), 80.0)
@@ -320,6 +343,7 @@ func _draw_detail_panel(x: float, font: Font) -> void:
 	var entry: Dictionary = CREATURE_DATA[_selected_idx]
 	var discovered: bool = GameManager.is_creature_discovered(entry.id)
 	if not discovered:
+		_voice_btn_rects.clear()
 		draw_string(font, Vector2(x + 40, s.y * 0.4), "??? — Not yet discovered", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.4, 0.3, 0.3, 0.5))
 		return
 
@@ -344,6 +368,45 @@ func _draw_detail_panel(x: float, font: Font) -> void:
 	var biome_str: String = ", ".join(entry.biomes)
 	draw_string(font, Vector2(x + 100, y + 16), biome_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_NORMAL)
 	y += 30
+
+	# --- Audio Signature ---
+	if VoiceGenerator.SPECIES_PRESETS.has(entry.id):
+		draw_line(Vector2(x + 10, y), Vector2(x + panel_w - 10, y), Color(0.15, 0.25, 0.35, 0.4), 1.0)
+		y += 8
+		draw_string(font, Vector2(x + 20, y + 14), "AUDIO SIGNATURE", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
+		y += 22
+		_voice_btn_rects.clear()
+		var vbtn_x: float = x + 20
+		var ic: Array = entry.icon_color
+		var vicol: Color = Color(ic[0], ic[1], ic[2])
+		for vi in range(VOICE_TYPES.size()):
+			var vlabel: String = VOICE_TYPES[vi].to_upper()
+			var vtw: float = font.get_string_size(vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x + 22
+			var vbtn_rect: Rect2 = Rect2(vbtn_x, y, vtw, 22)
+			_voice_btn_rects.append(vbtn_rect)
+			var v_hover: bool = _hover_voice_type == vi
+			var v_playing: bool = _voice_playing_type == vi and _voice_playing_timer > 0.0
+			var vbg: Color = Color(vicol.r, vicol.g, vicol.b, 0.15 if v_hover else 0.05)
+			if v_playing:
+				vbg = Color(vicol.r, vicol.g, vicol.b, 0.12)
+			draw_rect(vbtn_rect, vbg)
+			draw_rect(vbtn_rect, Color(vicol.r, vicol.g, vicol.b, 0.4 if v_hover else 0.2), false, 1.0)
+			var spk_cx: float = vbtn_x + 8
+			var spk_cy: float = y + 11
+			var spk_col: Color = vicol if (v_hover or v_playing) else UIConstants.TEXT_DIM
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(spk_cx - 2, spk_cy - 2), Vector2(spk_cx + 2, spk_cy - 4),
+				Vector2(spk_cx + 2, spk_cy + 4), Vector2(spk_cx - 2, spk_cy + 2)
+			]), spk_col * 0.7)
+			if v_playing:
+				var wave_a: float = _voice_playing_timer / 0.6
+				draw_arc(Vector2(spk_cx + 4, spk_cy), 3.5, -PI * 0.4, PI * 0.4, 5, Color(vicol.r, vicol.g, vicol.b, wave_a * 0.6), 1.0)
+			var vlabel_col: Color = vicol if v_playing else (UIConstants.TEXT_BRIGHT if v_hover else UIConstants.TEXT_DIM)
+			draw_string(font, Vector2(vbtn_x + 14, y + 15), vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, vlabel_col)
+			vbtn_x += vtw + 3
+		y += 30
+	else:
+		_voice_btn_rects.clear()
 
 	# Separator
 	draw_line(Vector2(x + 10, y), Vector2(x + panel_w - 10, y), Color(0.15, 0.25, 0.35, 0.4), 1.0)

@@ -22,6 +22,7 @@ var _ink_timer: float = 0.0
 var _ink_cooldown: float = 0.0
 var _confused_timer: float = 0.0
 var _current_target: Node2D = null
+var _voice_cooldown: float = 0.0
 
 const INK_CLOUD_DURATION: float = 6.0
 
@@ -60,6 +61,7 @@ func _physics_process(delta: float) -> void:
 	_time += delta
 	_damage_flash = maxf(_damage_flash - delta * 4.0, 0.0)
 	_ink_cooldown = maxf(_ink_cooldown - delta, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 
 	if _confused_timer > 0:
 		_confused_timer -= delta
@@ -85,6 +87,9 @@ func _physics_process(delta: float) -> void:
 				if player and global_position.distance_to(player.global_position) < detection_range:
 					state = State.ALARMED
 					_alarmed_timer = 0.6
+					if _voice_cooldown <= 0.0:
+						AudioManager.play_creature_voice("ink_bomber", "alert", 1.0, 0.4, 0.8)
+						_voice_cooldown = 3.0
 			State.ALARMED:
 				_do_alarmed(delta)
 			State.INK:
@@ -338,6 +343,9 @@ func take_damage(amount: float) -> void:
 	_damage_flash = 1.0
 	_panic_level = 1.0
 	AudioManager.play_hurt()
+	if _voice_cooldown <= 0.0:
+		AudioManager.play_creature_voice("ink_bomber", "hurt", 1.0, 0.4, 0.8)
+		_voice_cooldown = 2.5
 	# Panic-ink when hit (if available)
 	if _ink_cooldown <= 0 and state != State.INK:
 		state = State.ALARMED
@@ -346,6 +354,7 @@ func take_damage(amount: float) -> void:
 		_die()
 
 func _die() -> void:
+	AudioManager.play_creature_voice("ink_bomber", "death", 1.0, 0.4, 0.8)
 	# Death ink burst
 	if _ink_cooldown <= 0:
 		_deploy_ink()

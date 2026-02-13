@@ -16,6 +16,7 @@ var health: float = 30.0
 var _vertical_velocity: float = 0.0
 var _stun_timer: float = 0.0
 var _fire_cooldown: float = 0.0
+var _voice_cooldown: float = 0.0
 var _damage_flash: float = 0.0
 
 # Detection
@@ -109,6 +110,7 @@ func _physics_process(delta: float) -> void:
 	_time += delta
 	_state_timer -= delta
 	_fire_cooldown = maxf(_fire_cooldown - delta, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 
 	var players: Array = get_tree().get_nodes_in_group("player_worm")
 	var player: Node3D = players[0] if players.size() > 0 else null
@@ -131,6 +133,9 @@ func _physics_process(delta: float) -> void:
 			if player and player_dist < detect_radius:
 				state = State.ALERT
 				_state_timer = 0.8
+				if _voice_cooldown <= 0.0 and AudioManager and AudioManager.has_method("play_creature_voice"):
+					AudioManager.play_creature_voice("mast_cell", "alert", 0.8, 0.7, 1.0)
+					_voice_cooldown = 3.0
 
 		State.ALERT:
 			_speed = lerpf(_speed, 0.0, delta * 5.0)
@@ -140,6 +145,9 @@ func _physics_process(delta: float) -> void:
 			if _state_timer <= 0:
 				if player and player_dist < FIRE_RANGE:
 					state = State.FIRE
+					if _voice_cooldown <= 0.0 and AudioManager and AudioManager.has_method("play_creature_voice"):
+						AudioManager.play_creature_voice("mast_cell", "alert", 0.8, 0.7, 1.0)
+						_voice_cooldown = 3.0
 				elif player and player_dist < RETREAT_RANGE:
 					state = State.RETREAT
 					_state_timer = 2.0
@@ -309,6 +317,9 @@ func stun(duration: float = STUN_DURATION) -> void:
 func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
+	if _voice_cooldown <= 0.0 and AudioManager and AudioManager.has_method("play_creature_voice"):
+		AudioManager.play_creature_voice("mast_cell", "hurt", 0.8, 0.7, 1.0)
+		_voice_cooldown = 2.5
 	if state == State.PATROL:
 		state = State.RETREAT
 		_state_timer = 2.0
@@ -316,5 +327,7 @@ func take_damage(amount: float) -> void:
 		_die()
 
 func _die() -> void:
+	if AudioManager and AudioManager.has_method("play_creature_voice"):
+		AudioManager.play_creature_voice("mast_cell", "death", 0.8, 0.7, 1.0)
 	died.emit(global_position)
 	queue_free()

@@ -308,6 +308,11 @@ var _hover_reveal: bool = false
 var _filtered_entries: Array = []  # indices into ALL_CREATURES
 var _glyph_columns: Array = []
 var _scan_pulse: float = 0.0
+var _hover_voice_type: int = -1
+var _voice_btn_rects: Array = []
+var _voice_playing_timer: float = 0.0
+var _voice_playing_type: int = -1
+const VOICE_TYPES: Array = ["idle", "alert", "attack", "hurt", "death"]
 
 # Discovery VFX
 var _last_seen_discoveries: Dictionary = {}
@@ -364,6 +369,8 @@ func _process(delta: float) -> void:
 		return
 	_time += delta
 	_scan_pulse = fmod(_time * 0.8, 1.0)
+	if _voice_playing_timer > 0.0:
+		_voice_playing_timer -= delta
 	for col in _glyph_columns:
 		col.offset += col.speed * delta
 	# Tick discovery VFX
@@ -423,6 +430,13 @@ func _handle_click(_pos: Vector2) -> void:
 			_selected_idx = -1
 			_rebuild_filtered()
 		return
+	if _hover_voice_type >= 0 and _selected_idx >= 0 and _selected_idx < ALL_CREATURES.size():
+		var voice_entry: Dictionary = ALL_CREATURES[_selected_idx]
+		if VoiceGenerator.SPECIES_PRESETS.has(voice_entry.id):
+			AudioManager.play_voice_preview(voice_entry.id, VOICE_TYPES[_hover_voice_type])
+			_voice_playing_timer = 0.6
+			_voice_playing_type = _hover_voice_type
+		return
 	if _hover_entry >= 0 and _hover_entry < _filtered_entries.size():
 		var data_idx: int = _filtered_entries[_hover_entry]
 		_selected_idx = data_idx
@@ -433,6 +447,7 @@ func _handle_hover(pos: Vector2) -> void:
 	_hover_sub_tab = -1
 	_hover_close = false
 	_hover_reveal = false
+	_hover_voice_type = -1
 
 	# Close button
 	var s: Vector2 = size
@@ -465,6 +480,12 @@ func _handle_hover(pos: Vector2) -> void:
 		var sub_rect: Rect2 = Rect2(16 + i * sub_tab_w, sub_y, sub_tab_w - 2, SUBTAB_H)
 		if sub_rect.has_point(pos):
 			_hover_sub_tab = i
+			return
+
+	# Voice buttons in detail panel
+	for vi in range(_voice_btn_rects.size()):
+		if _voice_btn_rects[vi].has_point(pos):
+			_hover_voice_type = vi
 			return
 
 	# Entry list
@@ -700,6 +721,7 @@ func _draw_detail_panel(x: float, s: Vector2) -> void:
 	var panel_w: float = s.x - x - DETAIL_PAD
 
 	if _selected_idx < 0 or _selected_idx >= ALL_CREATURES.size():
+		_voice_btn_rects.clear()
 		_draw_idle_scanner(x, panel_w, s)
 		return
 
@@ -709,6 +731,7 @@ func _draw_detail_panel(x: float, s: Vector2) -> void:
 	var icon_col: Color = Color(ic[0], ic[1], ic[2])
 
 	if not discovered:
+		_voice_btn_rects.clear()
 		# Show locked silhouette
 		var bp_center: Vector2 = Vector2(x + panel_w * 0.5, HEADER_H + TAB_H + 120)
 		_draw_blueprint_icon(bp_center, 55.0, Color(0.12, 0.12, 0.12), entry, false)
@@ -758,6 +781,43 @@ func _draw_detail_panel(x: float, s: Vector2) -> void:
 	var cat_col: Color = _category_color(entry.category)
 	draw_string(font, Vector2(x + 15, y + 36), entry.category, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, cat_col)
 	y += 46
+
+	# --- Audio Signature ---
+	if VoiceGenerator.SPECIES_PRESETS.has(entry.id):
+		draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.12, 0.2, 0.3, 0.5), 1.0)
+		y += 6
+		draw_string(mono, Vector2(x + 10, y + 12), "// AUDIO SIGNATURE", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, UIConstants.ACCENT_DIM)
+		y += 22
+		_voice_btn_rects.clear()
+		var vbtn_x: float = x + 20
+		for vi in range(VOICE_TYPES.size()):
+			var vlabel: String = VOICE_TYPES[vi].to_upper()
+			var vtw: float = font.get_string_size(vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x + 22
+			var vbtn_rect: Rect2 = Rect2(vbtn_x, y, vtw, 22)
+			_voice_btn_rects.append(vbtn_rect)
+			var v_hover: bool = _hover_voice_type == vi
+			var v_playing: bool = _voice_playing_type == vi and _voice_playing_timer > 0.0
+			var vbg: Color = Color(icon_col.r, icon_col.g, icon_col.b, 0.15 if v_hover else 0.05)
+			if v_playing:
+				vbg = Color(icon_col.r, icon_col.g, icon_col.b, 0.12)
+			draw_rect(vbtn_rect, vbg)
+			draw_rect(vbtn_rect, Color(icon_col.r, icon_col.g, icon_col.b, 0.4 if v_hover else 0.2), false, 1.0)
+			var spk_cx: float = vbtn_x + 8
+			var spk_cy: float = y + 11
+			var spk_col: Color = icon_col if (v_hover or v_playing) else UIConstants.TEXT_DIM
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(spk_cx - 2, spk_cy - 2), Vector2(spk_cx + 2, spk_cy - 4),
+				Vector2(spk_cx + 2, spk_cy + 4), Vector2(spk_cx - 2, spk_cy + 2)
+			]), spk_col * 0.7)
+			if v_playing:
+				var wave_a: float = _voice_playing_timer / 0.6
+				draw_arc(Vector2(spk_cx + 4, spk_cy), 3.5, -PI * 0.4, PI * 0.4, 5, Color(icon_col.r, icon_col.g, icon_col.b, wave_a * 0.6), 1.0)
+			var vlabel_col: Color = icon_col if v_playing else (UIConstants.TEXT_BRIGHT if v_hover else UIConstants.TEXT_DIM)
+			draw_string(font, Vector2(vbtn_x + 14, y + 15), vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, vlabel_col)
+			vbtn_x += vtw + 3
+		y += 30
+	else:
+		_voice_btn_rects.clear()
 
 	# --- Biometric Data ---
 	draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.12, 0.2, 0.3, 0.5), 1.0)

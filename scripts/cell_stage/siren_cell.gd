@@ -23,6 +23,7 @@ var _wander_target: Vector2 = Vector2.ZERO
 var _lunge_dir: Vector2 = Vector2.ZERO
 var _current_target: Node2D = null
 var _attack_cooldown: float = 0.0
+var _voice_cooldown: float = 0.0
 var _disguise_phase: float = 0.0  # 0=fully disguised, 1=fully revealed
 
 # Procedural graphics
@@ -72,6 +73,7 @@ func _physics_process(delta: float) -> void:
 	_time += delta
 	_attack_cooldown = maxf(_attack_cooldown - delta, 0.0)
 	_damage_flash = maxf(_damage_flash - delta * 4.0, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 
 	_blink_timer -= delta
 	if _blink_timer <= 0:
@@ -133,6 +135,9 @@ func _do_disguise(delta: float, target_dist: float) -> void:
 	if _current_target and target_dist < detection_range:
 		state = State.REVEAL
 		_reveal_timer = 0.4
+		if _voice_cooldown <= 0.0:
+			AudioManager.play_creature_voice("siren_cell", "alert", 0.9, 0.3, 1.0)
+			_voice_cooldown = 3.0
 
 func _do_reveal(delta: float) -> void:
 	_reveal_timer -= delta
@@ -317,6 +322,9 @@ func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
 	_mouth_open = 0.5
+	if _voice_cooldown <= 0.0:
+		AudioManager.play_creature_voice("siren_cell", "hurt", 0.9, 0.3, 1.0)
+		_voice_cooldown = 2.5
 	# Taking damage breaks disguise
 	if state == State.DISGUISE:
 		_disguise_phase = 0.8
@@ -325,6 +333,7 @@ func take_damage(amount: float) -> void:
 		_die()
 
 func _die() -> void:
+	AudioManager.play_creature_voice("siren_cell", "death", 0.9, 0.3, 1.0)
 	var manager := get_tree().get_first_node_in_group("cell_stage_manager")
 	if manager and manager.has_method("spawn_death_nutrients"):
 		manager.spawn_death_nutrients(global_position, randi_range(3, 6), _base_color)

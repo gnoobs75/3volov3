@@ -36,6 +36,7 @@ const GRAVITY: float = 20.0
 var _attack_cooldown: float = 0.0
 var _spike_cooldown: float = 0.0
 var _shield_cooldown: float = 0.0
+var _voice_cooldown: float = 0.0
 var _summon_timer: float = 0.0
 var _minions_alive: int = 0
 
@@ -133,6 +134,7 @@ func _physics_process(delta: float) -> void:
 	_attack_cooldown = maxf(_attack_cooldown - delta, 0.0)
 	_spike_cooldown = maxf(_spike_cooldown - delta, 0.0)
 	_shield_cooldown = maxf(_shield_cooldown - delta, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 	_summon_timer += delta
 
 	# Shield timer
@@ -150,6 +152,9 @@ func _physics_process(delta: float) -> void:
 
 	if health / max_health <= 0.25 and phase != Phase.RAGE:
 		phase = Phase.RAGE
+		if _voice_cooldown <= 0:
+			AudioManager.play_creature_voice("marrow_sentinel", "attack", 2.0, 0.9, 0.7)
+			_voice_cooldown = 4.0
 
 	match phase:
 		Phase.PATROL:
@@ -243,6 +248,9 @@ func _update_visuals(delta: float) -> void:
 			_bone_plates[i].position.y = 2.1 + sin(i) * 0.3 + sin(_time * 8.0 + i) * 0.1
 
 func _eruption_spikes() -> void:
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("marrow_sentinel", "attack", 2.0, 0.9, 0.7)
+		_voice_cooldown = 4.0
 	for target in get_tree().get_nodes_in_group("player_worm"):
 		var dist: float = global_position.distance_to(target.global_position)
 		if dist < SPIKE_RADIUS:
@@ -253,11 +261,17 @@ func _eruption_spikes() -> void:
 				target.velocity.y += 8.0 * falloff
 
 func _activate_shield() -> void:
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("marrow_sentinel", "attack", 2.0, 0.9, 0.7)
+		_voice_cooldown = 4.0
 	_shielded = true
 	_shield_timer = SHIELD_DURATION
 	_shield_mesh.visible = true
 
 func _summon_t_cells() -> void:
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("marrow_sentinel", "attack", 2.0, 0.9, 0.7)
+		_voice_cooldown = 4.0
 	var ktc_script = load("res://scripts/snake_stage/killer_t_cell.gd")
 	if not ktc_script:
 		return
@@ -290,6 +304,9 @@ func take_damage(amount: float) -> void:
 		return  # Shield blocks all damage
 	health -= amount
 	_damage_flash = 1.0
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("marrow_sentinel", "hurt", 2.0, 0.9, 0.7)
+		_voice_cooldown = 3.0
 	if phase == Phase.PATROL:
 		phase = Phase.ALERT
 		_phase_timer = 1.0
@@ -297,6 +314,7 @@ func take_damage(amount: float) -> void:
 		_die()
 
 func _die() -> void:
+	AudioManager.play_creature_voice("marrow_sentinel", "death", 2.0, 0.9, 0.7)
 	died.emit(global_position)
 	defeated.emit()
 	queue_free()

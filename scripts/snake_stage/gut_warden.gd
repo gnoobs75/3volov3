@@ -32,6 +32,7 @@ const GRAVITY: float = 20.0
 var _attack_cooldown: float = 0.0
 var _spray_cooldown: float = 0.0
 var _pool_cooldown: float = 0.0
+var _voice_cooldown: float = 0.0
 
 var _body_mesh: MeshInstance3D = null
 var _body_mat: StandardMaterial3D = null
@@ -119,6 +120,7 @@ func _physics_process(delta: float) -> void:
 	_attack_cooldown = maxf(_attack_cooldown - delta, 0.0)
 	_spray_cooldown = maxf(_spray_cooldown - delta, 0.0)
 	_pool_cooldown = maxf(_pool_cooldown - delta, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 
 	var players: Array = get_tree().get_nodes_in_group("player_worm")
 	var player: Node3D = players[0] if players.size() > 0 else null
@@ -129,6 +131,9 @@ func _physics_process(delta: float) -> void:
 	if health / max_health <= 0.25 and phase != Phase.RAGE:
 		phase = Phase.RAGE
 		_phase_timer = 0.0
+		if _voice_cooldown <= 0:
+			AudioManager.play_creature_voice("gut_warden", "attack", 1.8, 0.8, 0.8)
+			_voice_cooldown = 4.0
 
 	match phase:
 		Phase.PATROL:
@@ -216,6 +221,9 @@ func _update_visuals(delta: float) -> void:
 		t.rotation.x = sin(angle + wobble) * 0.5
 
 func _spray_acid(player: Node3D) -> void:
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("gut_warden", "attack", 1.8, 0.8, 0.8)
+		_voice_cooldown = 4.0
 	var dist: float = global_position.distance_to(player.global_position)
 	if dist < SPRAY_RADIUS:
 		var falloff: float = 1.0 - dist / SPRAY_RADIUS
@@ -223,6 +231,9 @@ func _spray_acid(player: Node3D) -> void:
 			player.take_damage(SPRAY_DAMAGE * falloff)
 
 func _drop_acid_pool() -> void:
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("gut_warden", "attack", 1.8, 0.8, 0.8)
+		_voice_cooldown = 4.0
 	var pool_script = load("res://scripts/snake_stage/fluid_pool.gd")
 	if not pool_script:
 		return
@@ -243,6 +254,9 @@ func stun(duration: float = 2.0) -> void:
 func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("gut_warden", "hurt", 1.8, 0.8, 0.8)
+		_voice_cooldown = 3.0
 	if phase == Phase.PATROL:
 		phase = Phase.ALERT
 		_phase_timer = 1.0
@@ -250,6 +264,7 @@ func take_damage(amount: float) -> void:
 		_die()
 
 func _die() -> void:
+	AudioManager.play_creature_voice("gut_warden", "death", 1.8, 0.8, 0.8)
 	died.emit(global_position)
 	defeated.emit()
 	queue_free()

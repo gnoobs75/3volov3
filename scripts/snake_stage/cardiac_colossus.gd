@@ -32,6 +32,7 @@ const GRAVITY: float = 20.0
 
 var _attack_cooldown: float = 0.0
 var _pulse_cooldown: float = 0.0
+var _voice_cooldown: float = 0.0
 var _summon_timer: float = 0.0
 var _minions_alive: int = 0
 
@@ -135,6 +136,7 @@ func _physics_process(delta: float) -> void:
 	_phase_timer -= delta
 	_attack_cooldown = maxf(_attack_cooldown - delta, 0.0)
 	_pulse_cooldown = maxf(_pulse_cooldown - delta, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 	_summon_timer += delta
 
 	var players: Array = get_tree().get_nodes_in_group("player_worm")
@@ -146,6 +148,9 @@ func _physics_process(delta: float) -> void:
 	if health / max_health <= 0.25 and phase != Phase.RAGE:
 		phase = Phase.RAGE
 		_phase_timer = 0.0
+		if _voice_cooldown <= 0:
+			AudioManager.play_creature_voice("cardiac_colossus", "attack", 2.0, 0.85, 0.7)
+			_voice_cooldown = 4.0
 
 	match phase:
 		Phase.PATROL:
@@ -244,6 +249,9 @@ func _update_visuals(delta: float) -> void:
 		_aura_light.light_energy = lerpf(_aura_light.light_energy, target_e, delta * 4.0)
 
 func _do_pulse_attack() -> void:
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("cardiac_colossus", "attack", 2.0, 0.85, 0.7)
+		_voice_cooldown = 4.0
 	for target in get_tree().get_nodes_in_group("player_worm"):
 		var dist: float = global_position.distance_to(target.global_position)
 		if dist < PULSE_RADIUS:
@@ -256,6 +264,9 @@ func _do_pulse_attack() -> void:
 				target.velocity += push * PULSE_KNOCKBACK * falloff
 
 func _summon_rbc_swarm() -> void:
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("cardiac_colossus", "attack", 2.0, 0.85, 0.7)
+		_voice_cooldown = 4.0
 	# Summon red blood cell swarm (uses WBC script as fast weak minions)
 	var wbc_script = load("res://scripts/snake_stage/white_blood_cell.gd")
 	for i in range(3):
@@ -283,6 +294,9 @@ func stun(duration: float = 2.0) -> void:
 func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("cardiac_colossus", "hurt", 2.0, 0.85, 0.7)
+		_voice_cooldown = 3.0
 	if phase == Phase.PATROL:
 		phase = Phase.ALERT
 		_phase_timer = 1.0
@@ -290,6 +304,7 @@ func take_damage(amount: float) -> void:
 		_die()
 
 func _die() -> void:
+	AudioManager.play_creature_voice("cardiac_colossus", "death", 2.0, 0.85, 0.7)
 	died.emit(global_position)
 	defeated.emit()
 	queue_free()

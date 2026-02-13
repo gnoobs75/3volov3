@@ -16,6 +16,7 @@ var health: float = 60.0
 var _vertical_velocity: float = 0.0
 var _stun_timer: float = 0.0
 var _attack_cooldown: float = 0.0
+var _voice_cooldown: float = 0.0
 var _damage_flash: float = 0.0
 
 # Detection
@@ -105,6 +106,7 @@ func _physics_process(delta: float) -> void:
 	_time += delta
 	_state_timer -= delta
 	_attack_cooldown = maxf(_attack_cooldown - delta, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 
 	var players: Array = get_tree().get_nodes_in_group("player_worm")
 	var player: Node3D = players[0] if players.size() > 0 else null
@@ -136,6 +138,9 @@ func _physics_process(delta: float) -> void:
 			if _state_timer <= 0:
 				if player and player_dist < detect_radius * 1.2:
 					state = State.CHASE
+					if _voice_cooldown <= 0.0 and AudioManager and AudioManager.has_method("play_creature_voice"):
+						AudioManager.play_creature_voice("phagocyte", "alert", 1.5, 0.7, 1.0)
+						_voice_cooldown = 3.0
 				else:
 					state = State.PATROL
 					_state_timer = randf_range(2.0, 4.0)
@@ -150,6 +155,9 @@ func _physics_process(delta: float) -> void:
 					_state_timer = ENGULF_DURATION
 					_engulf_target = player
 					_attack_cooldown = 5.0
+					if _voice_cooldown <= 0.0 and AudioManager and AudioManager.has_method("play_creature_voice"):
+						AudioManager.play_creature_voice("phagocyte", "alert", 1.5, 0.7, 1.0)
+						_voice_cooldown = 3.0
 				elif player_dist > detect_radius * 1.5:
 					state = State.PATROL
 					_state_timer = randf_range(2.0, 4.0)
@@ -230,11 +238,16 @@ func stun(duration: float = STUN_DURATION) -> void:
 func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
+	if _voice_cooldown <= 0.0 and AudioManager and AudioManager.has_method("play_creature_voice"):
+		AudioManager.play_creature_voice("phagocyte", "hurt", 1.5, 0.7, 1.0)
+		_voice_cooldown = 2.5
 	if state == State.PATROL:
 		state = State.CHASE
 	if health <= 0:
 		_die()
 
 func _die() -> void:
+	if AudioManager and AudioManager.has_method("play_creature_voice"):
+		AudioManager.play_creature_voice("phagocyte", "death", 1.5, 0.7, 1.0)
 	died.emit(global_position)
 	queue_free()

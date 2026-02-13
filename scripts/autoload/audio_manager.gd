@@ -111,6 +111,32 @@ var _buf_combat_percussion: PackedFloat32Array
 var _buf_boss_intro_sting: PackedFloat32Array
 var _combat_intensity: float = 0.0
 
+# Snake stage combat SFX
+var _buf_venom_spit: PackedFloat32Array
+var _buf_tail_whip: PackedFloat32Array
+var _buf_segment_grow: PackedFloat32Array
+
+# Golden card ability SFX
+var _buf_toxic_miasma: PackedFloat32Array
+var _buf_chain_lightning: PackedFloat32Array
+var _buf_regenerative_burst: PackedFloat32Array
+
+# Boss trait attack SFX
+var _buf_pulse_wave: PackedFloat32Array
+var _buf_acid_spit_muzzle: PackedFloat32Array
+var _buf_wind_gust: PackedFloat32Array
+var _buf_bone_shield: PackedFloat32Array
+var _buf_summon_minions: PackedFloat32Array
+
+# Cell stage ambient
+var _cell_ambient_player: AudioStreamPlayer = null
+
+# Creature vocalization cooldowns
+var _player_voice_cooldown: float = 0.0
+const PLAYER_VOICE_COOLDOWN_TIME: float = 3.0
+var _creature_voice_cooldown: float = 0.0
+const CREATURE_VOICE_COOLDOWN_TIME: float = 0.4  # Global throttle: max ~2.5 creature voices/sec
+
 # Beam looping state
 var _beam_playing: bool = false
 var _beam_player: AudioStreamPlayer
@@ -204,6 +230,23 @@ func _ready() -> void:
 	_buf_combat_percussion = SynthSounds.gen_combat_percussion()
 	_buf_boss_intro_sting = SynthSounds.gen_boss_intro_sting()
 
+	# Pre-generate snake stage combat SFX
+	_buf_venom_spit = SynthSounds.gen_venom_spit()
+	_buf_tail_whip = SynthSounds.gen_tail_whip()
+	_buf_segment_grow = SynthSounds.gen_segment_grow()
+
+	# Pre-generate golden card SFX
+	_buf_toxic_miasma = SynthSounds.gen_toxic_miasma()
+	_buf_chain_lightning = SynthSounds.gen_chain_lightning()
+	_buf_regenerative_burst = SynthSounds.gen_regenerative_burst()
+
+	# Pre-generate boss trait attack SFX
+	_buf_pulse_wave = SynthSounds.gen_pulse_wave()
+	_buf_acid_spit_muzzle = SynthSounds.gen_acid_spit_muzzle()
+	_buf_wind_gust = SynthSounds.gen_wind_gust()
+	_buf_bone_shield = SynthSounds.gen_bone_shield()
+	_buf_summon_minions = SynthSounds.gen_summon_minions()
+
 	# Setup music players for file-based music
 	_setup_music_players()
 
@@ -257,6 +300,11 @@ func _process(delta: float) -> void:
 	# Update observer cooldown
 	if _observer_cooldown > 0:
 		_observer_cooldown -= delta
+	# Update voice cooldowns
+	if _player_voice_cooldown > 0:
+		_player_voice_cooldown -= delta
+	if _creature_voice_cooldown > 0:
+		_creature_voice_cooldown -= delta
 
 func _update_crossfade(delta: float) -> void:
 	if not _is_crossfading:
@@ -712,3 +760,86 @@ func register_music_track(key: String, path: String) -> void:
 ## Get list of registered music keys
 func get_music_keys() -> Array:
 	return _music_tracks.keys()
+
+## === CREATURE VOCALIZATIONS ===
+
+## Play player organism voice (evolves with evolution level)
+func play_player_voice(type: String) -> void:
+	if _player_voice_cooldown > 0:
+		return
+	_player_voice_cooldown = PLAYER_VOICE_COOLDOWN_TIME
+	var evo: int = GameManager.evolution_level if GameManager else 0
+	var params: Dictionary = VoiceGenerator.get_player_voice_params(evo, type)
+	var buf := VoiceGenerator.gen_voice(params)
+	_play_buffer(buf, -4.0)
+
+## Play enemy creature voice (parameterized by species + runtime traits)
+func play_creature_voice(species_id: String, type: String, size: float = 1.0, aggro: float = 0.5, speed: float = 1.0) -> void:
+	if _creature_voice_cooldown > 0 and type != "death":
+		return  # Global throttle prevents audio pool saturation (death always plays)
+	_creature_voice_cooldown = CREATURE_VOICE_COOLDOWN_TIME
+	var params: Dictionary = VoiceGenerator.get_species_voice_params(species_id, type, size, aggro, speed)
+	var buf := VoiceGenerator.gen_voice(params)
+	_play_buffer(buf, -5.0)
+
+## Play voice preview for codex UI (bypasses cooldown)
+func play_voice_preview(species_id: String, voice_type: String) -> void:
+	var params: Dictionary = VoiceGenerator.get_species_voice_params(species_id, voice_type, 1.0, 0.5, 1.0)
+	var buf := VoiceGenerator.gen_voice(params)
+	_play_buffer(buf, -3.0)
+
+## === SNAKE STAGE COMBAT SFX ===
+
+func play_venom_spit() -> void:
+	_play_buffer(_buf_venom_spit, -3.0)
+
+func play_tail_whip() -> void:
+	_play_buffer(_buf_tail_whip, -2.0)
+
+func play_segment_grow() -> void:
+	_play_buffer(_buf_segment_grow, -4.0)
+
+## === GOLDEN CARD ABILITIES ===
+
+func play_toxic_miasma() -> void:
+	_play_buffer(_buf_toxic_miasma, -1.0)
+
+func play_chain_lightning() -> void:
+	_play_buffer(_buf_chain_lightning, 0.0)
+
+func play_regenerative_burst() -> void:
+	_play_buffer(_buf_regenerative_burst, -2.0)
+
+## === BOSS TRAIT ATTACKS ===
+
+func play_pulse_wave() -> void:
+	_play_buffer(_buf_pulse_wave, -1.0)
+
+func play_acid_spit_muzzle() -> void:
+	_play_buffer(_buf_acid_spit_muzzle, -2.0)
+
+func play_wind_gust() -> void:
+	_play_buffer(_buf_wind_gust, -3.0)
+
+func play_bone_shield() -> void:
+	_play_buffer(_buf_bone_shield, -2.0)
+
+func play_summon_minions() -> void:
+	_play_buffer(_buf_summon_minions, -3.0)
+
+## === CELL STAGE AMBIENT ===
+
+func start_cell_ambient() -> void:
+	if _cell_ambient_player:
+		return
+	_cell_ambient_player = AmbientSoundscape.create_cell_ambient(self)
+
+func stop_cell_ambient() -> void:
+	if _cell_ambient_player:
+		_cell_ambient_player.stop()
+		_cell_ambient_player.queue_free()
+		_cell_ambient_player = null
+	# Also clean up the driver node
+	var driver = get_node_or_null("CellAmbientDriver")
+	if driver:
+		driver.queue_free()

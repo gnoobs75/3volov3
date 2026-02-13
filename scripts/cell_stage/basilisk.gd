@@ -23,6 +23,7 @@ var _patrol_target: Vector2 = Vector2.ZERO
 var _aim_timer: float = 0.0
 var _fire_cooldown: float = 0.0
 var _turn_speed: float = 1.2  # Radians per second — slow turner
+var _voice_cooldown: float = 0.0
 
 const FIRE_BURST_COUNT: int = 3
 const FIRE_INTERVAL: float = 0.3
@@ -82,6 +83,7 @@ func _physics_process(delta: float) -> void:
 	_damage_flash = maxf(_damage_flash - delta * 3.0, 0.0)
 	_rear_hit_flash = maxf(_rear_hit_flash - delta * 4.0, 0.0)
 	_fire_cooldown = maxf(_fire_cooldown - delta, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 	# Move active spine projectiles
 	for i in range(_active_spines.size() - 1, -1, -1):
 		var proj: Node2D = _active_spines[i]
@@ -142,6 +144,9 @@ func _do_idle(delta: float, player: Node2D) -> void:
 	if player and global_position.distance_to(player.global_position) < detection_range:
 		state = State.AIM
 		_aim_timer = 1.5
+		if _voice_cooldown <= 0.0:
+			AudioManager.play_creature_voice("basilisk", "alert", 1.3, 0.7, 1.0)
+			_voice_cooldown = 3.0
 
 func _do_patrol(delta: float) -> void:
 	if global_position.distance_to(_patrol_target) < 40:
@@ -153,6 +158,9 @@ func _do_patrol(delta: float) -> void:
 		if global_position.distance_to(_current_target.global_position) < detection_range:
 			state = State.AIM
 			_aim_timer = 1.5
+			if _voice_cooldown <= 0.0:
+				AudioManager.play_creature_voice("basilisk", "alert", 1.3, 0.7, 1.0)
+				_voice_cooldown = 3.0
 
 func _do_aim(delta: float) -> void:
 	_aim_timer -= delta
@@ -449,6 +457,9 @@ func take_damage(amount: float, attacker_pos: Vector2 = Vector2.ZERO) -> void:
 		_damage_flash = 1.0
 		_rear_hit_flash = 1.0
 		AudioManager.play_hurt()
+		if _voice_cooldown <= 0.0:
+			AudioManager.play_creature_voice("basilisk", "hurt", 1.3, 0.7, 1.0)
+			_voice_cooldown = 2.5
 		state = State.WEAKENED
 		_state_timer = 1.5
 	else:
@@ -466,6 +477,9 @@ func take_damage_from_behind(amount: float) -> void:
 	_damage_flash = 1.0
 	_rear_hit_flash = 1.0
 	AudioManager.play_hurt()
+	if _voice_cooldown <= 0.0:
+		AudioManager.play_creature_voice("basilisk", "hurt", 1.3, 0.7, 1.0)
+		_voice_cooldown = 2.5
 	state = State.WEAKENED
 	_state_timer = 1.5
 	if health <= 0:
@@ -473,6 +487,7 @@ func take_damage_from_behind(amount: float) -> void:
 		_state_timer = 2.0
 
 func _die() -> void:
+	AudioManager.play_creature_voice("basilisk", "death", 1.3, 0.7, 1.0)
 	var manager := get_tree().get_first_node_in_group("cell_stage_manager")
 	if manager and manager.has_method("spawn_death_nutrients"):
 		manager.spawn_death_nutrients(global_position, randi_range(15, 22), _spine_color)

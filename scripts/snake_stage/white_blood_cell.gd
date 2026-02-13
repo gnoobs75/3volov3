@@ -25,6 +25,7 @@ const GRAVITY: float = 20.0
 var _vertical_velocity: float = 0.0
 var _stun_timer: float = 0.0
 var _attack_cooldown: float = 0.0
+var _voice_cooldown: float = 0.0
 var _alert_target_pos: Vector3 = Vector3.ZERO
 
 # Visual refs
@@ -274,6 +275,7 @@ func _physics_process(delta: float) -> void:
 	_time += delta
 	_state_timer -= delta
 	_attack_cooldown = maxf(_attack_cooldown - delta, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 
 	# Find player
 	var players: Array = get_tree().get_nodes_in_group("player_worm")
@@ -315,6 +317,9 @@ func _physics_process(delta: float) -> void:
 					state = State.CHASE
 					if AudioManager and AudioManager.has_method("play_wbc_alert"):
 						AudioManager.play_wbc_alert()
+					if _voice_cooldown <= 0.0 and AudioManager and AudioManager.has_method("play_creature_voice"):
+						AudioManager.play_creature_voice("white_blood_cell", "alert", 1.0, 0.7, 1.0)
+						_voice_cooldown = 3.0
 				else:
 					state = State.PATROL
 					_state_timer = randf_range(2.0, 4.0)
@@ -490,11 +495,16 @@ signal died(pos: Vector3)
 func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
+	if _voice_cooldown <= 0.0 and AudioManager and AudioManager.has_method("play_creature_voice"):
+		AudioManager.play_creature_voice("white_blood_cell", "hurt", 1.0, 0.7, 1.0)
+		_voice_cooldown = 2.5
 	if state != State.STUNNED:
 		state = State.CHASE  # Getting hit makes them aggressive
 	if health <= 0:
 		_die()
 
 func _die() -> void:
+	if AudioManager and AudioManager.has_method("play_creature_voice"):
+		AudioManager.play_creature_voice("white_blood_cell", "death", 1.0, 0.7, 1.0)
 	died.emit(global_position)
 	queue_free()

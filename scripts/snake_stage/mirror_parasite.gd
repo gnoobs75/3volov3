@@ -31,6 +31,7 @@ const ATTACK_DAMAGE: float = 15.0
 const GRAVITY: float = 20.0
 
 var _attack_cooldown: float = 0.0
+var _voice_cooldown: float = 0.0
 var _trait_cooldowns: Dictionary = {
 	"pulse_wave": 0.0,
 	"acid_spit": 0.0,
@@ -138,6 +139,7 @@ func _physics_process(delta: float) -> void:
 	_time += delta
 	_phase_timer -= delta
 	_attack_cooldown = maxf(_attack_cooldown - delta, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 	for key in _trait_cooldowns:
 		_trait_cooldowns[key] = maxf(_trait_cooldowns[key] - delta, 0.0)
 
@@ -156,6 +158,9 @@ func _physics_process(delta: float) -> void:
 
 	if health / max_health <= 0.3 and phase != Phase.RAGE:
 		phase = Phase.RAGE
+		if _voice_cooldown <= 0:
+			AudioManager.play_creature_voice("mirror_parasite", "attack", 1.5, 1.0, 1.2)
+			_voice_cooldown = 4.0
 
 	match phase:
 		Phase.STALK:
@@ -166,6 +171,9 @@ func _physics_process(delta: float) -> void:
 			if player and player_dist < DETECT_RADIUS * 0.5:
 				phase = Phase.FIGHT
 				_phase_timer = 0.0
+				if _voice_cooldown <= 0:
+					AudioManager.play_creature_voice("mirror_parasite", "attack", 1.5, 1.0, 1.2)
+					_voice_cooldown = 4.0
 
 		Phase.FIGHT:
 			_speed = lerpf(_speed, CHASE_SPEED, delta * 3.0)
@@ -237,6 +245,9 @@ func _use_traits(player: Node3D, dist: float) -> void:
 		_trait_cooldowns["summon_minions"] = 20.0 * cd_mult
 
 func _do_pulse_wave() -> void:
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("mirror_parasite", "attack", 1.5, 1.0, 1.2)
+		_voice_cooldown = 4.0
 	for target in get_tree().get_nodes_in_group("player_worm"):
 		var dist: float = global_position.distance_to(target.global_position)
 		if dist < 12.0:
@@ -249,6 +260,9 @@ func _do_pulse_wave() -> void:
 				target.velocity += push * 15.0 * falloff
 
 func _do_acid_spit(player: Node3D) -> void:
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("mirror_parasite", "attack", 1.5, 1.0, 1.2)
+		_voice_cooldown = 4.0
 	var proj_script = load("res://scripts/snake_stage/acid_projectile.gd")
 	if not proj_script:
 		return
@@ -328,12 +342,16 @@ func take_damage(amount: float) -> void:
 		return
 	health -= amount
 	_damage_flash = 1.0
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("mirror_parasite", "hurt", 1.5, 1.0, 1.2)
+		_voice_cooldown = 3.0
 	if phase == Phase.STALK:
 		phase = Phase.FIGHT
 	if health <= 0:
 		_die()
 
 func _die() -> void:
+	AudioManager.play_creature_voice("mirror_parasite", "death", 1.5, 1.0, 1.2)
 	died.emit(global_position)
 	defeated.emit()
 	queue_free()

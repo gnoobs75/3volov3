@@ -144,6 +144,9 @@ var _eye_shake: Vector2 = Vector2.ZERO
 var _sweat_drop_y: float = 0.0
 var _spiral_angle: float = 0.0  # For sick/confused spiral eyes
 
+# Creature vocalization
+var _idle_voice_timer: float = 3.0  # Delay before first idle vocalization
+
 func _ready() -> void:
 	_apply_gene_traits()
 	_apply_mutation_stats()
@@ -343,6 +346,12 @@ func _physics_process(delta: float) -> void:
 	elif not _beam_active and _was_beaming:
 		AudioManager.stop_beam()
 	_was_beaming = _beam_active
+
+	# Creature idle vocalizations (evolve with evolution level)
+	_idle_voice_timer -= delta
+	if _idle_voice_timer <= 0:
+		_idle_voice_timer = randf_range(4.0, 8.0)
+		AudioManager.play_player_voice("idle")
 
 	queue_redraw()
 
@@ -960,11 +969,13 @@ func take_damage(amount: float) -> void:
 	_damage_flash = 1.0
 	_set_mood(Mood.HURT, 0.6)
 	AudioManager.play_hurt()
+	AudioManager.play_player_voice("hurt")
 	if camera and camera.has_method("shake"):
 		camera.shake(clampf(amount * 0.4, 2.0, 8.0), 0.25)
 	damaged.emit(amount)
 	if health <= 0:
 		AudioManager.play_death()
+		AudioManager.play_player_voice("death")
 		if camera and camera.has_method("shake"):
 			camera.shake(12.0, 0.5)
 		died.emit()
@@ -2007,11 +2018,14 @@ func _try_golden_ability() -> void:
 	match card.get("effect_type", ""):
 		"flee":
 			_execute_poison_cloud(card)
+			AudioManager.play_toxic_miasma()
 		"stun":
 			_execute_electric_shock(card)
+			AudioManager.play_chain_lightning()
 		"heal":
 			_execute_healing_aura(card)
-	AudioManager.play_evolution_fanfare()
+			AudioManager.play_regenerative_burst()
+	AudioManager.play_player_voice("attack")
 
 func _execute_poison_cloud(card: Dictionary) -> void:
 	var radius: float = card.get("aoe_radius", 150.0)

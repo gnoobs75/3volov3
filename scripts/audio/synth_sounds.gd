@@ -991,3 +991,276 @@ static func gen_creature_echolocation() -> PackedFloat32Array:
 		var s: float = sin(t * freq * TAU) * click
 		buf[i] = s * 0.3
 	return buf
+
+## === SNAKE STAGE COMBAT SFX ===
+
+## Venom spit: wet toxic spray with rising hiss
+static func gen_venom_spit() -> PackedFloat32Array:
+	var dur: float = 0.4
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.01, 0.06, 0.4, 0.2, dur)
+		# Rising hiss
+		var freq: float = lerpf(150.0, 500.0, t / dur) + sin(t * 40.0) * 30.0
+		phase += freq / SAMPLE_RATE
+		# Wet sizzle: noise + tone
+		var s: float = sine(phase) * 0.3 + noise() * 0.25 * env
+		# Liquid modulation
+		s *= 0.7 + 0.3 * sin(t * 25.0)
+		buf[i] = s * env * 0.5
+	return buf
+
+## Tail whip: whooshing arc sweep with Doppler-like pitch shift
+static func gen_tail_whip() -> PackedFloat32Array:
+	var dur: float = 0.5
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Build-up then peak then decay (arc shape)
+		var arc: float = sin(t / dur * PI)
+		var env: float = arc * arc * 0.6
+		# Doppler: freq rises then falls
+		var freq: float = 200.0 + arc * 400.0
+		phase += freq / SAMPLE_RATE
+		# Whoosh: filtered noise + low tone
+		var s: float = noise() * 0.4 * env + sine(phase) * 0.15 * env
+		# Impact transient at peak
+		if t > dur * 0.35 and t < dur * 0.5:
+			var impact_t: float = (t - dur * 0.35) / (dur * 0.15)
+			s += noise() * 0.3 * exp(-impact_t * 8.0)
+		buf[i] = s * 0.5
+	return buf
+
+## Segment grow: organic stretching rumble with wet crackle
+static func gen_segment_grow() -> PackedFloat32Array:
+	var dur: float = 0.6
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.05, 0.1, 0.5, 0.3, dur)
+		# Low stretching rumble
+		var freq: float = 70.0 + sin(t * 8.0) * 15.0
+		phase += freq / SAMPLE_RATE
+		var s: float = sine(phase) * 0.4 + triangle(phase * 2.0) * 0.1
+		# Crackle overlay (sparse noise pops)
+		if randf() < 0.15:
+			s += noise() * 0.2 * env
+		# Rising tone for "growth" feel
+		s += sine(t * lerpf(200.0, 400.0, t / dur)) * 0.06 * env
+		buf[i] = s * env * 0.5
+	return buf
+
+## === GOLDEN CARD ABILITIES ===
+
+## Toxic miasma: expanding poison cloud — bubbling hiss + menacing drone
+static func gen_toxic_miasma() -> PackedFloat32Array:
+	var dur: float = 1.0
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.05, 0.15, 0.5, 0.4, dur)
+		# Menacing low drone
+		var freq: float = 80.0 + sin(t * 3.0) * 10.0
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 1.33) / SAMPLE_RATE  # Minor third
+		var s: float = sine(phase) * 0.3 + sine(phase2) * 0.15
+		# Bubbling hiss
+		var bubble_rate: float = 15.0 + t / dur * 10.0
+		s += noise() * 0.2 * env * (0.5 + 0.5 * sin(t * bubble_rate))
+		# Sizzle
+		s += noise() * 0.08 * env
+		buf[i] = s * env * 0.5
+	return buf
+
+## Chain lightning: crackling electrical arc with decay
+static func gen_chain_lightning() -> PackedFloat32Array:
+	var dur: float = 0.7
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Sharp initial crack then sizzling decay
+		var env: float = exp(-t * 4.0) * 0.7
+		# Multiple arcs: 3 bursts
+		var burst1: float = exp(-t * 20.0)
+		var burst2: float = exp(-(t - 0.15) * 20.0) * 0.6 if t > 0.15 else 0.0
+		var burst3: float = exp(-(t - 0.35) * 15.0) * 0.4 if t > 0.35 else 0.0
+		var bursts: float = burst1 + burst2 + burst3
+		# High frequency zap
+		var zap_freq: float = lerpf(6000.0, 1000.0, t / dur)
+		phase += zap_freq / SAMPLE_RATE
+		var s: float = sine(phase) * 0.2 * bursts
+		# Crackling noise
+		s += noise() * 0.4 * bursts
+		# Low bass thud on initial
+		s += sine(t * 60.0) * 0.3 * exp(-t * 10.0)
+		# Sizzle tail
+		s += noise() * 0.06 * env
+		buf[i] = s * 0.6
+	return buf
+
+## Regenerative burst: healing chime — ascending shimmer with warmth
+static func gen_regenerative_burst() -> PackedFloat32Array:
+	var dur: float = 0.8
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	var phase3: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.05, 0.1, 0.6, 0.3, dur)
+		# Warm ascending tone
+		var freq: float = lerpf(300.0, 600.0, t / dur)
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 1.5) / SAMPLE_RATE  # Perfect fifth
+		phase3 += (freq * 2.0) / SAMPLE_RATE  # Octave
+		var s: float = sine(phase) * 0.3 + sine(phase2) * 0.15 + sine(phase3) * 0.08
+		# Sparkle overlay in upper register
+		if t > 0.2:
+			var sparkle_env: float = (t - 0.2) / (dur - 0.2) * env
+			s += sine(t * 2400.0) * 0.04 * sparkle_env * (0.5 + 0.5 * sin(t * 8.0))
+		buf[i] = s * env * 0.5
+	return buf
+
+## === BOSS TRAIT ATTACK SFX ===
+
+## Pulse wave: expanding torus ring — deep bass thump with overtone ring
+static func gen_pulse_wave() -> PackedFloat32Array:
+	var dur: float = 0.8
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Massive bass impact
+		var impact: float = exp(-t * 8.0) * 0.7
+		var freq: float = lerpf(80.0, 35.0, minf(t * 3.0, 1.0))
+		phase += freq / SAMPLE_RATE
+		var s: float = sine(phase) * impact
+		# Sub-bass
+		s += sine(t * 25.0) * 0.3 * impact
+		# Overtone ring (sustained after impact)
+		var ring_env: float = adsr(t, 0.01, 0.1, 0.3, 0.4, dur)
+		s += sine(t * 220.0) * 0.1 * ring_env
+		s += sine(t * 330.0) * 0.05 * ring_env
+		# Noise burst on attack
+		s += noise() * 0.4 * exp(-t * 15.0)
+		buf[i] = s * 0.6
+	return buf
+
+## Acid spit: charge-up whine then sizzle release
+static func gen_acid_spit_muzzle() -> PackedFloat32Array:
+	var dur: float = 0.5
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.02, 0.05, 0.5, 0.2, dur)
+		# Rising whine then descend
+		var freq: float
+		if t < dur * 0.4:
+			freq = lerpf(200.0, 800.0, t / (dur * 0.4))
+		else:
+			freq = lerpf(800.0, 300.0, (t - dur * 0.4) / (dur * 0.6))
+		phase += freq / SAMPLE_RATE
+		var s: float = sine(phase) * 0.3 + sawtooth(phase * 0.5) * 0.1
+		# Sizzle noise after peak
+		if t > dur * 0.3:
+			s += noise() * 0.2 * env
+		buf[i] = s * env * 0.5
+	return buf
+
+## Wind gust: powerful exhale — broad noise sweep
+static func gen_wind_gust() -> PackedFloat32Array:
+	var dur: float = 0.6
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var prev: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.03, 0.1, 0.5, 0.3, dur)
+		# Wind: filtered noise with sweeping cutoff
+		var raw: float = noise()
+		# Lowpass blend changes over time (opens up then closes)
+		var cutoff: float = 0.3 + sin(t / dur * PI) * 0.5
+		var filtered: float = raw * (1.0 - cutoff) + prev * cutoff
+		prev = filtered
+		var s: float = filtered * 0.5 * env
+		# Low whoosh tone
+		s += sine(t * lerpf(100.0, 60.0, t / dur)) * 0.12 * env
+		buf[i] = s * 0.5
+	return buf
+
+## Bone shield: crystalline barrier clang with shimmer
+static func gen_bone_shield() -> PackedFloat32Array:
+	var dur: float = 0.5
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	var phase3: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Sharp metallic clang
+		var clang: float = exp(-t * 10.0) * 0.5
+		phase += 880.0 / SAMPLE_RATE
+		phase2 += 1320.0 / SAMPLE_RATE  # Fifth above
+		phase3 += 2200.0 / SAMPLE_RATE  # High partial
+		var s: float = sine(phase) * clang + sine(phase2) * clang * 0.4 + sine(phase3) * clang * 0.15
+		# Shimmer after clang
+		var shimmer_env: float = adsr(t, 0.1, 0.1, 0.4, 0.2, dur)
+		s += sine(t * 1760.0) * 0.06 * shimmer_env * (0.5 + 0.5 * sin(t * 6.0))
+		# Impact thud
+		s += sine(t * 80.0) * 0.2 * exp(-t * 20.0)
+		buf[i] = s * 0.6
+	return buf
+
+## Summon minions: dark warble with rising portal energy
+static func gen_summon_minions() -> PackedFloat32Array:
+	var dur: float = 0.9
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	var phase2: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.1, 0.15, 0.5, 0.3, dur)
+		# Dark warbling base
+		var freq: float = 100.0 + sin(t * 8.0) * 30.0
+		phase += freq / SAMPLE_RATE
+		phase2 += (freq * 1.06) / SAMPLE_RATE  # Minor second = dissonance
+		var s: float = sine(phase) * 0.3 + sine(phase2) * 0.2
+		# Rising portal energy
+		var rise_freq: float = lerpf(200.0, 800.0, t / dur)
+		s += sine(t * rise_freq) * 0.1 * env * (t / dur)
+		# Swirling texture
+		s += triangle(t * 150.0 + sin(t * 5.0) * 3.0) * 0.06 * env
+		# Dark burst at midpoint
+		if t > dur * 0.4 and t < dur * 0.6:
+			s += noise() * 0.15 * env
+		buf[i] = s * env * 0.5
+	return buf

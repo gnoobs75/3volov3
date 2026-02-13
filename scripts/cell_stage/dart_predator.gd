@@ -21,6 +21,7 @@ var _stalk_timer: float = 0.0
 var _lunge_timer: float = 0.0
 var _recover_timer: float = 0.0
 var _attack_cooldown: float = 0.0
+var _voice_cooldown: float = 0.0
 
 # Movement
 var _patrol_target: Vector2 = Vector2.ZERO
@@ -68,6 +69,7 @@ func _physics_process(delta: float) -> void:
 	_time += delta
 	_attack_cooldown = maxf(_attack_cooldown - delta, 0.0)
 	_damage_flash = maxf(_damage_flash - delta * 4.0, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 
 	# Blink timer
 	_blink_timer -= delta
@@ -112,6 +114,9 @@ func _physics_process(delta: float) -> void:
 			if _current_target and best_dist < detection_range:
 				state = State.STALK
 				_stalk_timer = randf_range(0.8, 1.5)
+				if _voice_cooldown <= 0.0:
+					AudioManager.play_creature_voice("dart_predator", "alert", 0.9, 0.6, 1.5)
+					_voice_cooldown = 3.0
 		State.STALK:
 			_do_stalk(delta)
 		State.LUNGE:
@@ -389,6 +394,9 @@ func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
 	AudioManager.play_hurt()
+	if _voice_cooldown <= 0.0:
+		AudioManager.play_creature_voice("dart_predator", "hurt", 0.9, 0.6, 1.5)
+		_voice_cooldown = 2.5
 
 	# Interrupt lunge on hit
 	if state == State.LUNGE:
@@ -399,6 +407,7 @@ func take_damage(amount: float) -> void:
 		_die()
 
 func _die() -> void:
+	AudioManager.play_creature_voice("dart_predator", "death", 0.9, 0.6, 1.5)
 	var manager := get_tree().get_first_node_in_group("cell_stage_manager")
 	if manager and manager.has_method("spawn_death_nutrients"):
 		manager.spawn_death_nutrients(global_position, randi_range(4, 7), _accent_color)

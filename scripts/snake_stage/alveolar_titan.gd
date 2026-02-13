@@ -34,6 +34,7 @@ const GRAVITY: float = 20.0
 var _attack_cooldown: float = 0.0
 var _gust_cooldown: float = 0.0
 var _bubble_cooldown: float = 0.0
+var _voice_cooldown: float = 0.0
 
 var _body_mesh: MeshInstance3D = null
 var _body_mat: StandardMaterial3D = null
@@ -111,6 +112,7 @@ func _physics_process(delta: float) -> void:
 	_attack_cooldown = maxf(_attack_cooldown - delta, 0.0)
 	_gust_cooldown = maxf(_gust_cooldown - delta, 0.0)
 	_bubble_cooldown = maxf(_bubble_cooldown - delta, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 
 	var players: Array = get_tree().get_nodes_in_group("player_worm")
 	var player: Node3D = players[0] if players.size() > 0 else null
@@ -120,6 +122,9 @@ func _physics_process(delta: float) -> void:
 
 	if health / max_health <= 0.25 and phase != Phase.RAGE:
 		phase = Phase.RAGE
+		if _voice_cooldown <= 0:
+			AudioManager.play_creature_voice("alveolar_titan", "attack", 1.8, 0.8, 0.9)
+			_voice_cooldown = 4.0
 
 	match phase:
 		Phase.PATROL:
@@ -212,6 +217,9 @@ func _update_visuals(delta: float) -> void:
 		sac.scale = Vector3.ONE * sac_pulse
 
 func _do_wind_gust() -> void:
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("alveolar_titan", "attack", 1.8, 0.8, 0.9)
+		_voice_cooldown = 4.0
 	for target in get_tree().get_nodes_in_group("player_worm"):
 		var dist: float = global_position.distance_to(target.global_position)
 		if dist < GUST_RADIUS:
@@ -224,6 +232,9 @@ func _do_wind_gust() -> void:
 				target.velocity += push * GUST_KNOCKBACK * falloff
 
 func _spawn_bubble_trap() -> void:
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("alveolar_titan", "attack", 1.8, 0.8, 0.9)
+		_voice_cooldown = 4.0
 	# Oxygen bubble: slowing hazard area
 	var pool_script = load("res://scripts/snake_stage/fluid_pool.gd")
 	if not pool_script:
@@ -245,6 +256,9 @@ func stun(duration: float = 2.0) -> void:
 func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("alveolar_titan", "hurt", 1.8, 0.8, 0.9)
+		_voice_cooldown = 3.0
 	if phase == Phase.PATROL:
 		phase = Phase.ALERT
 		_phase_timer = 1.0
@@ -252,6 +266,7 @@ func take_damage(amount: float) -> void:
 		_die()
 
 func _die() -> void:
+	AudioManager.play_creature_voice("alveolar_titan", "death", 1.8, 0.8, 0.9)
 	died.emit(global_position)
 	defeated.emit()
 	queue_free()

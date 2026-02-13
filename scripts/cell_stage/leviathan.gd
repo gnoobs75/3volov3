@@ -23,6 +23,7 @@ var _inhale_timer: float = 0.0
 var _chomp_timer: float = 0.0
 var _stun_timer: float = 0.0
 var _attack_cooldown: float = 0.0
+var _voice_cooldown: float = 0.0
 
 # Movement
 var _drift_target: Vector2 = Vector2.ZERO
@@ -80,6 +81,7 @@ func _init_shape() -> void:
 func _physics_process(delta: float) -> void:
 	_time += delta
 	_attack_cooldown = maxf(_attack_cooldown - delta, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 	_damage_flash = maxf(_damage_flash - delta * 3.0, 0.0)
 
 	# Blink timer
@@ -127,6 +129,9 @@ func _physics_process(delta: float) -> void:
 			if _current_target and best_dist < detection_range:
 				state = State.APPROACH
 				_approach_timer = 0.0
+				if _voice_cooldown <= 0.0:
+					AudioManager.play_creature_voice("leviathan", "alert", 2.0, 0.9, 0.7)
+					_voice_cooldown = 3.0
 		State.APPROACH:
 			_do_approach(delta)
 		State.INHALE:
@@ -525,6 +530,9 @@ func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
 	AudioManager.play_hurt()
+	if _voice_cooldown <= 0.0:
+		AudioManager.play_creature_voice("leviathan", "hurt", 2.0, 0.9, 0.7)
+		_voice_cooldown = 2.5
 
 	# Leviathans get stunned when hit hard
 	if amount > 15 and state in [State.INHALE, State.CHOMP]:
@@ -535,6 +543,7 @@ func take_damage(amount: float) -> void:
 		_die()
 
 func _die() -> void:
+	AudioManager.play_creature_voice("leviathan", "death", 2.0, 0.9, 0.7)
 	var manager := get_tree().get_first_node_in_group("cell_stage_manager")
 	if manager and manager.has_method("spawn_death_nutrients"):
 		# Lots of loot from a leviathan

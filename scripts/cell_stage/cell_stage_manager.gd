@@ -140,6 +140,9 @@ func _ready() -> void:
 	if player.has_signal("biomolecule_category_collected"):
 		player.biomolecule_category_collected.connect(on_biomolecule_collected)
 
+	# Start cell stage ambient soundscape
+	AudioManager.start_cell_ambient()
+
 	# Initialize world event timer
 	_world_event_timer = randf_range(60.0, 90.0)  # First event after 1-1.5 min
 
@@ -699,6 +702,7 @@ func _on_cell_stage_won() -> void:
 	# Transition after displaying stats
 	await get_tree().create_timer(8.0).timeout
 	_victory_active = false
+	AudioManager.stop_cell_ambient()
 	GameManager.go_to_ocean_stub()
 
 func _on_player_died() -> void:

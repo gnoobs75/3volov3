@@ -28,6 +28,7 @@ const REPELLER_STRIP_RANGE: float = 70.0  # How close to anemone to lose a plate
 # Chase mechanics
 var _charge_accel: float = 0.0  # Builds up during charge for increasing speed
 var _wall_stun_timer: float = 0.0
+var _voice_cooldown: float = 0.0
 
 # Kin assistance
 var _kin_attack_cooldown: float = 0.0
@@ -72,6 +73,7 @@ func _physics_process(delta: float) -> void:
 	_damage_flash = maxf(_damage_flash - delta * 3.0, 0.0)
 	_armor_flash = maxf(_armor_flash - delta * 3.0, 0.0)
 	_kin_attack_cooldown = maxf(_kin_attack_cooldown - delta, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 
 	_blink_timer -= delta
 	if _blink_timer <= 0:
@@ -118,6 +120,9 @@ func _do_idle(delta: float, player: Node2D) -> void:
 	if player and global_position.distance_to(player.global_position) < detection_range:
 		state = State.CHARGE
 		_charge_accel = 0.0
+		if _voice_cooldown <= 0.0:
+			AudioManager.play_creature_voice("juggernaut", "alert", 1.8, 0.8, 0.7)
+			_voice_cooldown = 3.0
 
 func _do_charge(delta: float) -> void:
 	if not _current_target or not is_instance_valid(_current_target):
@@ -161,6 +166,9 @@ func _do_recover(delta: float) -> void:
 		else:
 			state = State.CHARGE
 			_charge_accel = 0.0
+			if _voice_cooldown <= 0.0:
+				AudioManager.play_creature_voice("juggernaut", "alert", 1.8, 0.8, 0.7)
+				_voice_cooldown = 3.0
 
 func _do_dying(delta: float) -> void:
 	_state_timer -= delta
@@ -361,10 +369,14 @@ func _draw_face() -> void:
 func take_damage(_amount: float) -> void:
 	# Juggernaut is immune to direct damage
 	_damage_flash = 0.3
+	if _voice_cooldown <= 0.0:
+		AudioManager.play_creature_voice("juggernaut", "hurt", 1.8, 0.8, 0.7)
+		_voice_cooldown = 2.5
 	# But it gets angrier (speeds up slightly)
 	_charge_accel = minf(_charge_accel + 0.1, 1.0)
 
 func _die() -> void:
+	AudioManager.play_creature_voice("juggernaut", "death", 1.8, 0.8, 0.7)
 	var manager := get_tree().get_first_node_in_group("cell_stage_manager")
 	if manager and manager.has_method("spawn_death_nutrients"):
 		manager.spawn_death_nutrients(global_position, randi_range(15, 20), _armor_color)

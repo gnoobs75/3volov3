@@ -21,6 +21,7 @@ var _wander_target: Vector2 = Vector2.ZERO
 var _wander_timer: float = 0.0
 var _confused_timer: float = 0.0
 var _attack_cooldown: float = 0.0
+var _voice_cooldown: float = 0.0
 
 # Procedural graphics
 var _cell_radius: float = 16.0
@@ -68,6 +69,7 @@ func setup_generation(gen: int, color: Color) -> void:
 func _physics_process(delta: float) -> void:
 	_time += delta
 	_attack_cooldown = maxf(_attack_cooldown - delta, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 	_damage_flash = maxf(_damage_flash - delta * 4.0, 0.0)
 	_split_flash = maxf(_split_flash - delta * 2.0, 0.0)
 
@@ -98,6 +100,9 @@ func _physics_process(delta: float) -> void:
 			if health_ratio < 0.3:
 				state = State.FLEE
 			elif dist < detection_range:
+				if state != State.PURSUE and _voice_cooldown <= 0.0:
+					AudioManager.play_creature_voice("splitter_cell", "alert", 1.0, 0.4, 1.0)
+					_voice_cooldown = 3.0
 				state = State.PURSUE
 			else:
 				state = State.WANDER
@@ -267,10 +272,14 @@ func _draw_face(color: Color) -> void:
 func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
+	if _voice_cooldown <= 0.0:
+		AudioManager.play_creature_voice("splitter_cell", "hurt", 1.0, 0.4, 1.0)
+		_voice_cooldown = 2.5
 	if health <= 0:
 		_die()
 
 func _die() -> void:
+	AudioManager.play_creature_voice("splitter_cell", "death", 1.0, 0.4, 1.0)
 	if generation < MAX_GENERATION:
 		# SPLIT: spawn 2 smaller copies
 		_spawn_children()

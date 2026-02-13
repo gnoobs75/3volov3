@@ -1299,13 +1299,13 @@ func _draw_golden_card(vp: Vector2, font: Font) -> void:
 	if GameManager.equipped_golden_card != "":
 		var prev_card: Dictionary = GoldenCardData.get_card_by_id(GameManager.equipped_golden_card)
 		if not prev_card.is_empty():
-			var replace_str := "Replaces: " + prev_card.get("name", "Unknown")
+			var replace_str: String = "Replaces: " + prev_card.get("name", "Unknown")
 			var rs := font.get_string_size(replace_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 8)
 			_card_draw.draw_string(font, Vector2(cx - rs.x * 0.5, cy + CARD_HEIGHT - 18.0), replace_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(1.0, 0.5, 0.3, card_a * 0.6))
 
 	# Sparkle particles
 	for gs in _golden_sparkles:
-		var sp := gs.pos
+		var sp: Vector2 = gs.pos
 		var sa: float = gs.life * 0.8
 		var sr: float = 2.0 + sin(gs.angle) * 1.0
 		_card_draw.draw_circle(sp, sr, Color(1.0, 0.95, 0.5, sa * card_a))

@@ -17,6 +17,7 @@ var _time: float = 0.0
 var _state_timer: float = 0.0
 var _current_target: Node2D = null
 var _damage_flash: float = 0.0
+var _voice_cooldown: float = 0.0
 
 # Eye system
 var _eyes: Array = []  # [{angle, dist, size, alive, wobble_phase, blink_timer, is_blinking, detach_progress}]
@@ -145,6 +146,7 @@ func _remove_eye(idx: int) -> void:
 func _physics_process(delta: float) -> void:
 	_time += delta
 	_damage_flash = maxf(_damage_flash - delta * 3.0, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 
 	var player := _find_player()
 	_current_target = player
@@ -171,6 +173,9 @@ func _physics_process(delta: float) -> void:
 			velocity = velocity.lerp(Vector2.ZERO, delta * 2.0)
 			if player and global_position.distance_to(player.global_position) < detection_range:
 				state = State.APPROACH
+				if _voice_cooldown <= 0.0:
+					AudioManager.play_creature_voice("oculus_titan", "alert", 2.0, 0.85, 0.6)
+					_voice_cooldown = 3.0
 		State.APPROACH:
 			_do_approach(delta, player)
 		State.STARE:
@@ -354,6 +359,9 @@ func _draw() -> void:
 func take_damage(amount: float) -> void:
 	# Normal damage barely affects the Oculus Titan
 	_damage_flash = 0.5
+	if _voice_cooldown <= 0.0:
+		AudioManager.play_creature_voice("oculus_titan", "hurt", 2.0, 0.85, 0.6)
+		_voice_cooldown = 2.5
 	# Only thrash reaction, no health loss (must remove eyes)
 	if state == State.APPROACH or state == State.STARE:
 		state = State.THRASH
@@ -361,6 +369,7 @@ func take_damage(amount: float) -> void:
 		_thrash_dir = Vector2(randf_range(-1, 1), randf_range(-1, 1)).normalized()
 
 func _die() -> void:
+	AudioManager.play_creature_voice("oculus_titan", "death", 2.0, 0.85, 0.6)
 	var manager := get_tree().get_first_node_in_group("cell_stage_manager")
 	if manager and manager.has_method("spawn_death_nutrients"):
 		manager.spawn_death_nutrients(global_position, randi_range(12, 18), _base_color)

@@ -16,6 +16,7 @@ var health: float = 25.0
 var _vertical_velocity: float = 0.0
 var _stun_timer: float = 0.0
 var _attack_cooldown: float = 0.0
+var _voice_cooldown: float = 0.0
 var _damage_flash: float = 0.0
 var _alpha: float = 0.3  # Semi-transparent in stealth
 
@@ -111,6 +112,7 @@ func _physics_process(delta: float) -> void:
 	_time += delta
 	_state_timer -= delta
 	_attack_cooldown = maxf(_attack_cooldown - delta, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 
 	var players: Array = get_tree().get_nodes_in_group("player_worm")
 	var player: Node3D = players[0] if players.size() > 0 else null
@@ -134,6 +136,9 @@ func _physics_process(delta: float) -> void:
 			if player and player_dist < detect_radius:
 				state = State.STALK
 				_state_timer = 2.0
+				if _voice_cooldown <= 0.0 and AudioManager and AudioManager.has_method("play_creature_voice"):
+					AudioManager.play_creature_voice("killer_t_cell", "alert", 1.0, 0.9, 1.0)
+					_voice_cooldown = 3.0
 
 		State.STALK:
 			_speed = lerpf(_speed, STALK_SPEED, delta * 4.0)
@@ -144,6 +149,9 @@ func _physics_process(delta: float) -> void:
 				if player_dist < LUNGE_RANGE:
 					state = State.LUNGE
 					_state_timer = 0.3
+					if _voice_cooldown <= 0.0 and AudioManager and AudioManager.has_method("play_creature_voice"):
+						AudioManager.play_creature_voice("killer_t_cell", "alert", 1.0, 0.9, 1.0)
+						_voice_cooldown = 3.0
 				elif player_dist > detect_radius * 1.5:
 					state = State.STEALTH
 					_state_timer = randf_range(3.0, 5.0)
@@ -229,6 +237,9 @@ func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
 	_alpha = 1.0  # Reveal on hit
+	if _voice_cooldown <= 0.0 and AudioManager and AudioManager.has_method("play_creature_voice"):
+		AudioManager.play_creature_voice("killer_t_cell", "hurt", 1.0, 0.9, 1.0)
+		_voice_cooldown = 2.5
 	if state == State.STEALTH:
 		state = State.RETREAT
 		_state_timer = 2.0
@@ -236,5 +247,7 @@ func take_damage(amount: float) -> void:
 		_die()
 
 func _die() -> void:
+	if AudioManager and AudioManager.has_method("play_creature_voice"):
+		AudioManager.play_creature_voice("killer_t_cell", "death", 1.0, 0.9, 1.0)
 	died.emit(global_position)
 	queue_free()

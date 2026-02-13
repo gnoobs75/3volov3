@@ -40,6 +40,7 @@ const MAX_MINIONS: int = 6
 # Attack
 var _attack_cooldown: float = 0.0
 var _slam_cooldown: float = 0.0
+var _voice_cooldown: float = 0.0
 const SLAM_COOLDOWN_TIME: float = 6.0
 const SLAM_DAMAGE: float = 25.0
 const SLAM_RADIUS: float = 8.0
@@ -202,6 +203,7 @@ func _physics_process(delta: float) -> void:
 	_phase_timer -= delta
 	_attack_cooldown = maxf(_attack_cooldown - delta, 0.0)
 	_slam_cooldown = maxf(_slam_cooldown - delta, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 	_summon_timer += delta
 
 	# Find player
@@ -215,6 +217,9 @@ func _physics_process(delta: float) -> void:
 	if health / max_health <= RAGE_THRESHOLD and phase != Phase.RAGE:
 		phase = Phase.RAGE
 		_phase_timer = 0.0
+		if _voice_cooldown <= 0:
+			AudioManager.play_creature_voice("macrophage_queen", "attack", 2.0, 0.9, 0.8)
+			_voice_cooldown = 4.0
 
 	# Phase machine
 	match phase:
@@ -357,6 +362,9 @@ func _update_visuals(delta: float) -> void:
 		_body_mat.albedo_color = _body_mat.albedo_color.lerp(Color(1.0, 0.6, 0.6, 0.7), delta * 1.0)
 
 func _summon_minions() -> void:
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("macrophage_queen", "attack", 2.0, 0.9, 0.8)
+		_voice_cooldown = 4.0
 	# Spawn 3 mini-WBCs around the queen
 	# Note: WBC creates its own collision shape in _build_body() called from _ready()
 	var wbc_script = load("res://scripts/snake_stage/white_blood_cell.gd")
@@ -375,6 +383,9 @@ func _summon_minions() -> void:
 
 func _ground_slam(player: Node3D) -> void:
 	_slam_cooldown = SLAM_COOLDOWN_TIME
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("macrophage_queen", "attack", 2.0, 0.9, 0.8)
+		_voice_cooldown = 4.0
 	# Damage and knockback everything in radius
 	for group_name in ["player_worm"]:
 		for target in get_tree().get_nodes_in_group(group_name):
@@ -397,6 +408,9 @@ func stun(duration: float = 2.0) -> void:
 func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("macrophage_queen", "hurt", 2.0, 0.9, 0.8)
+		_voice_cooldown = 3.0
 	if phase == Phase.PATROL:
 		phase = Phase.ALERT
 		_phase_timer = 1.0
@@ -404,6 +418,7 @@ func take_damage(amount: float) -> void:
 		_die()
 
 func _die() -> void:
+	AudioManager.play_creature_voice("macrophage_queen", "death", 2.0, 0.9, 0.8)
 	died.emit(global_position)
 	defeated.emit()
 	queue_free()

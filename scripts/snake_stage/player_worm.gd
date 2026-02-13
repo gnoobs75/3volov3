@@ -107,6 +107,9 @@ var _pulse_ring_active: bool = false
 var _wind_cone: MeshInstance3D = null
 var _wind_cone_alpha: float = 0.0
 var _trait_flash: float = 0.0  # Screen flash on activation
+
+# --- Creature Vocalization ---
+var _idle_voice_timer: float = 4.0  # Delay before first idle vocalization
 var _trait_flash_color: Color = Color.WHITE
 
 # --- Tractor Beam ---
@@ -785,6 +788,12 @@ func _physics_process(delta: float) -> void:
 	# Update trait VFX (shield pulse, flash decay)
 	_update_trait_vfx(delta)
 
+	# --- Creature idle vocalizations ---
+	_idle_voice_timer -= delta
+	if _idle_voice_timer <= 0:
+		_idle_voice_timer = randf_range(5.0, 10.0)
+		AudioManager.play_player_voice("idle")
+
 	# --- Update jaw visual ---
 	_update_jaw()
 
@@ -979,14 +988,20 @@ func _activate_trait(trait_id: String) -> void:
 	match trait_id:
 		"pulse_wave":
 			_do_pulse_wave()
+			AudioManager.play_pulse_wave()
 		"acid_spit":
 			_do_acid_spit()
+			AudioManager.play_acid_spit_muzzle()
 		"wind_gust":
 			_do_wind_gust()
+			AudioManager.play_wind_gust()
 		"bone_shield":
 			_do_bone_shield(data)
+			AudioManager.play_bone_shield()
 		"summon_minions":
 			_do_summon_minions()
+			AudioManager.play_summon_minions()
+	AudioManager.play_player_voice("attack")
 
 func _do_pulse_wave() -> void:
 	var radius: float = BossTraitSystem.get_radius("pulse_wave")
@@ -1226,6 +1241,8 @@ func _trigger_tail_whip() -> void:
 	energy -= TAIL_WHIP_ENERGY_COST
 	_noise_spike = 1.0
 	_noise_spike_timer = 2.0
+	AudioManager.play_tail_whip()
+	AudioManager.play_player_voice("attack")
 	tail_whip_performed.emit()
 	# Damage is now dealt per-frame during sweep in _update_tail_whip_sweep()
 	_tail_whip_hit_targets.clear()
@@ -1280,6 +1297,7 @@ func apply_venom(target: Node3D) -> void:
 		target.set_meta("venomed", true)
 		target.set_meta("venom_remaining", _venom_duration)
 		target.set_meta("venom_dps", _venom_damage_per_sec)
+		AudioManager.play_venom_spit()
 		# Venom ticks handled by snake_stage_manager
 
 func get_camo_critical_mult() -> float:
@@ -1313,6 +1331,7 @@ func take_damage(amount: float) -> void:
 	if _face_canvas:
 		_face_canvas.set_mood(_face_canvas.Mood.HURT, 0.8)
 		_face_canvas.trigger_damage_flash()
+	AudioManager.play_player_voice("hurt")
 	damaged.emit(amount)
 	if health <= 0:
 		_die()
@@ -1322,6 +1341,7 @@ var last_death_position: Vector3 = Vector3.ZERO
 func _die() -> void:
 	# Death penalty: lose half nutrients/health
 	last_death_position = global_position
+	AudioManager.play_player_voice("death")
 	died.emit()
 	health = max_health * 0.5
 	energy = max_energy * 0.5

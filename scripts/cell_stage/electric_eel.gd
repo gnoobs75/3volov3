@@ -22,6 +22,7 @@ var _discharge_timer: float = 0.0
 var _recover_timer: float = 0.0
 var _charge_amount: float = 0.0  # 0-1, visual charge buildup
 var _current_target: Node2D = null
+var _voice_cooldown: float = 0.0
 
 const CHARGE_DURATION: float = 2.0
 const DISCHARGE_DURATION: float = 0.3
@@ -69,6 +70,7 @@ func _init_shape() -> void:
 func _physics_process(delta: float) -> void:
 	_time += delta
 	_damage_flash = maxf(_damage_flash - delta * 4.0, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 
 	_blink_timer -= delta
 	if _blink_timer <= 0:
@@ -88,6 +90,9 @@ func _physics_process(delta: float) -> void:
 			if player and global_position.distance_to(player.global_position) < detection_range:
 				state = State.CHARGE
 				_charge_timer = CHARGE_DURATION
+				if _voice_cooldown <= 0.0:
+					AudioManager.play_creature_voice("electric_eel", "alert", 1.1, 0.5, 1.0)
+					_voice_cooldown = 3.0
 		State.CHARGE:
 			_do_charge(delta)
 		State.DISCHARGE:
@@ -365,10 +370,14 @@ func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
 	AudioManager.play_hurt()
+	if _voice_cooldown <= 0.0:
+		AudioManager.play_creature_voice("electric_eel", "hurt", 1.1, 0.5, 1.0)
+		_voice_cooldown = 2.5
 	if health <= 0:
 		_die()
 
 func _die() -> void:
+	AudioManager.play_creature_voice("electric_eel", "death", 1.1, 0.5, 1.0)
 	# Death discharge: small AoE zap
 	for p in get_tree().get_nodes_in_group("player"):
 		if is_instance_valid(p) and global_position.distance_to(p.global_position) < 60:

@@ -93,6 +93,10 @@ func _init_shape() -> void:
 var _attack_target: Node2D = null  # Non-player target (competitor/prey)
 var _attack_cooldown: float = 0.0
 
+# Creature vocalization
+var _voice_cooldown: float = 0.0
+var _prev_state: State = State.WANDER
+
 func _physics_process(delta: float) -> void:
 	# Confused timer countdown
 	if _confused_timer > 0:
@@ -130,6 +134,18 @@ func _physics_process(delta: float) -> void:
 				state = State.PURSUE
 			else:
 				state = State.WANDER
+	# Creature vocalization on state change
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
+	if state != _prev_state and _voice_cooldown <= 0:
+		match state:
+			State.PURSUE:
+				AudioManager.play_creature_voice("enemy_cell", "alert", _cell_radius / 14.0, 0.6, speed / 100.0)
+				_voice_cooldown = 3.0
+			State.FLEE:
+				AudioManager.play_creature_voice("enemy_cell", "hurt", _cell_radius / 14.0, 0.3, speed / 100.0)
+				_voice_cooldown = 3.0
+	_prev_state = state
+
 	match state:
 		State.WANDER: _do_wander(delta)
 		State.PURSUE:
@@ -568,6 +584,9 @@ func take_damage(amount: float) -> void:
 	_mouth_open = 0.7
 	_eye_pop = 1.0  # Eyes bulge when hit
 	_eyebrow_bounce = 1.0  # Eyebrows jump up
+	if _voice_cooldown <= 0:
+		AudioManager.play_creature_voice("enemy_cell", "hurt", _cell_radius / 14.0, 0.5, speed / 100.0)
+		_voice_cooldown = 2.0
 	if health <= 0:
 		_die()
 
@@ -581,4 +600,5 @@ func _die() -> void:
 		manager.spawn_death_nutrients(global_position, drop_count, _base_color)
 	if AudioManager:
 		AudioManager.play_death()
+		AudioManager.play_creature_voice("enemy_cell", "death", _cell_radius / 14.0, 0.5, speed / 100.0)
 	queue_free()

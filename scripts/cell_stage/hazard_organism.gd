@@ -19,6 +19,7 @@ var _eye_size: float = 1.8
 var _has_face: bool = true
 var health: float = 60.0
 var _damage_flash: float = 0.0
+var _voice_cooldown: float = 0.0
 
 # Googly eye animation
 var _eye_bounce_l: Vector2 = Vector2.ZERO
@@ -82,6 +83,9 @@ var _touching_bodies: Array[Node2D] = []
 func _on_body_entered(body: Node2D) -> void:
 	if body.is_in_group("player") or body.is_in_group("competitors") or body.is_in_group("enemies") or body.is_in_group("prey"):
 		_touching_bodies.append(body)
+		if body.is_in_group("player") and _voice_cooldown <= 0.0:
+			AudioManager.play_creature_voice("hazard_organism", "alert", 1.2, 0.3, 0.5)
+			_voice_cooldown = 3.0
 
 func _on_body_exited(body: Node2D) -> void:
 	_touching_bodies.erase(body)
@@ -89,6 +93,7 @@ func _on_body_exited(body: Node2D) -> void:
 func _process(delta: float) -> void:
 	_time += delta
 	_damage_flash = maxf(_damage_flash - delta * 4.0, 0.0)
+	_voice_cooldown = maxf(_voice_cooldown - delta, 0.0)
 	global_position += drift_velocity * delta
 
 	# Googly eye physics - eyes react to drift
@@ -286,10 +291,14 @@ func _draw_tiny_face() -> void:
 func take_damage(amount: float) -> void:
 	health -= amount
 	_damage_flash = 1.0
+	if _voice_cooldown <= 0.0:
+		AudioManager.play_creature_voice("hazard_organism", "hurt", 1.2, 0.3, 0.5)
+		_voice_cooldown = 2.5
 	if health <= 0:
 		_die()
 
 func _die() -> void:
+	AudioManager.play_creature_voice("hazard_organism", "death", 1.2, 0.3, 0.5)
 	var manager := get_tree().get_first_node_in_group("cell_stage_manager")
 	if manager and manager.has_method("spawn_death_nutrients"):
 		manager.spawn_death_nutrients(global_position, randi_range(4, 7), _base_color)
