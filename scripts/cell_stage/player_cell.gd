@@ -97,6 +97,8 @@ const NUM_MEMBRANE_PTS: int = 32
 const NUM_CILIA: int = 12
 const NUM_ORGANELLES: int = 5
 var _elongation: float = 1.0  # X-axis stretch factor, grows with evolution level
+var _elongation_offset: float = 0.0
+var _bulge: float = 1.0
 
 # Camera zoom (sensory-based)
 const ZOOM_LEVELS: Array = [1.6, 1.4, 1.23, 1.07, 0.93, 0.8]  # Sensory 0-5 (zoomed out 50% more)
@@ -104,6 +106,16 @@ var _target_zoom: float = 2.0
 var _current_zoom: float = 2.0
 
 # Directional combat system
+# Golden card AOE ability
+var _golden_cooldown: float = 0.0
+const GOLDEN_COOLDOWN_MAX: float = 15.0
+var _golden_aura_active: bool = false  # Healing aura invulnerability
+var _golden_aura_timer: float = 0.0
+var _golden_vfx_timer: float = 0.0  # Active VFX countdown
+var _golden_vfx_type: String = ""  # "flee", "stun", "heal"
+var _golden_vfx_particles: Array = []  # [{pos, vel, life, color, size}]
+var _golden_flash: float = 0.0  # Screen flash alpha
+
 var _has_directional_front: bool = false
 var _has_directional_rear: bool = false
 var _has_directional_sides: bool = false
@@ -152,8 +164,9 @@ func _init_procedural_shape() -> void:
 	_membrane_points.clear()
 	for i in range(NUM_MEMBRANE_PTS):
 		var angle: float = TAU * i / NUM_MEMBRANE_PTS
+		var bulge_factor: float = 1.0 + (absf(sin(angle)) * (_bulge - 1.0))
 		var rx: float = _cell_radius * _elongation + randf_range(-2.0, 2.0)
-		var ry: float = _cell_radius + randf_range(-2.0, 2.0)
+		var ry: float = _cell_radius * bulge_factor + randf_range(-2.0, 2.0)
 		_membrane_points.append(Vector2(cos(angle) * rx, sin(angle) * ry))
 	# Tightened organelles — stay in center 35% to avoid eye area
 	_organelle_positions.clear()
@@ -276,6 +289,9 @@ func _physics_process(delta: float) -> void:
 		_reproduce()
 	if Input.is_action_just_pressed("metabolize") and metabolize_timer <= 0:
 		_metabolize()
+	# Golden card AOE ability (middle mouse button)
+	if Input.is_action_just_pressed("golden_ability") and GameManager.equipped_golden_card != "":
+		_try_golden_ability()
 	if health <= 0:
 		died.emit()
 
@@ -295,6 +311,19 @@ func _physics_process(delta: float) -> void:
 	# Mutation: health regen
 	if _health_regen_rate > 0:
 		health = minf(health + _health_regen_rate * delta, max_health)
+
+	# Golden card cooldown and aura timer
+	_golden_cooldown = maxf(_golden_cooldown - delta, 0.0)
+	_golden_flash = maxf(_golden_flash - delta * 4.0, 0.0)
+	if _golden_aura_active:
+		_golden_aura_timer -= delta
+		if _golden_aura_timer <= 0:
+			_golden_aura_active = false
+	if _golden_vfx_timer > 0:
+		_golden_vfx_timer -= delta
+		if _golden_vfx_timer <= 0:
+			_golden_vfx_type = ""
+	_update_golden_vfx_particles(delta)
 
 	_time += delta
 	_toxin_flash = maxf(_toxin_flash - delta * 3.0, 0.0)
@@ -518,6 +547,9 @@ func _draw() -> void:
 			var inner: Vector2 = reticle_pos + Vector2(cos(ca), sin(ca)) * (reticle_r - 3.0)
 			var outer: Vector2 = reticle_pos + Vector2(cos(ca), sin(ca)) * (reticle_r + 4.0)
 			draw_line(inner, outer, reticle_col, 1.2, true)
+
+	# --- GOLDEN CARD VFX ---
+	_draw_golden_vfx()
 
 func _draw_membrane_damage(pts: PackedVector2Array, health_ratio: float) -> void:
 	## Draw cracks and tears on the membrane as health drops
@@ -922,6 +954,8 @@ func _reproduce() -> void:
 	GameManager.add_reproduction()
 
 func take_damage(amount: float) -> void:
+	if _golden_aura_active:
+		return  # Invulnerable during healing aura
 	health -= amount
 	_damage_flash = 1.0
 	_set_mood(Mood.HURT, 0.6)
@@ -1404,8 +1438,9 @@ func _update_sensory_zoom(animate: bool) -> void:
 		camera.zoom = Vector2(_current_zoom, _current_zoom)
 
 func _compute_elongation() -> void:
-	_elongation = 1.0 + GameManager.evolution_level * 0.15
-	_elongation = minf(_elongation, 2.5)
+	_elongation_offset = GameManager.creature_customization.get("body_elongation_offset", 0.0)
+	_bulge = GameManager.creature_customization.get("body_bulge", 1.0)
+	_elongation = clampf(1.0 + GameManager.evolution_level * 0.15 + _elongation_offset, 0.5, 2.5)
 	_update_collision_shape()
 
 func _update_collision_shape() -> void:
@@ -1956,3 +1991,155 @@ func _draw_mut_antenna() -> void:
 			prev = cur
 		# Sensor tip
 		draw_circle(prev, 1.5, Color(0.5, 0.9, 0.6, 0.5 + sin(_time * 4.0) * 0.3))
+
+# --- GOLDEN CARD AOE ABILITY ---
+
+func _try_golden_ability() -> void:
+	if _golden_cooldown > 0:
+		return
+	var card: Dictionary = GoldenCardData.get_card_by_id(GameManager.equipped_golden_card)
+	if card.is_empty():
+		return
+	_golden_cooldown = card.get("cooldown", GOLDEN_COOLDOWN_MAX)
+	_golden_flash = 1.0
+	_golden_vfx_timer = card.get("duration", 2.5)
+	_golden_vfx_type = card.get("effect_type", "")
+	match card.get("effect_type", ""):
+		"flee":
+			_execute_poison_cloud(card)
+		"stun":
+			_execute_electric_shock(card)
+		"heal":
+			_execute_healing_aura(card)
+	AudioManager.play_evolution_fanfare()
+
+func _execute_poison_cloud(card: Dictionary) -> void:
+	var radius: float = card.get("aoe_radius", 150.0)
+	var duration: float = card.get("duration", 3.5)
+	var vfx_col: Color = card.get("vfx_color", Color(0.3, 0.9, 0.2, 0.6))
+	# Spawn cloud particles
+	for i in range(40):
+		var angle: float = randf() * TAU
+		var dist: float = randf() * radius * 0.8
+		var pos: Vector2 = global_position + Vector2(cos(angle) * dist, sin(angle) * dist)
+		_golden_vfx_particles.append({
+			"pos": pos,
+			"vel": Vector2(randf_range(-15, 15), randf_range(-25, -5)),
+			"life": randf_range(1.5, 3.5),
+			"color": Color(vfx_col.r + randf_range(-0.1, 0.1), vfx_col.g, vfx_col.b, 0.5),
+			"size": randf_range(8.0, 20.0),
+		})
+	# Apply flee to all enemies in radius
+	for enemy in get_tree().get_nodes_in_group("enemies"):
+		if not is_instance_valid(enemy):
+			continue
+		var dist: float = global_position.distance_to(enemy.global_position)
+		if dist <= radius:
+			if enemy.has_method("force_flee"):
+				enemy.force_flee(duration)
+			elif enemy.has_method("confuse"):
+				enemy.confuse(duration)
+
+func _execute_electric_shock(card: Dictionary) -> void:
+	var radius: float = card.get("aoe_radius", 140.0)
+	var duration: float = card.get("duration", 2.5)
+	var vfx_col: Color = card.get("vfx_color", Color(0.4, 0.7, 1.0, 0.8))
+	# Spawn lightning bolt particles (radial burst)
+	for i in range(24):
+		var angle: float = TAU * i / 24.0
+		var speed: float = randf_range(200, 400)
+		_golden_vfx_particles.append({
+			"pos": global_position,
+			"vel": Vector2(cos(angle) * speed, sin(angle) * speed),
+			"life": randf_range(0.3, 0.7),
+			"color": Color(vfx_col.r, vfx_col.g, vfx_col.b, 0.9),
+			"size": randf_range(2.0, 5.0),
+		})
+	# Chain lightning arcs (extra VFX particles connecting to enemies)
+	for enemy in get_tree().get_nodes_in_group("enemies"):
+		if not is_instance_valid(enemy):
+			continue
+		var dist: float = global_position.distance_to(enemy.global_position)
+		if dist <= radius:
+			if enemy.has_method("confuse"):
+				enemy.confuse(duration)
+			# Lightning arc particles toward enemy
+			var dir: Vector2 = (enemy.global_position - global_position).normalized()
+			for j in range(6):
+				var t: float = float(j) / 6.0
+				var arc_pos: Vector2 = global_position.lerp(enemy.global_position, t)
+				arc_pos += Vector2(randf_range(-10, 10), randf_range(-10, 10))
+				_golden_vfx_particles.append({
+					"pos": arc_pos,
+					"vel": Vector2(randf_range(-30, 30), randf_range(-30, 30)),
+					"life": randf_range(0.2, 0.5),
+					"color": Color(0.6, 0.85, 1.0, 0.9),
+					"size": randf_range(1.5, 3.0),
+				})
+
+func _execute_healing_aura(card: Dictionary) -> void:
+	var duration: float = card.get("duration", 2.5)
+	var vfx_col: Color = card.get("vfx_color", Color(1.0, 0.9, 0.3, 0.8))
+	# Activate invulnerability
+	_golden_aura_active = true
+	_golden_aura_timer = duration
+	# Instant heal: 30% max health
+	health = minf(health + max_health * 0.3, max_health)
+	_feed_flash = 0.8
+	_set_mood(Mood.HAPPY, duration)
+	# Spawn upward-floating golden sparkles
+	for i in range(30):
+		var angle: float = randf() * TAU
+		var dist: float = randf() * 30.0
+		var pos: Vector2 = global_position + Vector2(cos(angle) * dist, sin(angle) * dist)
+		_golden_vfx_particles.append({
+			"pos": pos,
+			"vel": Vector2(randf_range(-15, 15), randf_range(-80, -30)),
+			"life": randf_range(1.0, 2.5),
+			"color": Color(vfx_col.r, vfx_col.g + randf_range(-0.1, 0.1), vfx_col.b, 0.7),
+			"size": randf_range(2.0, 5.0),
+		})
+
+func _update_golden_vfx_particles(delta: float) -> void:
+	var alive: Array = []
+	for p in _golden_vfx_particles:
+		p.life -= delta
+		p.pos += p.vel * delta
+		p.vel *= 0.96
+		if p.life > 0:
+			alive.append(p)
+	_golden_vfx_particles = alive
+
+func _draw_golden_vfx() -> void:
+	# Draw golden VFX particles
+	for p in _golden_vfx_particles:
+		var p_local: Vector2 = (p.pos - global_position).rotated(-rotation)
+		var alpha: float = p.life * p.color.a
+		draw_circle(p_local, p.size * clampf(p.life, 0.3, 1.0), Color(p.color.r, p.color.g, p.color.b, alpha))
+
+	# Golden flash overlay
+	if _golden_flash > 0.01:
+		var card: Dictionary = GoldenCardData.get_card_by_id(GameManager.equipped_golden_card)
+		var flash_col: Color = card.get("color", Color(1.0, 0.9, 0.3))
+		var r: float = _cell_radius * _elongation * (3.0 + (1.0 - _golden_flash) * 4.0)
+		draw_arc(Vector2.ZERO, r, 0, TAU, 32, Color(flash_col.r, flash_col.g, flash_col.b, _golden_flash * 0.4), 3.0, true)
+
+	# Healing aura shimmer while active
+	if _golden_aura_active:
+		var shimmer: float = 0.15 + 0.1 * sin(_time * 8.0)
+		var shield_r: float = _cell_radius * _elongation * 1.5
+		draw_arc(Vector2.ZERO, shield_r, 0, TAU, 32, Color(1.0, 0.9, 0.3, shimmer), 2.5, true)
+		draw_arc(Vector2.ZERO, shield_r + 3.0, _time * 2.0, _time * 2.0 + PI, 16, Color(1.0, 0.95, 0.5, shimmer * 0.5), 1.5, true)
+
+	# Cooldown indicator near the cell (small arc below)
+	if GameManager.equipped_golden_card != "":
+		var cd_r: float = _cell_radius * _elongation + 12.0
+		var cd_center := Vector2(0, _cell_radius + 16.0)
+		if _golden_cooldown > 0:
+			var progress: float = 1.0 - _golden_cooldown / GOLDEN_COOLDOWN_MAX
+			draw_arc(cd_center, 8.0, -PI, -PI + TAU * progress, 16, Color(0.5, 0.5, 0.5, 0.4), 2.0, true)
+			draw_arc(cd_center, 8.0, -PI, -PI + TAU * progress, 16, Color(1.0, 0.9, 0.3, 0.3 * progress), 1.5, true)
+		else:
+			# Ready indicator - pulsing golden dot
+			var pulse: float = 0.5 + 0.5 * sin(_time * 4.0)
+			draw_circle(cd_center, 4.0 + pulse * 2.0, Color(1.0, 0.85, 0.2, 0.4 + pulse * 0.3))

@@ -16,8 +16,11 @@ var _music_on: bool = false
 const BUTTONS: Array = [
 	{"label": "BEGIN OBSERVATION", "action": "cell"},
 	{"label": "PARASITE STAGE", "action": "snake"},
+	{"label": "XENOBIOLOGY DATABASE", "action": "database"},
 	{"label": "QUIT", "action": "quit"},
 ]
+
+var _database: Control = null
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -32,6 +35,14 @@ func _ready() -> void:
 			"phase": randf() * TAU,
 		})
 	_glyph_columns = UIConstants.create_glyph_columns(8)
+	# Load Xenobiology Database
+	var db_scene: PackedScene = load("res://scenes/xenobiology_database.tscn")
+	if db_scene:
+		var db_instance: Node = db_scene.instantiate()
+		add_child(db_instance)
+		_database = db_instance.get_node_or_null("XenobiologyDatabase")
+		if _database:
+			_database.database_closed.connect(_on_database_closed)
 
 func _process(delta: float) -> void:
 	_time += delta
@@ -82,7 +93,22 @@ func _gui_input(event: InputEvent) -> void:
 			GameManager.go_to_snake_stage()
 		elif _hover_button == 2:
 			AudioManager.play_ui_select()
+			if _database:
+				_database.toggle()
+		elif _hover_button == 3:
+			AudioManager.play_ui_select()
 			get_tree().quit()
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_X:
+			if _database:
+				AudioManager.play_ui_select()
+				_database.toggle()
+				get_viewport().set_input_as_handled()
+
+func _on_database_closed() -> void:
+	pass
 
 func _get_button_rect(vp: Vector2, index: int) -> Rect2:
 	var cx: float = vp.x * 0.5

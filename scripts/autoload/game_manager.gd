@@ -46,6 +46,8 @@ var creature_customization: Dictionary = {
 	"eye_angle": 0.0,       # Radians — angle on membrane where eyes face (0 = front)
 	"eye_spacing": 5.5,     # Distance between eyes (3.0 to 9.0)
 	"eye_size": 3.5,        # Eye radius scale (2.0 to 6.0)
+	"body_elongation_offset": 0.0,  # User offset added to evolution-driven elongation (-0.5 to +0.5)
+	"body_bulge": 1.0,              # Mid-body width multiplier (0.5 to 2.0, 1.0 = normal)
 }
 
 # Mutation placement map: mutation_id -> {angle: float, distance: float, mirrored: bool, scale: float, rotation_offset: float}
@@ -56,6 +58,9 @@ var _placements_migrated: bool = false
 var gene_fragments: int = 0
 var forged_mutations: Array[Dictionary] = []  # Hybrid mutations from the Forge
 var mutation_upgrades: Dictionary = {}  # mutation_id -> {tier: int, multiplier: float}
+
+# Golden Card AOE — persistent across deaths
+var equipped_golden_card: String = ""  # ID of equipped golden ability (poison_cloud, electric_shock, healing_aura)
 
 # Creature Codex — persistent across deaths
 var discovered_creatures: Dictionary = {}  # creature_id -> bool
@@ -334,6 +339,12 @@ func _migrate_placements_if_needed() -> void:
 func update_creature_customization(custom: Dictionary) -> void:
 	for key in custom:
 		creature_customization[key] = custom[key]
+
+func update_body_elongation_offset(offset: float) -> void:
+	creature_customization["body_elongation_offset"] = clampf(offset, -0.5, 0.5)
+
+func update_body_bulge(bulge: float) -> void:
+	creature_customization["body_bulge"] = clampf(bulge, 0.5, 2.0)
 
 func get_sensory_tier() -> Dictionary:
 	return SENSORY_TIERS[sensory_level]

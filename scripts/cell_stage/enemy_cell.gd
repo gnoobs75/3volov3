@@ -13,6 +13,7 @@ var attack_range: float = 45.0
 var wander_target: Vector2 = Vector2.ZERO
 var wander_timer: float = 0.0
 var _confused_timer: float = 0.0
+var _forced_flee_timer: float = 0.0  # Golden card poison cloud forced flee
 var _target_velocity: Vector2 = Vector2.ZERO  # For smooth interpolated movement
 
 # Titan variant
@@ -99,10 +100,16 @@ func _physics_process(delta: float) -> void:
 		if _confused_timer <= 0:
 			state = State.WANDER
 
+	# Forced flee timer (golden card poison cloud)
+	if _forced_flee_timer > 0:
+		_forced_flee_timer -= delta
+		if _forced_flee_timer <= 0:
+			state = State.WANDER
+
 	_attack_cooldown = maxf(_attack_cooldown - delta, 0.0)
 
 	var player := _find_player()
-	if state != State.CONFUSED:
+	if state != State.CONFUSED and _forced_flee_timer <= 0:
 		if player:
 			var dist := global_position.distance_to(player.global_position)
 			if health < 15.0:
@@ -457,7 +464,11 @@ func _scan_for_other_targets() -> void:
 
 func _do_flee(delta: float, player: Node2D) -> void:
 	if not player:
-		state = State.WANDER
+		if _forced_flee_timer <= 0:
+			state = State.WANDER
+		else:
+			# Flee in random direction when no player target
+			_target_velocity = Vector2(randf_range(-1, 1), randf_range(-1, 1)).normalized() * speed * 1.2
 		return
 	_target_velocity = player.global_position.direction_to(global_position) * speed * 1.2
 
@@ -478,6 +489,13 @@ func confuse(duration: float) -> void:
 	_mouth_open = 0.6
 	if AudioManager:
 		AudioManager.play_confused()
+
+func force_flee(duration: float) -> void:
+	## Called by golden card poison cloud to make this enemy flee
+	state = State.FLEE
+	_forced_flee_timer = duration
+	_mouth_open = 0.9
+	_eye_pop = 1.5
 
 func _pick_wander_target() -> void:
 	wander_target = global_position + Vector2(randf_range(-200, 200), randf_range(-200, 200))

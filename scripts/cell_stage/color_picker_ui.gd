@@ -6,6 +6,8 @@ signal color_changed(target: String, color: Color)
 signal style_changed(target: String, style: String)
 signal eye_placement_changed(angle: float, spacing: float)
 signal eye_size_changed(new_size: float)
+signal elongation_offset_changed(value: float)
+signal bulge_changed(value: float)
 
 var _active_target: String = "membrane_color"
 var _current_hue: float = 0.6
@@ -19,6 +21,10 @@ var _selected_eye: String = "anime"
 var _eye_angle: float = 0.0
 var _eye_spacing: float = 5.5
 var _eye_size: float = 3.5
+
+# Body shape
+var _elongation_offset: float = 0.0
+var _bulge: float = 1.0
 
 # Preview controls (local state, read by evolution_ui)
 var preview_zoom: float = 3.5
@@ -35,6 +41,8 @@ var _dragging_angle: bool = false
 var _dragging_eye_size: bool = false
 var _dragging_zoom: bool = false
 var _dragging_rotation: bool = false
+var _dragging_elongation: bool = false
+var _dragging_bulge: bool = false
 
 # Layout constants — compact for 32% width panel
 const PANEL_PAD: float = 14.0
@@ -44,7 +52,8 @@ const HUE_RING_INNER: float = 42.0
 const SV_BOX_SIZE: float = 80.0
 
 const SLIDER_W: float = 150.0
-const SLIDER_THUMB_R: float = 6.0
+const SLIDER_THUMB_R: float = 10.0
+const ROTATION_DIAL_R: float = 36.0
 
 const EYE_STYLES: Array = ["round", "anime", "compound", "googly", "slit", "lashed", "fierce", "dot", "star"]
 
@@ -74,6 +83,8 @@ func setup(custom: Dictionary) -> void:
 	_eye_angle = custom.get("eye_angle", 0.0)
 	_eye_spacing = custom.get("eye_spacing", 5.5)
 	_eye_size = custom.get("eye_size", 3.5)
+	_elongation_offset = custom.get("body_elongation_offset", 0.0)
+	_bulge = custom.get("body_bulge", 1.0)
 
 func _process(delta: float) -> void:
 	_time += delta
@@ -108,6 +119,12 @@ func _gui_input(event: InputEvent) -> void:
 			elif _check_slider_click(pos, _get_eye_size_slider_y(), (_eye_size - 2.0) / 4.0):
 				_dragging_eye_size = true
 				accept_event()
+			elif _check_slider_click(pos, _get_elongation_slider_y(), (_elongation_offset + 0.5) / 1.0):
+				_dragging_elongation = true
+				accept_event()
+			elif _check_slider_click(pos, _get_bulge_slider_y(), (_bulge - 0.5) / 1.5):
+				_dragging_bulge = true
+				accept_event()
 			elif _check_slider_click(pos, _get_zoom_slider_y(), (preview_zoom - 2.0) / 4.0):
 				_dragging_zoom = true
 				accept_event()
@@ -127,6 +144,8 @@ func _gui_input(event: InputEvent) -> void:
 			_dragging_eye_size = false
 			_dragging_zoom = false
 			_dragging_rotation = false
+			_dragging_elongation = false
+			_dragging_bulge = false
 
 		# Mouse wheel
 		if event.pressed:
@@ -171,6 +190,20 @@ func _gui_input(event: InputEvent) -> void:
 					handled = true
 					accept_event()
 
+				# Elongation slider area
+				if not handled and _is_in_slider_area(pos, _get_elongation_slider_y()):
+					_elongation_offset = clampf(_elongation_offset + 0.05 * delta_val, -0.5, 0.5)
+					elongation_offset_changed.emit(_elongation_offset)
+					handled = true
+					accept_event()
+
+				# Bulge slider area
+				if not handled and _is_in_slider_area(pos, _get_bulge_slider_y()):
+					_bulge = clampf(_bulge + 0.1 * delta_val, 0.5, 2.0)
+					bulge_changed.emit(_bulge)
+					handled = true
+					accept_event()
+
 				# Zoom slider area
 				if not handled and _is_in_slider_area(pos, _get_zoom_slider_y()):
 					preview_zoom = clampf(preview_zoom + 0.25 * delta_val, 2.0, 6.0)
@@ -193,6 +226,12 @@ func _gui_input(event: InputEvent) -> void:
 			accept_event()
 		elif _dragging_eye_size:
 			_update_slider_from_mouse(pos, _get_eye_size_slider_y(), "eye_size")
+			accept_event()
+		elif _dragging_elongation:
+			_update_slider_from_mouse(pos, _get_elongation_slider_y(), "elongation")
+			accept_event()
+		elif _dragging_bulge:
+			_update_slider_from_mouse(pos, _get_bulge_slider_y(), "bulge")
 			accept_event()
 		elif _dragging_zoom:
 			_update_slider_from_mouse(pos, _get_zoom_slider_y(), "zoom")
@@ -243,14 +282,23 @@ func _get_angle_slider_y() -> float:
 func _get_eye_size_slider_y() -> float:
 	return _get_angle_slider_y() + 40.0
 
-func _get_zoom_slider_y() -> float:
+func _get_shape_section_y() -> float:
 	return _get_eye_size_slider_y() + 48.0
+
+func _get_elongation_slider_y() -> float:
+	return _get_shape_section_y() + 28.0
+
+func _get_bulge_slider_y() -> float:
+	return _get_elongation_slider_y() + 40.0
+
+func _get_zoom_slider_y() -> float:
+	return _get_bulge_slider_y() + 48.0
 
 func _get_rotation_dial_y() -> float:
 	return _get_zoom_slider_y() + 40.0
 
 func _get_stats_section_y() -> float:
-	return _get_rotation_dial_y() + 52.0
+	return _get_rotation_dial_y() + 64.0
 
 func _get_target_rect(index: int) -> Rect2:
 	var sy: float = _get_target_section_y() + 18.0
@@ -280,7 +328,7 @@ func _check_slider_click(pos: Vector2, slider_cy: float, t: float) -> bool:
 func _check_slider_track_click(pos: Vector2) -> bool:
 	var sx := _get_slider_x()
 	# Check each slider track
-	for slider_y in [_get_spacing_slider_y(), _get_angle_slider_y(), _get_eye_size_slider_y(), _get_zoom_slider_y()]:
+	for slider_y in [_get_spacing_slider_y(), _get_angle_slider_y(), _get_eye_size_slider_y(), _get_elongation_slider_y(), _get_bulge_slider_y(), _get_zoom_slider_y()]:
 		if pos.y >= slider_y - 10 and pos.y <= slider_y + 10 and pos.x >= sx - 4 and pos.x <= sx + SLIDER_W + 4:
 			var t: float = clampf((pos.x - sx) / SLIDER_W, 0.0, 1.0)
 			if slider_y == _get_spacing_slider_y():
@@ -292,6 +340,12 @@ func _check_slider_track_click(pos: Vector2) -> bool:
 			elif slider_y == _get_eye_size_slider_y():
 				_eye_size = 2.0 + t * 4.0
 				eye_size_changed.emit(_eye_size)
+			elif slider_y == _get_elongation_slider_y():
+				_elongation_offset = -0.5 + t * 1.0
+				elongation_offset_changed.emit(_elongation_offset)
+			elif slider_y == _get_bulge_slider_y():
+				_bulge = 0.5 + t * 1.5
+				bulge_changed.emit(_bulge)
 			elif slider_y == _get_zoom_slider_y():
 				preview_zoom = 2.0 + t * 4.0
 			return true
@@ -312,15 +366,21 @@ func _update_slider_from_mouse(pos: Vector2, slider_cy: float, which: String) ->
 		"eye_size":
 			_eye_size = 2.0 + t * 4.0
 			eye_size_changed.emit(_eye_size)
+		"elongation":
+			_elongation_offset = -0.5 + t * 1.0
+			elongation_offset_changed.emit(_elongation_offset)
+		"bulge":
+			_bulge = 0.5 + t * 1.5
+			bulge_changed.emit(_bulge)
 		"zoom":
 			preview_zoom = 2.0 + t * 4.0
 
 func _check_rotation_click(pos: Vector2) -> bool:
-	var dial_center := Vector2(PANEL_PAD + 22.0, _get_rotation_dial_y())
-	return pos.distance_to(dial_center) <= 26.0
+	var dial_center := Vector2(PANEL_PAD + ROTATION_DIAL_R, _get_rotation_dial_y())
+	return pos.distance_to(dial_center) <= ROTATION_DIAL_R + 4.0
 
 func _update_rotation_from_mouse(pos: Vector2) -> void:
-	var dial_center := Vector2(PANEL_PAD + 22.0, _get_rotation_dial_y())
+	var dial_center := Vector2(PANEL_PAD + ROTATION_DIAL_R, _get_rotation_dial_y())
 	preview_rotation = fmod(atan2(pos.y - dial_center.y, pos.x - dial_center.x) + TAU, TAU)
 
 # --- Core update functions ---
@@ -489,23 +549,35 @@ func _draw() -> void:
 	draw_string(font, Vector2(PANEL_PAD, esize_cy - 10), "EYE SIZE", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.7, 0.9, 0.8))
 	_draw_slider(esize_cy, (_eye_size - 2.0) / 4.0, "%.1f" % _eye_size, _dragging_eye_size)
 
+	# === BODY SHAPE ===
+	var shape_y: float = _get_shape_section_y()
+	_draw_section_header(font, "BODY SHAPE", PANEL_PAD, shape_y, panel_w)
+
+	var elong_cy: float = _get_elongation_slider_y()
+	draw_string(font, Vector2(PANEL_PAD, elong_cy - 10), "STRETCH", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.7, 0.9, 0.8))
+	_draw_slider(elong_cy, (_elongation_offset + 0.5) / 1.0, "%+.2f" % _elongation_offset, _dragging_elongation)
+
+	var bulge_cy: float = _get_bulge_slider_y()
+	draw_string(font, Vector2(PANEL_PAD, bulge_cy - 10), "WIDTH", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.7, 0.9, 0.8))
+	_draw_slider(bulge_cy, (_bulge - 0.5) / 1.5, "%.1fx" % _bulge, _dragging_bulge)
+
 	# === PREVIEW CONTROLS ===
 	var zoom_cy: float = _get_zoom_slider_y()
 	_draw_section_header(font, "PREVIEW", PANEL_PAD, zoom_cy - 20.0, panel_w)
 	draw_string(font, Vector2(PANEL_PAD, zoom_cy - 6), "ZOOM", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.7, 0.9, 0.8))
 	_draw_slider(zoom_cy + 4, (preview_zoom - 2.0) / 4.0, "%.1fx" % preview_zoom, _dragging_zoom)
 
-	# Preview Rotation dial
+	# Preview Rotation dial (larger)
 	var rot_cy: float = _get_rotation_dial_y()
-	draw_string(font, Vector2(PANEL_PAD, rot_cy - 12), "ROTATION", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.7, 0.9, 0.8))
-	var dial_cx: float = PANEL_PAD + 22.0
-	draw_arc(Vector2(dial_cx, rot_cy), 22.0, 0, TAU, 24, Color(0.2, 0.4, 0.6, 0.5), 1.5)
-	draw_arc(Vector2(dial_cx, rot_cy), 18.0, 0, TAU, 20, Color(0.15, 0.3, 0.5, 0.25), 1.0)
+	draw_string(font, Vector2(PANEL_PAD, rot_cy - 16), "ROTATION", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.7, 0.9, 0.8))
+	var dial_cx: float = PANEL_PAD + ROTATION_DIAL_R
+	draw_arc(Vector2(dial_cx, rot_cy), ROTATION_DIAL_R, 0, TAU, 32, Color(0.2, 0.4, 0.6, 0.5), 1.5)
+	draw_arc(Vector2(dial_cx, rot_cy), ROTATION_DIAL_R - 4.0, 0, TAU, 28, Color(0.15, 0.3, 0.5, 0.25), 1.0)
 	var rot_dir: Vector2 = Vector2(cos(preview_rotation), sin(preview_rotation))
-	draw_line(Vector2(dial_cx, rot_cy), Vector2(dial_cx, rot_cy) + rot_dir * 20.0, Color(0.4, 0.8, 1.0, 0.9), 2.5)
-	draw_circle(Vector2(dial_cx, rot_cy) + rot_dir * 20.0, 3.0, Color(0.5, 0.9, 1.0, 0.9))
+	draw_line(Vector2(dial_cx, rot_cy), Vector2(dial_cx, rot_cy) + rot_dir * (ROTATION_DIAL_R - 2.0), Color(0.4, 0.8, 1.0, 0.9), 2.5)
+	draw_circle(Vector2(dial_cx, rot_cy) + rot_dir * (ROTATION_DIAL_R - 2.0), 4.0, Color(0.5, 0.9, 1.0, 0.9))
 	var deg_str: String = "%d°" % int(rad_to_deg(preview_rotation))
-	draw_string(font, Vector2(dial_cx + 30, rot_cy + 5), deg_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.5, 0.7, 0.8, 0.8))
+	draw_string(font, Vector2(dial_cx + ROTATION_DIAL_R + 8, rot_cy + 5), deg_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.5, 0.7, 0.8, 0.8))
 
 	# === STATS SUMMARY ===
 	var stats_y: float = _get_stats_section_y()

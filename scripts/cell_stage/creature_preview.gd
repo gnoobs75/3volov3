@@ -6,6 +6,8 @@ extends Control
 var _time: float = 0.0
 var _cell_radius: float = 18.0
 var _elongation: float = 1.0
+var _elongation_offset: float = 0.0
+var _bulge: float = 1.0
 var _membrane_points: Array[Vector2] = []
 var _organelle_positions: Array[Vector2] = []
 var _cilia_angles: Array[float] = []
@@ -19,20 +21,29 @@ const NUM_ORGANELLES: int = 5
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_elongation = 1.0 + GameManager.evolution_level * 0.15
-	_elongation = minf(_elongation, 2.5)
+	_elongation_offset = GameManager.creature_customization.get("body_elongation_offset", 0.0)
+	_bulge = GameManager.creature_customization.get("body_bulge", 1.0)
+	_elongation = clampf(1.0 + GameManager.evolution_level * 0.15 + _elongation_offset, 0.5, 2.5)
 	_cell_radius = 18.0
 	for m in GameManager.active_mutations:
 		if m.get("id", "") == "larger_membrane":
 			_cell_radius += 3.0
 	_init_shape()
 
+func set_body_shape(elongation_offset: float, bulge: float) -> void:
+	_elongation_offset = elongation_offset
+	_bulge = bulge
+	_elongation = clampf(1.0 + GameManager.evolution_level * 0.15 + _elongation_offset, 0.5, 2.5)
+	_init_shape()
+
 func _init_shape() -> void:
 	_membrane_points.clear()
 	for i in range(NUM_MEMBRANE_PTS):
 		var angle: float = TAU * i / NUM_MEMBRANE_PTS
+		# Bulge widens the perpendicular axis (sin component = top/bottom)
+		var bulge_factor: float = 1.0 + (absf(sin(angle)) * (_bulge - 1.0))
 		var rx: float = _cell_radius * _elongation + randf_range(-1.5, 1.5)
-		var ry: float = _cell_radius + randf_range(-1.5, 1.5)
+		var ry: float = _cell_radius * bulge_factor + randf_range(-1.5, 1.5)
 		_membrane_points.append(Vector2(cos(angle) * rx, sin(angle) * ry))
 
 	# Tightened organelles — stay in center 40% to avoid eye area

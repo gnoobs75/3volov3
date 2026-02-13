@@ -13,6 +13,16 @@ const CARD_SPACING: float = 20.0
 const SMALL_CARD_W: float = 150.0
 const SMALL_CARD_H: float = 180.0
 
+# Ring handle constants
+const RING_RADIUS: float = 28.0  # Ring drawn around selected mutation
+const RING_HANDLE_R: float = 5.0  # Handle grab radius
+const RING_COLOR: Color = Color(0.3, 0.8, 1.0, 0.6)
+const RING_HOVER_COLOR: Color = Color(0.5, 1.0, 1.0, 0.9)
+const HANDLE_COLOR: Color = Color(1.0, 1.0, 1.0, 0.85)
+const HANDLE_HOVER_COLOR: Color = Color(1.0, 1.0, 0.3, 1.0)
+const SCALE_HANDLE_COLOR: Color = Color(0.3, 1.0, 0.5, 0.85)
+const SCALE_HANDLE_HOVER: Color = Color(0.5, 1.0, 0.3, 1.0)
+
 # Alien glyphs for sci-fi labels (matching organism_card.gd aesthetic)
 const ALIEN_GLYPHS: Array = [
 	"◊", "∆", "Ω", "Σ", "Φ", "Ψ", "λ", "π", "θ", "ξ",
@@ -35,6 +45,13 @@ var _flash_alpha: float = 0.0
 var _prev_hover: int = -1
 var _is_initial_customize: bool = false  # True if opened from tutorial
 
+# Golden card state
+var _is_golden_evolution: bool = false
+var _golden_card: Dictionary = {}
+var _golden_hover: bool = false
+var _golden_selected: bool = false
+var _golden_sparkles: Array = []  # [{pos, vel, life, angle}]
+
 # Freeform placement state (Spore-style)
 var _sidebar_hover: int = -1
 var _sidebar_scroll: int = 0
@@ -49,6 +66,12 @@ var _selected_mutation_id: String = ""
 var _hover_placed_mutation: String = ""  # mutation_id under cursor
 var _hover_angle: float = 0.0
 var _hover_mutation_id: String = ""  # for scaling
+
+# Ring handle interaction
+var _ring_drag_mode: String = ""  # "", "rotate", "scale"
+var _ring_drag_start_angle: float = 0.0
+var _ring_drag_start_value: float = 0.0
+var _ring_hover_handle: String = ""  # "", "rotate", "scale_0".."scale_3"
 
 # Symmetry toggle
 var _symmetry_enabled: bool = true
@@ -118,6 +141,15 @@ func _on_evolution_triggered(category_key: String) -> void:
 	_selected_index = -1
 	_select_anim = 0.0
 	_flash_alpha = 1.0
+	# Check if this is a golden evolution (every 3rd level: 2, 5, 8, 11...)
+	_is_golden_evolution = (GameManager.evolution_level % 3 == 2)
+	_golden_hover = false
+	_golden_selected = false
+	if _is_golden_evolution:
+		_golden_card = GoldenCardData.generate_golden_choice(GameManager.equipped_golden_card)
+		_golden_sparkles.clear()
+	else:
+		_golden_card = {}
 	visible = true
 	get_tree().paused = true
 	AudioManager.play_evolution_fanfare()
@@ -136,6 +168,31 @@ func _process(delta: float) -> void:
 		if _select_anim >= 1.0:
 			_enter_customize_mode()
 			return
+	# Golden card selected — equip and transition
+	if _mode == EditorMode.CARD_SELECT and _golden_selected:
+		_select_anim += delta * 4.0
+		if _select_anim >= 1.0:
+			GameManager.equipped_golden_card = _golden_card.get("id", "")
+			_enter_customize_mode()
+			return
+
+	# Spawn golden sparkles around golden card
+	if _is_golden_evolution and _mode == EditorMode.CARD_SELECT and randf() < 0.4:
+		var gr := _get_golden_card_rect()
+		_golden_sparkles.append({
+			"pos": Vector2(gr.position.x + randf() * gr.size.x, gr.position.y + randf() * gr.size.y),
+			"vel": Vector2(randf_range(-20, 20), randf_range(-40, -10)),
+			"life": 1.0,
+			"angle": randf() * TAU,
+		})
+	var alive_gs: Array = []
+	for gs in _golden_sparkles:
+		gs.life -= delta * 0.8
+		gs.pos += gs.vel * delta
+		gs.angle += delta * 3.0
+		if gs.life > 0:
+			alive_gs.append(gs)
+	_golden_sparkles = alive_gs
 
 	# Initialize sci-fi background on first activation
 	if not _scifi_initialized:
@@ -226,6 +283,10 @@ func _setup_color_picker() -> void:
 			_color_picker.eye_placement_changed.disconnect(_on_eye_placement_changed)
 		if _color_picker.eye_size_changed.is_connected(_on_eye_size_changed):
 			_color_picker.eye_size_changed.disconnect(_on_eye_size_changed)
+		if _color_picker.elongation_offset_changed.is_connected(_on_elongation_offset_changed):
+			_color_picker.elongation_offset_changed.disconnect(_on_elongation_offset_changed)
+		if _color_picker.bulge_changed.is_connected(_on_bulge_changed):
+			_color_picker.bulge_changed.disconnect(_on_bulge_changed)
 		_color_picker.queue_free()
 	var PickerScript := preload("res://scripts/cell_stage/color_picker_ui.gd")
 	_color_picker = Control.new()
@@ -241,6 +302,8 @@ func _setup_color_picker() -> void:
 	_color_picker.style_changed.connect(_on_style_changed)
 	_color_picker.eye_placement_changed.connect(_on_eye_placement_changed)
 	_color_picker.eye_size_changed.connect(_on_eye_size_changed)
+	_color_picker.elongation_offset_changed.connect(_on_elongation_offset_changed)
+	_color_picker.bulge_changed.connect(_on_bulge_changed)
 
 func _on_color_changed(target: String, color: Color) -> void:
 	GameManager.update_creature_customization({target: color})
@@ -253,6 +316,16 @@ func _on_eye_placement_changed(angle: float, spacing: float) -> void:
 
 func _on_eye_size_changed(new_size: float) -> void:
 	GameManager.update_creature_customization({"eye_size": new_size})
+
+func _on_elongation_offset_changed(value: float) -> void:
+	GameManager.update_body_elongation_offset(value)
+	if _preview and _preview.has_method("set_body_shape"):
+		_preview.set_body_shape(value, GameManager.creature_customization.get("body_bulge", 1.0))
+
+func _on_bulge_changed(value: float) -> void:
+	GameManager.update_body_bulge(value)
+	if _preview and _preview.has_method("set_body_shape"):
+		_preview.set_body_shape(GameManager.creature_customization.get("body_elongation_offset", 0.0), value)
 
 func _close_editor() -> void:
 	if _preview:
@@ -267,6 +340,10 @@ func _close_editor() -> void:
 			_color_picker.eye_placement_changed.disconnect(_on_eye_placement_changed)
 		if _color_picker.eye_size_changed.is_connected(_on_eye_size_changed):
 			_color_picker.eye_size_changed.disconnect(_on_eye_size_changed)
+		if _color_picker.elongation_offset_changed.is_connected(_on_elongation_offset_changed):
+			_color_picker.elongation_offset_changed.disconnect(_on_elongation_offset_changed)
+		if _color_picker.bulge_changed.is_connected(_on_bulge_changed):
+			_color_picker.bulge_changed.disconnect(_on_bulge_changed)
 		_color_picker.queue_free()
 		_color_picker = null
 	_active = false
@@ -277,9 +354,16 @@ func _close_editor() -> void:
 	_drag_source = ""
 	_bg_particles.clear()
 	_place_particles.clear()
+	_golden_sparkles.clear()
+	_is_golden_evolution = false
+	_golden_card = {}
+	_golden_hover = false
+	_golden_selected = false
 	_hover_mutation_id = ""
 	_hover_placed_mutation = ""
 	_selected_mutation_id = ""
+	_ring_drag_mode = ""
+	_ring_hover_handle = ""
 	visible = false
 	get_tree().paused = false
 
@@ -291,7 +375,8 @@ func _get_vp() -> Vector2:
 func _get_card_rect(index: int) -> Rect2:
 	var vp := _get_vp()
 	if _mode == EditorMode.CARD_SELECT:
-		var total_w: float = _choices.size() * CARD_WIDTH + (_choices.size() - 1) * CARD_SPACING
+		var card_count: int = _choices.size() + (1 if _is_golden_evolution else 0)
+		var total_w: float = card_count * CARD_WIDTH + (card_count - 1) * CARD_SPACING
 		var start_x: float = (vp.x - total_w) * 0.5
 		var x: float = start_x + index * (CARD_WIDTH + CARD_SPACING)
 		var y: float = vp.y * 0.2 + (1.0 - _appear_t) * 80.0
@@ -307,6 +392,15 @@ func _get_card_rect(index: int) -> Rect2:
 		var x: float = start_x + index * (cw + sp)
 		var y: float = vp.y - ch - 16.0
 		return Rect2(x, y, cw, ch)
+
+func _get_golden_card_rect() -> Rect2:
+	var vp := _get_vp()
+	var card_count: int = _choices.size() + 1
+	var total_w: float = card_count * CARD_WIDTH + (card_count - 1) * CARD_SPACING
+	var start_x: float = (vp.x - total_w) * 0.5
+	var x: float = start_x + _choices.size() * (CARD_WIDTH + CARD_SPACING)
+	var y: float = vp.y * 0.2 + (1.0 - _appear_t) * 80.0
+	return Rect2(x, y, CARD_WIDTH, CARD_HEIGHT)
 
 func _get_preview_center() -> Vector2:
 	var vp := _get_vp()
@@ -396,15 +490,28 @@ func _on_gui_input(event: InputEvent) -> void:
 func _handle_card_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		_hover_index = -1
+		_golden_hover = false
 		for i in range(_choices.size()):
 			if _get_card_rect(i).has_point(event.position):
 				_hover_index = i
 				break
+		# Check golden card hover
+		if _is_golden_evolution and not _golden_card.is_empty():
+			if _get_golden_card_rect().has_point(event.position):
+				_golden_hover = true
+				if _prev_hover != 99:
+					AudioManager.play_ui_hover()
+					_prev_hover = 99
 		if _hover_index != _prev_hover and _hover_index >= 0:
 			AudioManager.play_ui_hover()
-		_prev_hover = _hover_index
+		if not _golden_hover:
+			_prev_hover = _hover_index
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		if _hover_index >= 0 and _hover_index < _choices.size() and _selected_index < 0:
+		if _golden_hover and not _golden_selected and _selected_index < 0:
+			AudioManager.play_ui_select()
+			_golden_selected = true
+			_select_anim = 0.0
+		elif _hover_index >= 0 and _hover_index < _choices.size() and _selected_index < 0 and not _golden_selected:
 			AudioManager.play_ui_select()
 			_selected_index = _hover_index
 			_select_anim = 0.0
@@ -412,10 +519,24 @@ func _handle_card_input(event: InputEvent) -> void:
 func _handle_customize_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var pos: Vector2 = event.position
+
+		# Ring handle drag in progress — update it
+		if _ring_drag_mode != "":
+			_update_ring_drag(pos)
+			return
+
 		_sidebar_hover = -1
 		_confirm_hover = false
 		_hover_placed_mutation = ""
 		_hover_mutation_id = ""
+		_ring_hover_handle = ""
+
+		# Check ring handles first (when mutation selected)
+		if _selected_mutation_id != "":
+			var handle: String = _get_ring_handle_at(pos)
+			if handle != "":
+				_ring_hover_handle = handle
+				return  # Skip other hover checks while on handles
 
 		# Check palette items (left panel)
 		var palette_rect := _get_palette_rect()
@@ -447,6 +568,11 @@ func _handle_customize_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton:
 		var pos: Vector2 = event.position
 		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			# Check ring handles first (highest priority when mutation is selected)
+			if _ring_hover_handle != "":
+				_start_ring_drag(_ring_hover_handle, pos)
+				return
+
 			# Click palette item to start drag
 			if _sidebar_hover >= 0 and _sidebar_hover < GameManager.active_mutations.size():
 				_dragging_mutation = GameManager.active_mutations[_sidebar_hover]
@@ -455,7 +581,7 @@ func _handle_customize_input(event: InputEvent) -> void:
 				_drag_pos = pos
 				_selected_mutation_id = ""
 				AudioManager.play_ui_hover()
-			# Click placed mutation to select it (for rotation ring)
+			# Click placed mutation to select it (for ring handles)
 			elif _hover_placed_mutation != "":
 				_selected_mutation_id = _hover_placed_mutation
 				# Start drag to reposition
@@ -486,8 +612,15 @@ func _handle_customize_input(event: InputEvent) -> void:
 			# Click empty area — deselect
 			else:
 				_selected_mutation_id = ""
+				_ring_hover_handle = ""
+				_end_ring_drag()
 
 		elif not event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			# End ring handle drag
+			if _ring_drag_mode != "":
+				_end_ring_drag()
+				return
+
 			# Drop mutation
 			if _is_dragging:
 				var mid: String = _dragging_mutation.get("id", "")
@@ -510,10 +643,12 @@ func _handle_customize_input(event: InputEvent) -> void:
 				GameManager.remove_mutation_placement(_hover_placed_mutation)
 				if _selected_mutation_id == _hover_placed_mutation:
 					_selected_mutation_id = ""
+					_end_ring_drag()
 				_hover_placed_mutation = ""
+				_ring_hover_handle = ""
 				AudioManager.play_ui_hover()
 
-		# Mouse wheel: rotate or scale placed mutations
+		# Mouse wheel: rotate or scale placed mutations (scroll fallback still works)
 		if event.pressed and _hover_mutation_id != "":
 			if event.shift_pressed:
 				# Shift+scroll = scale
@@ -822,6 +957,10 @@ func _draw_card_select(vp: Vector2, font: Font) -> void:
 	for i in range(_choices.size()):
 		_draw_single_card(i, true)
 
+	# Golden card (4th slot)
+	if _is_golden_evolution and not _golden_card.is_empty():
+		_draw_golden_card(vp, font)
+
 func _draw_customize_mode(vp: Vector2, font: Font) -> void:
 	# Header title with alien glyph accents
 	var glyph_l: String = str(ALIEN_GLYPHS[int(fmod(_time * 0.5, ALIEN_GLYPHS.size()))]) + " "
@@ -834,7 +973,7 @@ func _draw_customize_mode(vp: Vector2, font: Font) -> void:
 	_card_draw.draw_string(font, Vector2(title_cx - ts.x * 0.5, 38), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.3, 0.9, 1.0, _appear_t))
 
 	# Subtitle/hint
-	var hint := "Drag parts onto creature. Scroll=rotate, Shift+Scroll=scale, Right-click=remove"
+	var hint := "Drag parts onto creature. Click to select, drag handles to rotate/scale, Right-click=remove"
 	if _is_initial_customize:
 		hint = "Choose your colors and eyes — make it yours!"
 	var hs := font.get_string_size(hint, HORIZONTAL_ALIGNMENT_CENTER, -1, 9)
@@ -901,19 +1040,49 @@ func _draw_placement_handles(vp: Vector2, font: Font) -> void:
 		_card_draw.draw_arc(sp, handle_r, 0, TAU, 16, base_col, 1.5, true)
 		_card_draw.draw_circle(sp, 3.0, base_col)
 
-		# Rotation ring on selected mutation
+		# Ring handles on selected mutation
 		if is_selected:
-			var rot_ring_r: float = handle_r + 8.0
 			var rot_offset: float = p.get("rotation_offset", 0.0)
-			_card_draw.draw_arc(sp, rot_ring_r, 0, TAU, 24, Color(1.0, 0.85, 0.3, 0.3), 1.0, true)
-			# Rotation indicator dot
-			var rot_dot: Vector2 = sp + Vector2(cos(angle + rot_offset), sin(angle + rot_offset)) * rot_ring_r
-			_card_draw.draw_circle(rot_dot, 4.0, Color(1.0, 0.9, 0.3, 0.9))
-			# Scale + rotation info
 			var scale_val: float = p.get("scale", 1.0)
+
+			# Main ring
+			_card_draw.draw_arc(sp, RING_RADIUS, 0, TAU, 32, RING_COLOR, 1.5, true)
+
+			# Rotation handle (top of ring, diamond shape)
+			var rot_handle_pos: Vector2 = sp + Vector2(cos(angle + rot_offset - PI * 0.5), sin(angle + rot_offset - PI * 0.5)) * RING_RADIUS
+			var rot_col: Color = HANDLE_HOVER_COLOR if _ring_hover_handle == "rotate" else HANDLE_COLOR
+			_card_draw.draw_circle(rot_handle_pos, RING_HANDLE_R + 1.0, rot_col)
+			# Inner arrow indicator
+			var arrow_dir: Vector2 = (rot_handle_pos - sp).normalized()
+			var arrow_perp: Vector2 = Vector2(-arrow_dir.y, arrow_dir.x)
+			_card_draw.draw_line(rot_handle_pos - arrow_perp * 3.0, rot_handle_pos + arrow_perp * 3.0, Color(0.1, 0.1, 0.2, 0.9), 1.5, true)
+			# Rotation arc indicator
+			var arc_start: float = angle + rot_offset - PI * 0.5 - 0.3
+			var arc_end: float = angle + rot_offset - PI * 0.5 + 0.3
+			_card_draw.draw_arc(sp, RING_RADIUS + 3.0, arc_start, arc_end, 8, Color(rot_col.r, rot_col.g, rot_col.b, 0.4), 2.0, true)
+			# "R" label
+			_card_draw.draw_string(font, rot_handle_pos + Vector2(-3, -10), "R", HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(rot_col.r, rot_col.g, rot_col.b, 0.7))
+
+			# Scale handles (4 cardinal directions relative to mutation orientation)
+			for i in range(4):
+				var scale_angle: float = angle + rot_offset + i * PI * 0.5
+				var scale_pos: Vector2 = sp + Vector2(cos(scale_angle), sin(scale_angle)) * RING_RADIUS
+				var handle_id: String = "scale_%d" % i
+				var sc_col: Color = SCALE_HANDLE_HOVER if _ring_hover_handle == handle_id else SCALE_HANDLE_COLOR
+				# Square handle
+				var sq_size: float = RING_HANDLE_R * 1.6
+				_card_draw.draw_rect(Rect2(scale_pos.x - sq_size * 0.5, scale_pos.y - sq_size * 0.5, sq_size, sq_size), sc_col)
+				_card_draw.draw_rect(Rect2(scale_pos.x - sq_size * 0.5, scale_pos.y - sq_size * 0.5, sq_size, sq_size), Color(0.1, 0.3, 0.2, 0.6), false, 1.0)
+
+			# Info readout below
 			var info_str: String = "%.0f%% | %d°" % [scale_val * 100.0, int(rad_to_deg(rot_offset))]
 			var is_sz := font.get_string_size(info_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 8)
-			_card_draw.draw_string(font, Vector2(sp.x - is_sz.x * 0.5, sp.y + handle_r + 14), info_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(0.5, 0.9, 0.6, 0.7))
+			_card_draw.draw_string(font, Vector2(sp.x - is_sz.x * 0.5, sp.y + RING_RADIUS + 14), info_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(0.5, 0.9, 0.6, 0.7))
+
+			# Hint text for selected mutation
+			var hint_str: String = "Drag handles to rotate/scale"
+			var hint_sz := font.get_string_size(hint_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 7)
+			_card_draw.draw_string(font, Vector2(sp.x - hint_sz.x * 0.5, sp.y + RING_RADIUS + 26), hint_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(0.4, 0.6, 0.7, 0.4))
 
 		# Hover tooltip
 		if is_hover and not is_selected:
@@ -931,7 +1100,6 @@ func _draw_placement_handles(vp: Vector2, font: Font) -> void:
 			var ma: float = SnapPointSystem.get_mirror_angle(angle)
 			var msp: Vector2 = _get_angle_screen_pos(ma, distance)
 			_card_draw.draw_arc(msp, handle_r * 0.8, 0, TAU, 12, Color(base_col.r, base_col.g, base_col.b, base_col.a * 0.5), 1.0, true)
-			# "M" marker
 			var m_sz := font.get_string_size("M", HORIZONTAL_ALIGNMENT_CENTER, -1, 7)
 			_card_draw.draw_string(font, Vector2(msp.x - m_sz.x * 0.5, msp.y + 4), "M", HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(1.0, 0.9, 0.3, 0.4))
 
@@ -1068,6 +1236,129 @@ func _draw_confirm_button(vp: Vector2, font: Font) -> void:
 
 # --- Card drawing ---
 
+func _draw_golden_card(vp: Vector2, font: Font) -> void:
+	var rect := _get_golden_card_rect()
+	var card_a: float = clampf(_appear_t * 3.0 - 1.5, 0.0, 1.0)  # Appears slightly after normal cards
+	var gold_col := Color(1.0, 0.85, 0.2)
+	var is_rejected: bool = _selected_index >= 0  # Normal card was picked
+	var is_selected: bool = _golden_selected
+
+	if is_rejected and not is_selected:
+		card_a *= (1.0 - _select_anim)
+	if is_selected:
+		var glow_r: float = 20.0 + _select_anim * 50.0
+		_card_draw.draw_rect(Rect2(rect.position.x - glow_r * 0.5, rect.position.y - glow_r * 0.5, rect.size.x + glow_r, rect.size.y + glow_r), Color(1.0, 0.9, 0.3, (1.0 - _select_anim) * 0.2))
+
+	# Golden gradient background
+	var bg := Color(0.12, 0.1, 0.03, 0.95 * card_a)
+	if _golden_hover and not is_selected and _selected_index < 0:
+		bg = Color(0.18, 0.15, 0.05, 0.97 * card_a)
+	if is_selected:
+		bg = bg.lerp(Color(0.3, 0.25, 0.05, 0.95), _select_anim)
+	_card_draw.draw_rect(rect, bg)
+
+	# Triple golden border (premium feel)
+	var border_pulse: float = 0.6 + 0.4 * sin(_time * 2.5)
+	_card_draw.draw_rect(rect, Color(1.0, 0.85, 0.2, border_pulse * card_a), false, 3.0)
+	_card_draw.draw_rect(Rect2(rect.position + Vector2(2, 2), rect.size - Vector2(4, 4)), Color(1.0, 0.95, 0.5, border_pulse * 0.5 * card_a), false, 1.5)
+	_card_draw.draw_rect(Rect2(rect.position + Vector2(-1, -1), rect.size + Vector2(2, 2)), Color(0.8, 0.6, 0.1, border_pulse * 0.3 * card_a), false, 1.0)
+
+	# Hover outer glow
+	if _golden_hover and not is_selected and _selected_index < 0:
+		var hover_glow: float = 6.0 + 3.0 * sin(_time * 4.0)
+		_card_draw.draw_rect(Rect2(rect.position - Vector2(hover_glow, hover_glow), rect.size + Vector2(hover_glow * 2, hover_glow * 2)), Color(1.0, 0.9, 0.3, 0.08 * card_a))
+
+	var cx: float = rect.position.x + rect.size.x * 0.5
+	var cy: float = rect.position.y
+
+	# "GOLDEN ABILITY" header with star glyphs
+	var header := "★ GOLDEN ★"
+	var hs := font.get_string_size(header, HORIZONTAL_ALIGNMENT_CENTER, -1, 10)
+	_card_draw.draw_string(font, Vector2(cx - hs.x * 0.5, cy + 14), header, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1.0, 0.9, 0.4, card_a))
+
+	# Effect type icon (procedural)
+	var icon_center := Vector2(cx, cy + 65.0)
+	var icon_col: Color = _golden_card.get("color", gold_col)
+	_draw_golden_card_icon(_golden_card.get("effect_type", ""), icon_center, card_a, icon_col)
+
+	# Name
+	var name_str: String = _golden_card.get("name", "Unknown")
+	var ns := font.get_string_size(name_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 13)
+	_card_draw.draw_string(font, Vector2(cx - ns.x * 0.5, cy + 115.0), name_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1.0, 0.95, 0.8, card_a))
+
+	# Description
+	var desc: String = _golden_card.get("desc", "")
+	_draw_wrapped_text(font, desc, cx, cy + 132.0, CARD_WIDTH - 16.0, 9, card_a)
+
+	# Cooldown info
+	var cd_str := "Cooldown: %.0fs  |  MMB" % _golden_card.get("cooldown", 15.0)
+	var cd_s := font.get_string_size(cd_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 8)
+	_card_draw.draw_string(font, Vector2(cx - cd_s.x * 0.5, cy + 195.0), cd_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(0.8, 0.7, 0.4, card_a * 0.7))
+
+	# Currently equipped indicator
+	if GameManager.equipped_golden_card != "":
+		var prev_card: Dictionary = GoldenCardData.get_card_by_id(GameManager.equipped_golden_card)
+		if not prev_card.is_empty():
+			var replace_str := "Replaces: " + prev_card.get("name", "Unknown")
+			var rs := font.get_string_size(replace_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 8)
+			_card_draw.draw_string(font, Vector2(cx - rs.x * 0.5, cy + CARD_HEIGHT - 18.0), replace_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(1.0, 0.5, 0.3, card_a * 0.6))
+
+	# Sparkle particles
+	for gs in _golden_sparkles:
+		var sp := gs.pos
+		var sa: float = gs.life * 0.8
+		var sr: float = 2.0 + sin(gs.angle) * 1.0
+		_card_draw.draw_circle(sp, sr, Color(1.0, 0.95, 0.5, sa * card_a))
+
+	# Shimmer line (diagonal sweep)
+	if card_a > 0.1:
+		var shimmer_x: float = fmod(_time * 80.0, rect.size.x + 40.0) - 20.0
+		var shimmer_a: float = 0.15 * card_a
+		_card_draw.draw_line(
+			Vector2(rect.position.x + shimmer_x, rect.position.y),
+			Vector2(rect.position.x + shimmer_x - 20.0, rect.position.y + rect.size.y),
+			Color(1.0, 0.95, 0.7, shimmer_a), 3.0
+		)
+
+func _draw_golden_card_icon(effect_type: String, center: Vector2, alpha: float, accent: Color) -> void:
+	match effect_type:
+		"flee":
+			# Toxic cloud: green swirling circles
+			for i in range(5):
+				var a: float = TAU * i / 5.0 + _time * 1.5
+				var r: float = 12.0 + sin(_time * 2.0 + i) * 4.0
+				var pos := center + Vector2(cos(a), sin(a)) * r
+				var cr: float = 8.0 + sin(_time * 3.0 + i * 1.3) * 3.0
+				_card_draw.draw_circle(pos, cr, Color(accent.r, accent.g, accent.b, alpha * 0.25))
+			_card_draw.draw_circle(center, 10.0, Color(accent.r, accent.g, accent.b, alpha * 0.5))
+			# Skull hint
+			_card_draw.draw_circle(center + Vector2(0, -3), 4.0, Color(0.1, 0.1, 0.1, alpha * 0.6))
+			_card_draw.draw_circle(center + Vector2(-2, -4), 1.5, Color(accent.r, accent.g, accent.b, alpha))
+			_card_draw.draw_circle(center + Vector2(2, -4), 1.5, Color(accent.r, accent.g, accent.b, alpha))
+		"stun":
+			# Lightning bolt: zigzag lines radiating out
+			for i in range(8):
+				var a: float = TAU * i / 8.0 + _time * 0.5
+				var p1 := center + Vector2(cos(a), sin(a)) * 6.0
+				var p2 := center + Vector2(cos(a + 0.15), sin(a + 0.15)) * 16.0
+				var p3 := center + Vector2(cos(a - 0.1), sin(a - 0.1)) * 24.0
+				var bolt_a: float = alpha * (0.5 + 0.5 * sin(_time * 6.0 + i * 1.2))
+				_card_draw.draw_line(p1, p2, Color(accent.r, accent.g, accent.b, bolt_a), 2.0, true)
+				_card_draw.draw_line(p2, p3, Color(accent.r, accent.g, accent.b, bolt_a * 0.7), 1.5, true)
+			_card_draw.draw_circle(center, 5.0, Color(1.0, 1.0, 1.0, alpha * 0.7))
+		"heal":
+			# Golden cross with pulsing rings
+			var pulse: float = 0.5 + 0.5 * sin(_time * 3.0)
+			_card_draw.draw_circle(center, 20.0 * pulse, Color(accent.r, accent.g, accent.b, alpha * 0.15))
+			_card_draw.draw_circle(center, 12.0 * pulse, Color(accent.r, accent.g, accent.b, alpha * 0.25))
+			# Cross shape
+			var cw: float = 4.0
+			var ch: float = 14.0
+			_card_draw.draw_rect(Rect2(center.x - cw * 0.5, center.y - ch * 0.5, cw, ch), Color(accent.r, accent.g, accent.b, alpha * 0.8))
+			_card_draw.draw_rect(Rect2(center.x - ch * 0.5, center.y - cw * 0.5, ch, cw), Color(accent.r, accent.g, accent.b, alpha * 0.8))
+		_:
+			_card_draw.draw_circle(center, 14.0, Color(accent.r * 0.5, accent.g * 0.5, accent.b * 0.5, alpha * 0.5))
+
 func _draw_single_card(index: int, large: bool) -> void:
 	var m: Dictionary = _choices[index]
 	var rect := _get_card_rect(index)
@@ -1083,10 +1374,10 @@ func _draw_single_card(index: int, large: bool) -> void:
 	var tier: int = m.get("tier", 1)
 	var tier_glow: float = 0.3 + tier * 0.15
 	var is_selected: bool = index == _selected_index
-	var is_rejected: bool = _selected_index >= 0 and not is_selected
+	var is_rejected: bool = (_selected_index >= 0 and not is_selected) or _golden_selected
 
 	var bg_color := Color(0.03, 0.06, 0.12, 0.92 * card_a)
-	if hovered and _selected_index < 0:
+	if hovered and _selected_index < 0 and not _golden_selected:
 		bg_color = Color(0.06, 0.1, 0.18, 0.95 * card_a)
 	if is_selected:
 		bg_color = bg_color.lerp(Color(border_color.r * 0.2, border_color.g * 0.2, border_color.b * 0.2, 0.95), _select_anim)
@@ -1291,3 +1582,61 @@ func _stat_label(key: String) -> String:
 		"energy_efficiency": return "Efficiency"
 		"health_regen": return "Regen"
 	return key.capitalize()
+
+# --- Ring handle system ---
+
+func _get_ring_handle_at(pos: Vector2) -> String:
+	if _selected_mutation_id == "" or _selected_mutation_id not in GameManager.mutation_placements:
+		return ""
+	var p: Dictionary = GameManager.mutation_placements[_selected_mutation_id]
+	var angle: float = p.get("angle", 0.0)
+	var distance: float = p.get("distance", 1.0)
+	var rot_offset: float = p.get("rotation_offset", 0.0)
+	var sp: Vector2 = _get_angle_screen_pos(angle, distance)
+	var hit_r: float = RING_HANDLE_R + 6.0
+
+	# Check rotation handle first (most common)
+	var rot_handle_pos: Vector2 = sp + Vector2(cos(angle + rot_offset - PI * 0.5), sin(angle + rot_offset - PI * 0.5)) * RING_RADIUS
+	if pos.distance_to(rot_handle_pos) < hit_r:
+		return "rotate"
+
+	# Check 4 scale handles
+	for i in range(4):
+		var scale_angle: float = angle + rot_offset + i * PI * 0.5
+		var scale_pos: Vector2 = sp + Vector2(cos(scale_angle), sin(scale_angle)) * RING_RADIUS
+		if pos.distance_to(scale_pos) < hit_r:
+			return "scale_%d" % i
+
+	return ""
+
+func _start_ring_drag(handle: String, pos: Vector2) -> void:
+	_ring_drag_mode = handle
+	var p: Dictionary = GameManager.mutation_placements.get(_selected_mutation_id, {})
+	var sp: Vector2 = _get_angle_screen_pos(p.get("angle", 0.0), p.get("distance", 1.0))
+	_ring_drag_start_angle = atan2(pos.y - sp.y, pos.x - sp.x)
+	if handle == "rotate":
+		_ring_drag_start_value = p.get("rotation_offset", 0.0)
+	else:
+		_ring_drag_start_value = p.get("scale", 1.0)
+
+func _update_ring_drag(pos: Vector2) -> void:
+	if _ring_drag_mode == "" or _selected_mutation_id == "":
+		return
+	var p: Dictionary = GameManager.mutation_placements.get(_selected_mutation_id, {})
+	var sp: Vector2 = _get_angle_screen_pos(p.get("angle", 0.0), p.get("distance", 1.0))
+	var current_angle: float = atan2(pos.y - sp.y, pos.x - sp.x)
+	var delta_angle: float = current_angle - _ring_drag_start_angle
+
+	if _ring_drag_mode == "rotate":
+		var new_rot: float = _ring_drag_start_value + delta_angle
+		GameManager.update_mutation_rotation(_selected_mutation_id, new_rot)
+	elif _ring_drag_mode.begins_with("scale"):
+		# Scale based on distance from center
+		var dist: float = pos.distance_to(sp)
+		var new_scale: float = clampf(dist / RING_RADIUS, 0.4, 2.5)
+		GameManager.update_mutation_scale(_selected_mutation_id, new_scale)
+
+func _end_ring_drag() -> void:
+	_ring_drag_mode = ""
+	_ring_drag_start_angle = 0.0
+	_ring_drag_start_value = 0.0
