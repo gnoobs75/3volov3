@@ -1072,7 +1072,11 @@ func _check_directional_contact_damage() -> void:
 			hit_type = "sides" if hit_type == "" else hit_type
 
 		if hit_type != "" and damage > 0 and target.has_method("take_damage"):
-			target.take_damage(damage)
+			# Rear attacks use take_damage_from_behind if available (e.g. Basilisk)
+			if hit_type == "rear" and target.has_method("take_damage_from_behind"):
+				target.take_damage_from_behind(damage)
+			else:
+				target.take_damage(damage)
 			damage_dealt.emit(damage)
 			_directional_contact_timer = DIRECTIONAL_CONTACT_COOLDOWN
 			# Visual feedback based on hit type
@@ -1197,6 +1201,11 @@ func _consume_beam_target() -> void:
 		_beam_target = null
 		return
 
+	if _beam_target.is_in_group("boss_eyes"):
+		# Boss eye — let the boss handle it via beam_pull_toward, don't consume
+		_beam_active = false
+		_beam_target = null
+		return
 	if _beam_target.has_method("feed") or _beam_target.is_in_group("food"):
 		# It's a food particle — use feed()
 		if _beam_target.has_method("setup"):
@@ -1290,6 +1299,12 @@ func _update_jet(delta: float) -> void:
 					enemy.velocity += jet_dir * JET_PUSH_FORCE * delta
 				if enemy.has_method("confuse"):
 					enemy.confuse(JET_CONFUSE_DURATION)
+				# Jet damages rear-vulnerable enemies from behind
+				if enemy.has_method("take_damage_from_behind"):
+					var to_enemy_dir: Vector2 = to_enemy.normalized()
+					var enemy_facing: Vector2 = Vector2.RIGHT.rotated(enemy.rotation)
+					if to_enemy_dir.dot(enemy_facing) < -0.3:  # Hitting from behind
+						enemy.take_damage_from_behind(3.0 * delta)
 
 		# Small energy cost on top of nutrient consumption
 		energy -= 1.0 * delta

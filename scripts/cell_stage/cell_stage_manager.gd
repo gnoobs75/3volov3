@@ -9,6 +9,7 @@ extends Node2D
 @onready var fps_label: Label = $"HUD/ThreePaneLayout/MiddlePane/FPSLabel"
 @onready var helix_hud: Control = $"HUD/ThreePaneLayout/LeftPane/LeftVBox/HelixHUD"
 @onready var crispr_layer: CanvasLayer = $CRISPREditor
+@onready var codex_layer: CanvasLayer = $OrganismCodex
 @onready var background: ColorRect = $Background
 
 # FPS tracking and profiling
@@ -23,7 +24,14 @@ var _avg_frame_time: float = 0.0
 const FRAME_TIME_BUFFER_SIZE: int = 30
 
 const FOOD_SCENE := preload("res://scenes/food_particle.tscn")
+const OCULUS_SCENE := preload("res://scenes/oculus_titan.tscn")
+const JUGGERNAUT_SCENE := preload("res://scenes/juggernaut.tscn")
+const BASILISK_SCENE := preload("res://scenes/basilisk.tscn")
 const MUTATION_CHANCE: float = 0.05
+
+# Boss tracking
+var _bosses_spawned: Dictionary = {}  # boss_name -> true
+var _active_boss: Node2D = null
 
 var chunk_manager: Node2D = null
 var _biome_label_timer: float = 0.0
@@ -75,6 +83,7 @@ var _victory_active: bool = false
 var _victory_timer: float = 0.0
 
 var _competitor_scan_timer: float = 0.0
+var _discovery_timer: float = 2.0  # Organism Codex scan timer (delay first scan)
 
 # --- FEATURE: Dynamic World Events ---
 var _world_event_timer: float = 0.0
@@ -441,8 +450,30 @@ func _process(delta: float) -> void:
 				crispr_panel.close()
 				crispr_layer.visible = false
 			else:
+				# Close codex first if open
+				var codex_panel := codex_layer.get_node_or_null("CodexPanel")
+				if codex_panel and codex_panel.visible:
+					codex_panel.toggle()
 				crispr_layer.visible = true
 				crispr_panel.open()
+
+	# Toggle Organism Codex
+	if Input.is_action_just_pressed("toggle_codex") and not _paused:
+		# Close CRISPR first if open
+		if crispr_layer.visible:
+			var cp := crispr_layer.get_node_or_null("CRISPRPanel")
+			if cp:
+				cp.close()
+			crispr_layer.visible = false
+		var codex_panel := codex_layer.get_node_or_null("CodexPanel")
+		if codex_panel:
+			codex_panel.toggle()
+
+	# Scan nearby organisms for codex discovery
+	_discovery_timer -= delta
+	if _discovery_timer <= 0:
+		_discovery_timer = 1.5
+		_scan_nearby_organisms()
 
 func spawn_death_nutrients(pos: Vector2, count: int, base_color: Color) -> void:
 	## Spawn food particles at the death location of an organism
@@ -455,6 +486,52 @@ func spawn_death_nutrients(pos: Vector2, count: int, base_color: Color) -> void:
 	# Notify chunk manager
 	if chunk_manager:
 		chunk_manager.notify_organism_died(pos)
+
+func _spawn_boss_delayed(boss_name: String, delay: float) -> void:
+	_bosses_spawned[boss_name] = true
+	# Wait a few seconds after evolution before spawning
+	await get_tree().create_timer(delay).timeout
+	if not is_inside_tree() or not player or not is_instance_valid(player):
+		return
+	# Spawn at a distance from the player
+	var spawn_dir := Vector2(randf_range(-1, 1), randf_range(-1, 1)).normalized()
+	var spawn_pos: Vector2 = player.global_position + spawn_dir * 400.0
+	var boss: Node2D = null
+	match boss_name:
+		"oculus_titan":
+			boss = OCULUS_SCENE.instantiate()
+		"juggernaut":
+			boss = JUGGERNAUT_SCENE.instantiate()
+		"basilisk":
+			boss = BASILISK_SCENE.instantiate()
+	if boss:
+		boss.global_position = spawn_pos
+		add_child(boss)
+		_active_boss = boss
+		# Announce the boss
+		var boss_display: String = boss_name.replace("_", " ").to_upper()
+		_popup_text = "BOSS: " + boss_display + " APPROACHES!"
+		_popup_timer = 4.0
+		_popup_alpha = 1.0
+		_popup_color = Color(1.0, 0.3, 0.3)
+		AudioManager.play_sensory_upgrade()
+		var cam := player.get_node_or_null("Camera2D")
+		if cam and cam.has_method("shake"):
+			cam.shake(5.0, 0.5)
+
+func _on_boss_defeated(boss_name: String) -> void:
+	_active_boss = null
+	var boss_display: String = boss_name.replace("_", " ").to_upper()
+	_popup_text = boss_display + " DEFEATED!"
+	_popup_timer = 4.0
+	_popup_alpha = 1.0
+	_popup_color = Color(0.3, 1.0, 0.5)
+	AudioManager.play_evolution_fanfare()
+	# Bonus gene fragments for boss kill
+	GameManager.add_gene_fragments(randi_range(8, 15))
+	var cam := player.get_node_or_null("Camera2D")
+	if cam and cam.has_method("shake"):
+		cam.shake(6.0, 0.6)
 
 func _on_player_reproduced() -> void:
 	if randf() < MUTATION_CHANCE:
@@ -533,6 +610,15 @@ func _on_evolution_applied(mutation: Dictionary) -> void:
 		AudioManager.play_sensory_upgrade()
 		_last_sensory_level = GameManager.sensory_level
 
+	# Boss spawns at evolution milestones
+	var evo: int = GameManager.evolution_level
+	if evo == 3 and not _bosses_spawned.has("oculus_titan"):
+		_spawn_boss_delayed("oculus_titan", 5.0)
+	elif evo == 6 and not _bosses_spawned.has("juggernaut"):
+		_spawn_boss_delayed("juggernaut", 5.0)
+	elif evo == 9 and not _bosses_spawned.has("basilisk"):
+		_spawn_boss_delayed("basilisk", 5.0)
+
 var _overlay_layer_ref: CanvasLayer = null
 
 func _on_showcase_finished(overlay_layer: CanvasLayer) -> void:
@@ -606,7 +692,7 @@ func _on_cell_stage_won() -> void:
 		return
 	_victory_active = true
 	_victory_timer = 8.0
-	AudioManager.play_evolution()
+	AudioManager.play_evolution_fanfare()
 	var cam := player.get_node_or_null("Camera2D")
 	if cam and cam.has_method("shake"):
 		cam.shake(4.0, 0.5)
@@ -636,6 +722,73 @@ func _on_player_died() -> void:
 	_session_collections = 0
 	GameManager.reset_stats()
 	GameManager.go_to_cell_stage()
+
+func _scan_nearby_organisms() -> void:
+	## Discover organisms within scan range for the Organism Codex
+	if not is_instance_valid(player):
+		return
+	var scan_range: float = 400.0
+	var pp: Vector2 = player.global_position
+	# Scan food
+	for f in get_tree().get_nodes_in_group("food"):
+		if is_instance_valid(f) and pp.distance_squared_to(f.global_position) < scan_range * scan_range:
+			GameManager.discover_creature("food_particle")
+			break
+	# Scan prey
+	for p in get_tree().get_nodes_in_group("prey"):
+		if is_instance_valid(p) and pp.distance_squared_to(p.global_position) < scan_range * scan_range:
+			GameManager.discover_creature("snake_prey")
+			break
+	# Scan enemies by script type
+	for e in get_tree().get_nodes_in_group("enemies"):
+		if not is_instance_valid(e) or pp.distance_squared_to(e.global_position) > scan_range * scan_range:
+			continue
+		var script_path: String = e.get_script().resource_path if e.get_script() else ""
+		if "enemy_cell" in script_path:
+			GameManager.discover_creature("enemy_cell")
+		elif "dart_predator" in script_path:
+			GameManager.discover_creature("dart_predator")
+		elif "siren_cell" in script_path:
+			GameManager.discover_creature("siren_cell")
+		elif "splitter_cell" in script_path:
+			GameManager.discover_creature("splitter_cell")
+		elif "electric_eel" in script_path:
+			GameManager.discover_creature("electric_eel")
+		elif "ink_bomber" in script_path:
+			GameManager.discover_creature("ink_bomber")
+		elif "leviathan" in script_path:
+			GameManager.discover_creature("leviathan")
+	# Scan parasites
+	for p in get_tree().get_nodes_in_group("parasites"):
+		if is_instance_valid(p) and pp.distance_squared_to(p.global_position) < scan_range * scan_range:
+			GameManager.discover_creature("parasite_organism")
+			break
+	# Scan repellers
+	for r in get_tree().get_nodes_in_group("repellers"):
+		if is_instance_valid(r) and pp.distance_squared_to(r.global_position) < scan_range * scan_range:
+			GameManager.discover_creature("repeller")
+			break
+	# Scan kin
+	for k in get_tree().get_nodes_in_group("kin"):
+		if is_instance_valid(k) and pp.distance_squared_to(k.global_position) < scan_range * scan_range:
+			GameManager.discover_creature("kin_organism")
+			break
+	# Scan bosses
+	for b in get_tree().get_nodes_in_group("bosses"):
+		if not is_instance_valid(b) or pp.distance_squared_to(b.global_position) > scan_range * scan_range:
+			continue
+		var script_path: String = b.get_script().resource_path if b.get_script() else ""
+		if "oculus_titan" in script_path:
+			GameManager.discover_creature("oculus_titan")
+		elif "juggernaut" in script_path:
+			GameManager.discover_creature("juggernaut")
+		elif "basilisk" in script_path:
+			GameManager.discover_creature("basilisk")
+	# Scan hazards (danger zones)
+	for h in get_tree().get_nodes_in_group("hazards"):
+		if is_instance_valid(h) and pp.distance_squared_to(h.global_position) < scan_range * scan_range:
+			GameManager.discover_creature("danger_zone")
+			break
 
 func _draw_overlay(ctl: Control) -> void:
 	var vp := ctl.get_viewport_rect().size
@@ -922,6 +1075,10 @@ func _pause() -> void:
 	get_tree().paused = true
 	_pause_menu.visible = true
 	_pause_menu.process_mode = Node.PROCESS_MODE_ALWAYS
+	# Close codex if open
+	var codex_panel := codex_layer.get_node_or_null("CodexPanel")
+	if codex_panel and codex_panel.visible:
+		codex_panel.toggle()
 	AudioManager.play_ui_open()
 
 func _unpause() -> void:

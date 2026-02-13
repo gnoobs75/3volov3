@@ -1,0 +1,15 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/cell_stage/electric_eel.gd" id="1"]
+
+[sub_resource type="CapsuleShape2D" id="CapsuleShape2D_eel"]
+radius = 8.0
+height = 30.0
+
+[node name="ElectricEel" type="CharacterBody2D"]
+collision_layer = 2
+collision_mask = 1
+script = ExtResource("1")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CapsuleShape2D_eel")

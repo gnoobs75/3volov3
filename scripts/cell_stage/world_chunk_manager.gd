@@ -20,6 +20,10 @@ const DART_PREDATOR_SCENE := preload("res://scenes/dart_predator.tscn")
 const LEVIATHAN_SCENE := preload("res://scenes/leviathan.tscn")
 const DANGER_ZONE_SCENE := preload("res://scenes/danger_zone.tscn")
 const KIN_SCENE := preload("res://scenes/kin_organism.tscn")
+const SIREN_SCENE := preload("res://scenes/siren_cell.tscn")
+const SPLITTER_SCENE := preload("res://scenes/splitter_cell.tscn")
+const ELECTRIC_EEL_SCENE := preload("res://scenes/electric_eel.tscn")
+const INK_BOMBER_SCENE := preload("res://scenes/ink_bomber.tscn")
 
 enum Biome { NORMAL, THERMAL_VENT, DEEP_ABYSS, SHALLOWS, NUTRIENT_RICH }
 
@@ -36,26 +40,31 @@ const SPAWN_TABLES: Dictionary = {
 		"food": [2, 5], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 1],
 		"hazard": [0, 1], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 1], "dart_predator": [0, 0], "leviathan": [0, 0],
+		"siren": [0, 1], "splitter": [0, 0], "electric_eel": [0, 0], "ink_bomber": [0, 1],
 	},
 	Biome.THERMAL_VENT: {
 		"food": [3, 4], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 1],
 		"hazard": [0, 1], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 1], "dart_predator": [0, 1], "leviathan": [0, 0],
+		"siren": [0, 1], "splitter": [0, 1], "electric_eel": [0, 1], "ink_bomber": [0, 0],
 	},
 	Biome.DEEP_ABYSS: {
 		"food": [1, 3], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 1],
 		"hazard": [0, 1], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 1], "dart_predator": [0, 1], "leviathan": [0, 1],
+		"siren": [0, 1], "splitter": [0, 1], "electric_eel": [0, 1], "ink_bomber": [0, 1],
 	},
 	Biome.SHALLOWS: {
 		"food": [4, 6], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 2],
 		"hazard": [0, 1], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 0], "dart_predator": [0, 0], "leviathan": [0, 0],
+		"siren": [0, 0], "splitter": [0, 1], "electric_eel": [0, 0], "ink_bomber": [0, 1],
 	},
 	Biome.NUTRIENT_RICH: {
 		"food": [4, 7], "enemy": [0, 1], "competitor": [0, 1], "snake": [0, 1],
 		"hazard": [0, 1], "repeller": [0, 1], "blocker": [0, 1], "parasite": [0, 1],
 		"virus": [0, 1], "dart_predator": [0, 1], "leviathan": [0, 0],
+		"siren": [0, 1], "splitter": [0, 0], "electric_eel": [0, 1], "ink_bomber": [0, 0],
 	},
 }
 
@@ -197,7 +206,7 @@ func _get_organism_type(org: Node2D) -> String:
 	return "blocker"
 
 # Types suppressed during the safe zone (no hostiles until player learns controls)
-const HOSTILE_TYPES: Array = ["enemy", "hazard", "parasite", "virus", "dart_predator", "leviathan"]
+const HOSTILE_TYPES: Array = ["enemy", "hazard", "parasite", "virus", "dart_predator", "leviathan", "siren", "splitter", "electric_eel", "ink_bomber"]
 
 func _spawn_chunk_population(coord: Vector2i) -> void:
 	var chunk: Dictionary = _chunks[coord]
@@ -321,6 +330,18 @@ func _spawn_organism(type_key: String, pos: Vector2, rng: RandomNumberGenerator)
 			org.add_to_group("enemies")
 		"kin":
 			org = KIN_SCENE.instantiate()
+		"siren":
+			org = SIREN_SCENE.instantiate()
+			org.add_to_group("enemies")
+		"splitter":
+			org = SPLITTER_SCENE.instantiate()
+			org.add_to_group("enemies")
+		"electric_eel":
+			org = ELECTRIC_EEL_SCENE.instantiate()
+			org.add_to_group("enemies")
+		"ink_bomber":
+			org = INK_BOMBER_SCENE.instantiate()
+			org.add_to_group("enemies")
 
 	if org:
 		org.global_position = pos

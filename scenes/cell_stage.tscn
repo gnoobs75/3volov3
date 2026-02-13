@@ -1,4 +1,4 @@
-[gd_scene load_steps=16 format=3 uid="uid://cell_stage"]
+[gd_scene load_steps=17 format=3 uid="uid://cell_stage"]
 
 [ext_resource type="Script" path="res://scripts/cell_stage/cell_stage_manager.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/cell_stage/player_cell.gd" id="2"]
@@ -15,6 +15,7 @@
 [ext_resource type="Script" path="res://scripts/cell_stage/observer_notes.gd" id="13"]
 [ext_resource type="Script" path="res://scripts/cell_stage/creature_viewer.gd" id="14"]
 [ext_resource type="Script" path="res://scripts/cell_stage/camera_shake.gd" id="15"]
+[ext_resource type="Script" path="res://scripts/cell_stage/organism_codex.gd" id="16"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_player"]
 radius = 18.0
@@ -218,6 +219,18 @@ size_flags_vertical = 3
 script = ExtResource("14")
 
 [node name="CRISPREditor" parent="." instance=ExtResource("4")]
+
+[node name="OrganismCodex" type="CanvasLayer" parent="."]
+layer = 10
+
+[node name="CodexPanel" type="Control" parent="OrganismCodex"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("16")
 
 [node name="EvolutionUI" type="CanvasLayer" parent="."]
 process_mode = 3
