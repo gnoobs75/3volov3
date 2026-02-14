@@ -20,9 +20,6 @@
 [sub_resource type="CircleShape2D" id="CircleShape2D_player"]
 radius = 18.0
 
-[sub_resource type="CircleShape2D" id="CircleShape2D_toxin"]
-radius = 80.0
-
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_sensory"]
 shader = ExtResource("8")
 shader_parameter/visibility_range = 0.3
@@ -67,11 +64,6 @@ script = ExtResource("2")
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="PlayerCell"]
 shape = SubResource("CircleShape2D_player")
-
-[node name="ToxinArea" type="Area2D" parent="PlayerCell"]
-
-[node name="ToxinShape" type="CollisionShape2D" parent="PlayerCell/ToxinArea"]
-shape = SubResource("CircleShape2D_toxin")
 
 [node name="Camera2D" type="Camera2D" parent="PlayerCell"]
 zoom = Vector2(1.6, 1.6)
@@ -177,7 +169,7 @@ offset_top = -40.0
 offset_right = 750.0
 offset_bottom = -10.0
 grow_vertical = 0
-text = "WASD: Thrust | Shift: Sprint | LClick: Beam | RClick: Jet | E: Toxin | Q: Reproduce | F: Metabolize | Tab: CRISPR"
+text = "WASD: Thrust | Shift: Sprint | LClick: Beam | RClick: Jet | MMB: Golden | Tab: CRISPR"
 theme_override_font_sizes/font_size = 12
 theme_override_colors/font_color = Color(0.4, 0.7, 0.8, 0.6)
 

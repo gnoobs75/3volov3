@@ -140,9 +140,6 @@ func _hide_player() -> void:
 	var col := _player.get_node_or_null("CollisionShape2D")
 	if col:
 		col.disabled = true
-	var toxin_shape := _player.get_node_or_null("ToxinArea/ToxinShape")
-	if toxin_shape:
-		toxin_shape.disabled = true
 	# Stop camera shake from overwriting offset
 	if _camera:
 		_camera.set_process(false)
@@ -158,9 +155,6 @@ func _reveal_player() -> void:
 	var col := _player.get_node_or_null("CollisionShape2D")
 	if col:
 		col.disabled = false
-	var toxin_shape := _player.get_node_or_null("ToxinArea/ToxinShape")
-	if toxin_shape:
-		toxin_shape.disabled = false
 	# Re-enable camera shake processing
 	if _camera:
 		_camera.set_process(true)

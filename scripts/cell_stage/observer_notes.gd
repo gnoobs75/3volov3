@@ -82,8 +82,6 @@ func _connect_player_signals() -> void:
 			player.damaged.connect(_on_player_damaged)
 		if player.has_signal("prey_killed"):
 			player.prey_killed.connect(_on_prey_killed)
-		if player.has_signal("reproduction_complete"):
-			player.reproduction_complete.connect(_on_reproduction)
 
 func _on_biomolecule_collected(_item: Dictionary) -> void:
 	if randf() < 0.05:  # 5% chance
@@ -100,9 +98,6 @@ func _on_player_damaged(_amount: float) -> void:
 func _on_prey_killed() -> void:
 	if randf() < 0.25:
 		_queue_note("Kill")
-
-func _on_reproduction() -> void:
-	_queue_note("Reproduction")
 
 func _queue_note(event_type: String = "Observation") -> void:
 	_pending_note_queue.append(event_type)

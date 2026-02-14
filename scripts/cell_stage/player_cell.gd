@@ -3,7 +3,6 @@ extends CharacterBody2D
 
 @onready var camera: Camera2D = $Camera2D
 
-signal reproduced
 signal organelle_collected
 signal died
 signal parasites_changed(count: int)
@@ -11,7 +10,6 @@ signal damaged(amount: float)
 signal damage_dealt(amount: float)
 signal prey_killed
 signal food_consumed
-signal reproduction_complete
 signal biomolecule_category_collected(category: String)
 
 var max_energy: float = 100.0
@@ -19,25 +17,17 @@ var energy: float = 100.0
 var max_health: float = 100.0
 var health: float = 100.0
 var move_speed: float = 200.0
-var toxin_damage: float = 20.0
-var toxin_cost: float = 15.0
-var repro_cost: float = 60.0
+var base_attack_damage: float = 20.0
 
 const ENERGY_DRAIN_RATE: float = 5.0
 const ENERGY_REGEN_RATE: float = 2.0
-const TOXIN_COOLDOWN: float = 1.0
 const LOW_ENERGY_THRESHOLD: float = 0.15  # Below this = depleted state
 const DEPLETED_SPEED_MULT: float = 0.5
 const SPRINT_SPEED_MULT: float = 1.8
 const SPRINT_ENERGY_MULT: float = 3.0  # Energy drains 3x faster while sprinting
-const METABOLIZE_COOLDOWN: float = 1.0
-const METABOLIZE_ENERGY_GAIN: float = 20.0  # Energy restored per metabolize
 const EAT_RANGE: float = 35.0  # Distance to eat prey (generous — touching body = easy eat)
 
 var is_sprinting: bool = false
-var metabolize_timer: float = 0.0
-
-var toxin_timer: float = 0.0
 
 # Tractor beam system
 const BEAM_RANGE: float = 250.0  # Max distance to lock on
@@ -90,7 +80,6 @@ var _cell_radius: float = 18.0
 var _membrane_points: Array[Vector2] = []
 var _organelle_positions: Array[Vector2] = []
 var _cilia_angles: Array[float] = []
-var _toxin_flash: float = 0.0
 var _feed_flash: float = 0.0
 var _damage_flash: float = 0.0
 const NUM_MEMBRANE_PTS: int = 32
@@ -192,12 +181,10 @@ func _apply_gene_traits() -> void:
 		if "speed" in impact:
 			move_speed *= (1.0 + impact.speed)
 		if "hostility_damage" in impact:
-			toxin_damage *= (1.0 + impact.hostility_damage)
+			base_attack_damage *= (1.0 + impact.hostility_damage)
 		if "armor" in impact:
 			max_health *= (1.0 + impact.armor)
 			health = max_health
-		if "offspring_survival" in impact:
-			repro_cost *= (1.0 - impact.offspring_survival)
 	for key in GameManager.player_stats.spliced_traits:
 		var val: float = GameManager.player_stats.spliced_traits[key]
 		match key:
@@ -282,16 +269,6 @@ func _physics_process(delta: float) -> void:
 	_update_beam_particles(delta)
 	_update_jet_particles(delta)
 
-	if toxin_timer > 0:
-		toxin_timer -= delta
-	if metabolize_timer > 0:
-		metabolize_timer -= delta
-	if Input.is_action_just_pressed("combat_toxin") and toxin_timer <= 0 and energy >= toxin_cost:
-		_fire_toxin()
-	if Input.is_action_just_pressed("reproduce") and energy >= repro_cost:
-		_reproduce()
-	if Input.is_action_just_pressed("metabolize") and metabolize_timer <= 0:
-		_metabolize()
 	# Golden card AOE ability (middle mouse button)
 	if Input.is_action_just_pressed("golden_ability") and GameManager.equipped_golden_card != "":
 		_try_golden_ability()
@@ -329,7 +306,6 @@ func _physics_process(delta: float) -> void:
 	_update_golden_vfx_particles(delta)
 
 	_time += delta
-	_toxin_flash = maxf(_toxin_flash - delta * 3.0, 0.0)
 	_feed_flash = maxf(_feed_flash - delta * 2.5, 0.0)
 	_damage_flash = maxf(_damage_flash - delta * 4.0, 0.0)
 	_tail_hit_flash = maxf(_tail_hit_flash - delta * 4.0, 0.0)
@@ -448,8 +424,6 @@ func _draw() -> void:
 	var fill_color := Color(custom_interior.r, custom_interior.g, custom_interior.b, 0.7)
 	if is_energy_depleted:
 		fill_color = Color(custom_interior.r * 0.6, custom_interior.g * 0.6, custom_interior.b * 0.7, 0.6)
-	if _toxin_flash > 0:
-		fill_color = fill_color.lerp(Color(0.6, 0.1, 0.6, 0.8), _toxin_flash)
 	draw_colored_polygon(pts, fill_color)
 	for i in range(pts.size()):
 		draw_line(pts[i], pts[(i + 1) % pts.size()], membrane_color, 1.5, true)
@@ -936,32 +910,6 @@ func _draw_spiral_eye(center: Vector2, size: float, color: Color) -> void:
 		draw_line(prev_pt, pt, spiral_col, 1.5 + (1.0 - t) * 1.5, true)
 		prev_pt = pt
 
-func _fire_toxin() -> void:
-	energy -= toxin_cost
-	toxin_timer = TOXIN_COOLDOWN
-	_toxin_flash = 1.0
-	_set_mood(Mood.ANGRY, 0.8)
-	AudioManager.play_toxin()
-	if camera and camera.has_method("shake"):
-		camera.shake(4.0, 0.2)
-	for body in $ToxinArea.get_overlapping_bodies():
-		if body.has_method("take_damage"):
-			body.take_damage(toxin_damage)
-			damage_dealt.emit(toxin_damage)
-	# Toxin also detaches one parasite
-	if attached_parasites.size() > 0:
-		var p = attached_parasites.pop_back()
-		if is_instance_valid(p) and p.has_method("force_detach"):
-			p.force_detach()
-		parasites_changed.emit(attached_parasites.size())
-
-func _reproduce() -> void:
-	energy -= repro_cost
-	_set_mood(Mood.EXCITED, 1.2)
-	reproduced.emit()
-	reproduction_complete.emit()
-	GameManager.add_reproduction()
-
 func take_damage(amount: float) -> void:
 	if _golden_aura_active:
 		return  # Invulnerable during healing aura
@@ -1133,19 +1081,9 @@ func _check_directional_contact_damage() -> void:
 					_tail_hit_flash = 1.0
 					_set_mood(Mood.EXCITED, 0.3)
 				"sides":
-					_toxin_flash = 0.5
-			AudioManager.play_toxin()  # Impact sound
+					_damage_flash = 0.5
+			AudioManager.play_hurt()  # Impact sound
 			break  # One target per check
-
-func _metabolize() -> void:
-	# Convert some collected nutrients into energy
-	var consumed: int = GameManager.metabolize_nutrients(3)  # Try to consume 3 items
-	if consumed > 0:
-		var gain: float = METABOLIZE_ENERGY_GAIN * consumed
-		energy = minf(energy + gain, max_energy)
-		metabolize_timer = METABOLIZE_COOLDOWN
-		_feed_flash = 0.6
-		_set_mood(Mood.HAPPY, 0.5)
 
 ## --- WAKE TRAIL ---
 
@@ -1390,7 +1328,7 @@ func _apply_single_mutation_stats(m: Dictionary) -> void:
 	if "speed" in stat:
 		move_speed *= (1.0 + stat.speed)
 	if "attack" in stat:
-		toxin_damage *= (1.0 + stat.attack)
+		base_attack_damage *= (1.0 + stat.attack)
 	if "max_health" in stat:
 		max_health *= (1.0 + stat.max_health)
 		health = minf(health + max_health * stat.max_health, max_health)
@@ -1412,7 +1350,7 @@ func _apply_single_mutation_stats(m: Dictionary) -> void:
 	# Directional damage mutations
 	var directional: String = m.get("directional", "")
 	if directional != "":
-		var attack_bonus: float = stat.get("attack", 0.2) * toxin_damage
+		var attack_bonus: float = stat.get("attack", 0.2) * base_attack_damage
 		match directional:
 			"front":
 				_has_directional_front = true

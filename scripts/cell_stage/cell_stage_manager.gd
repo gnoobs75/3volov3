@@ -140,7 +140,6 @@ var _floating_texts: Array = []  # [{text, pos, life, color, size}]
 
 func _ready() -> void:
 	add_to_group("cell_stage_manager")
-	player.reproduced.connect(_on_player_reproduced)
 	player.organelle_collected.connect(_on_organelle_collected)
 	player.died.connect(_on_player_died)
 	player.parasites_changed.connect(_on_parasites_changed)
@@ -446,8 +445,7 @@ func _process(delta: float) -> void:
 		_bg_shader_mat.set_shader_parameter("biome_tint", _biome_tint_current)
 		_bg_shader_mat.set_shader_parameter("biome_strength", _biome_strength_current)
 
-	stats_label.text = "Repros: %d/10 | Organelles: %d/5 | Collected: %d%s" % [
-		GameManager.player_stats.reproductions,
+	stats_label.text = "Organelles: %d/5 | Collected: %d%s" % [
 		GameManager.player_stats.organelles_collected,
 		GameManager.get_total_collected(),
 		energy_status,
@@ -553,12 +551,6 @@ func _on_boss_defeated(boss_name: String) -> void:
 	if cam and cam.has_method("shake"):
 		cam.shake(6.0, 0.6)
 
-func _on_player_reproduced() -> void:
-	if randf() < MUTATION_CHANCE:
-		_mutation_popup_timer = 3.0
-		_mutation_popup_alpha = 1.0
-		AudioManager.play_sensory_upgrade()
-
 func _on_organelle_collected() -> void:
 	pass
 
@@ -663,9 +655,6 @@ func _reveal_player_and_start_tutorial(overlay_layer: CanvasLayer) -> void:
 		var col := player.get_node_or_null("CollisionShape2D")
 		if col:
 			col.disabled = false
-		var toxin_shape := player.get_node_or_null("ToxinArea/ToxinShape")
-		if toxin_shape:
-			toxin_shape.disabled = false
 		var cam := player.get_node_or_null("Camera2D")
 		if cam:
 			cam.set_process(true)
@@ -883,7 +872,7 @@ func _draw_overlay(ctl: Control) -> void:
 		ctl.draw_rect(Rect2(mx - 21, my - 31, pill_w + 2, 1), Color(1.0, 0.7, 0.2, _mutation_popup_alpha * 0.6))
 		ctl.draw_rect(Rect2(mx - 21, my + 13, pill_w + 2, 1), Color(1.0, 0.7, 0.2, _mutation_popup_alpha * 0.6))
 		ctl.draw_string(font, Vector2(mx, my), mut_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color(1.0, 0.8, 0.2, _mutation_popup_alpha))
-		var sub_text := "Random gene altered during reproduction"
+		var sub_text := "Random gene alteration detected"
 		var sub_size := font.get_string_size(sub_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 12)
 		ctl.draw_string(font, Vector2((vp.x - sub_size.x) * 0.5, my + 22), sub_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.8, 0.65, 0.3, _mutation_popup_alpha * 0.7))
 

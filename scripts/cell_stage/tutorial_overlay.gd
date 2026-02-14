@@ -37,7 +37,7 @@ const STEPS: Array = [
 		"key": "RMB",
 		"title": "JET SPRAY",
 		"text": "Hold Right Click to spray",
-		"sub": "Pushes enemies away and consumes collected nutrients",
+		"sub": "Pushes enemies away — parasites can be sucked in by the Vacuum (LMB)",
 	},
 	{
 		"key": "SHIFT",

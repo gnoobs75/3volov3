@@ -26,9 +26,6 @@ const CONTROLS: Array = [
 	{"keys": "SHIFT", "label": "Sprint (costs energy)"},
 	{"keys": "LMB", "label": "Tractor Beam (auto-pulls to you)"},
 	{"keys": "RMB", "label": "Jet Stream (push enemies)"},
-	{"keys": "E", "label": "Fire Toxin (attack)"},
-	{"keys": "Q", "label": "Reproduce (costs energy)"},
-	{"keys": "F", "label": "Metabolize (restore energy)"},
 	{"keys": "MMB", "label": "Golden Ability (AOE power)"},
 	{"keys": "TAB", "label": "CRISPR Mutation Workshop"},
 ]
@@ -190,7 +187,7 @@ func _draw_main_screen(vp: Vector2) -> void:
 	stats_y += 26
 	var controls: Array = [
 		"WASD - Move    SHIFT - Sprint    LMB - Beam",
-		"E - Toxin    Q - Reproduce    F - Metabolize    MMB - Golden    TAB - Workshop",
+		"MMB - Golden    TAB - Workshop",
 	]
 	for line in controls:
 		var ls := mono.get_string_size(line, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_CAPTION)

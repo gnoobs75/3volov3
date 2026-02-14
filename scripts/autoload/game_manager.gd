@@ -20,7 +20,6 @@ enum Stage { MENU, INTRO, CELL, SNAKE, OCEAN_STUB }
 var current_stage: Stage = Stage.MENU
 
 var player_stats: Dictionary = {
-	"reproductions": 0,
 	"organelles_collected": 0,
 	"genes": ["Gene_1", "Gene_3"],
 	"proteins": ["Protein_1"],
@@ -140,17 +139,14 @@ func go_to_menu() -> void:
 	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 	stage_changed.emit("menu")
 
-## Win condition: 10 repros + 5 organelles
+## Win condition: 5 organelles collected
 func check_cell_win() -> bool:
-	return player_stats.reproductions >= 10 and player_stats.organelles_collected >= 5
-
-func add_reproduction() -> void:
-	player_stats.reproductions += 1
-	if check_cell_win():
-		cell_stage_won.emit()
+	return player_stats.organelles_collected >= 5
 
 func add_organelle() -> void:
 	player_stats.organelles_collected += 1
+	if check_cell_win():
+		cell_stage_won.emit()
 
 ## Add a collected biomolecule or organelle to inventory
 func collect_biomolecule(item: Dictionary) -> void:
@@ -195,22 +191,6 @@ func get_unique_collected() -> int:
 			if item_id not in unique:
 				unique.append(item_id)
 	return unique.size()
-
-## Metabolize: consume collected nutrients to restore energy.
-## Returns the number of items actually consumed.
-func metabolize_nutrients(count: int) -> int:
-	# Consume from non-organelle categories (don't burn organelles)
-	var consumable_keys: Array = ["nucleotides", "monosaccharides", "amino_acids", "coenzymes", "lipids", "nucleotide_bases", "organic_acids"]
-	var consumed: int = 0
-	for key in consumable_keys:
-		while consumed < count and inventory[key].size() > 0:
-			inventory[key].pop_back()
-			consumed += 1
-		if consumed >= count:
-			break
-	if consumed > 0:
-		inventory_changed.emit()
-	return consumed
 
 ## Consume nutrients for jet stream defense. Returns array of colors for VFX.
 func consume_for_jet(count: int) -> Array:
@@ -539,10 +519,9 @@ func upgrade_sensory_from_boss() -> void:
 	sensory_level_changed.emit(sensory_level)
 
 func reset_stats() -> void:
-	## Soft reset: keep evolution progress, lose inventory and reproduction count.
+	## Soft reset: keep evolution progress, lose inventory.
 	## Organelles partially preserved (50% rounded down).
 	## CRISPR data, traits, codex persist permanently.
-	player_stats.reproductions = 0
 	var kept_organelles: int = player_stats.organelles_collected / 2
 	player_stats.organelles_collected = kept_organelles
 	player_stats.genes = ["Gene_1", "Gene_3"]
