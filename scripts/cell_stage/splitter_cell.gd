@@ -291,6 +291,9 @@ func _die() -> void:
 	queue_free()
 
 func _spawn_children() -> void:
+	# Global cap: don't split if too many enemies already
+	if get_tree().get_nodes_in_group("enemies").size() >= 25:
+		return
 	var SplitterScene := preload("res://scenes/splitter_cell.tscn")
 	for i in range(2):
 		var child := SplitterScene.instantiate()

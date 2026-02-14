@@ -85,6 +85,15 @@ var _victory_timer: float = 0.0
 var _competitor_scan_timer: float = 0.0
 var _discovery_timer: float = 2.0  # Organism Codex scan timer (delay first scan)
 
+# --- Population control ---
+var _cleanup_timer: float = 3.0
+const MAX_ENEMIES: int = 20
+const MAX_PARASITES: int = 8
+const MAX_FOOD: int = 80
+const MAX_HAZARDS: int = 8
+const MAX_VIRUSES: int = 6
+const DESPAWN_DISTANCE: float = 1800.0  # Despawn orphans beyond this distance from player
+
 # --- FEATURE: Dynamic World Events ---
 var _world_event_timer: float = 0.0
 var _world_event_active: bool = false
@@ -365,6 +374,12 @@ func _process(delta: float) -> void:
 			if comp.has_signal("parasite_cleaned") and not comp.parasite_cleaned.is_connected(_on_parasite_cleaned):
 				comp.parasite_cleaned.connect(_on_parasite_cleaned)
 
+	# --- Population control: periodic cleanup sweep ---
+	_cleanup_timer -= delta
+	if _cleanup_timer <= 0:
+		_cleanup_timer = 3.0
+		_enforce_population_caps()
+
 	# Victory timer
 	if _victory_active:
 		_victory_timer -= delta
@@ -480,6 +495,8 @@ func _process(delta: float) -> void:
 
 func spawn_death_nutrients(pos: Vector2, count: int, base_color: Color) -> void:
 	## Spawn food particles at the death location of an organism
+	var current_food: int = get_tree().get_nodes_in_group("food").size()
+	count = mini(count, maxi(0, MAX_FOOD - current_food))
 	for i in range(count):
 		var food := FOOD_SCENE.instantiate()
 		food.setup(BiologyLoader.get_random_biomolecule(), false)
@@ -1043,6 +1060,8 @@ func _end_world_event() -> void:
 	_world_event_name = ""
 
 func _spawn_bloom_food(count: int) -> void:
+	var current_food: int = get_tree().get_nodes_in_group("food").size()
+	count = mini(count, maxi(0, MAX_FOOD - current_food))
 	for i in range(count):
 		var food := FOOD_SCENE.instantiate()
 		food.setup(BiologyLoader.get_random_biomolecule(), false)
@@ -1055,12 +1074,16 @@ func _spawn_bloom_food(count: int) -> void:
 func _spawn_parasite_swarm(count: int) -> void:
 	var ParasiteScene := preload("res://scenes/parasite_organism.tscn")
 	var spawn_center: Vector2 = player.global_position + Vector2(randf_range(-200, 200), randf_range(-200, 200))
-	for i in range(count):
+	var current_count: int = get_tree().get_nodes_in_group("parasites").size()
+	var spawn_limit: int = mini(count, maxi(0, 8 - current_count))
+	for i in range(spawn_limit):
 		var p := ParasiteScene.instantiate()
 		p.global_position = spawn_center + Vector2(randf_range(-50, 50), randf_range(-50, 50))
 		add_child(p)
 
 func _spawn_eruption_food(count: int) -> void:
+	var current_food: int = get_tree().get_nodes_in_group("food").size()
+	count = mini(count, maxi(0, MAX_FOOD - current_food))
 	for i in range(count):
 		var food := FOOD_SCENE.instantiate()
 		var is_rare: bool = randf() < 0.3  # Higher rare chance from eruptions
@@ -1073,6 +1096,38 @@ func _spawn_eruption_food(count: int) -> void:
 		)
 		food.add_to_group("food")
 		add_child(food)
+
+func _enforce_population_caps() -> void:
+	## Periodic cleanup: despawn far-away orphans and enforce global entity caps.
+	if not player or not is_instance_valid(player):
+		return
+	var player_pos: Vector2 = player.global_position
+	var despawn_dist_sq: float = DESPAWN_DISTANCE * DESPAWN_DISTANCE
+
+	# Helper: cull farthest entities beyond cap
+	var _cull := func(group_name: String, cap: int) -> void:
+		var nodes: Array = get_tree().get_nodes_in_group(group_name)
+		# First pass: despawn anything very far from player (orphaned entities)
+		for node in nodes:
+			if is_instance_valid(node) and node.global_position.distance_squared_to(player_pos) > despawn_dist_sq:
+				node.queue_free()
+		# Second pass: if still over cap, remove farthest
+		nodes = get_tree().get_nodes_in_group(group_name)
+		if nodes.size() > cap:
+			# Sort by distance (farthest first)
+			nodes.sort_custom(func(a: Node2D, b: Node2D) -> bool:
+				return a.global_position.distance_squared_to(player_pos) > b.global_position.distance_squared_to(player_pos)
+			)
+			var to_remove: int = nodes.size() - cap
+			for i in range(to_remove):
+				if is_instance_valid(nodes[i]):
+					nodes[i].queue_free()
+
+	_cull.call("enemies", MAX_ENEMIES)
+	_cull.call("parasites", MAX_PARASITES)
+	_cull.call("food", MAX_FOOD)
+	_cull.call("hazards", MAX_HAZARDS)
+	_cull.call("viruses", MAX_VIRUSES)
 
 func _pause() -> void:
 	_paused = true

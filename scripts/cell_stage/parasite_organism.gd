@@ -133,6 +133,9 @@ func _try_reproduce() -> void:
 	## Spawn a new parasite nearby the attached host
 	if not is_instance_valid(_attached_to):
 		return
+	# Global cap: prevent exponential parasite growth
+	if get_tree().get_nodes_in_group("parasites").size() >= 8:
+		return
 	var ParasiteScene := preload("res://scenes/parasite_organism.tscn")
 	var offspring := ParasiteScene.instantiate()
 	var spawn_offset := Vector2(randf_range(-30, 30), randf_range(-30, 30))

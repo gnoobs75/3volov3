@@ -284,7 +284,7 @@ func _draw() -> void:
 	var s: Vector2 = size
 
 	# Background — dark tablet
-	draw_rect(Rect2(0, 0, s.x, s.y), Color(0.01, 0.02, 0.04, 0.96))
+	draw_rect(Rect2(0, 0, s.x, s.y), Color(0.06, 0.08, 0.14, 0.96))
 
 	# Blueprint grid
 	UIConstants.draw_blueprint_grid(self, s, 0.4)
@@ -337,7 +337,7 @@ func _draw_header(s: Vector2) -> void:
 	var mono: Font = UIConstants.get_mono_font()
 
 	# Header background
-	draw_rect(Rect2(0, 0, s.x, HEADER_H), Color(0.02, 0.04, 0.08, 0.92))
+	draw_rect(Rect2(0, 0, s.x, HEADER_H), Color(0.08, 0.10, 0.18, 0.94))
 	draw_line(Vector2(0, HEADER_H - 1), Vector2(s.x, HEADER_H - 1), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.4), 1.0)
 
 	# Moving accent light on header bottom
@@ -376,7 +376,7 @@ func _draw_tabs(s: Vector2) -> void:
 		var is_active: bool = i == _category
 		var is_hovered: bool = _hover_tab == i
 
-		var tab_bg: Color = Color(0.08, 0.18, 0.28) if is_active else Color(0.02, 0.05, 0.08)
+		var tab_bg: Color = Color(0.12, 0.22, 0.34) if is_active else Color(0.06, 0.10, 0.16)
 		if is_hovered and not is_active:
 			tab_bg = tab_bg.lightened(0.12)
 		draw_rect(tab_rect, tab_bg)
@@ -408,11 +408,11 @@ func _draw_sidebar(s: Vector2) -> void:
 		var is_hovered: bool = fi == _hover_entry
 
 		# Entry background
-		var bg_col: Color = Color(0.03, 0.06, 0.1)
+		var bg_col: Color = Color(0.07, 0.12, 0.20)
 		if is_selected:
-			bg_col = Color(0.06, 0.14, 0.22)
+			bg_col = Color(0.10, 0.18, 0.28)
 		elif is_hovered and discovered:
-			bg_col = Color(0.05, 0.1, 0.16)
+			bg_col = Color(0.09, 0.15, 0.24)
 		draw_rect(Rect2(16, ey, SIDEBAR_W, ENTRY_H), bg_col)
 
 		# Selection indicator bar
@@ -420,7 +420,7 @@ func _draw_sidebar(s: Vector2) -> void:
 			draw_rect(Rect2(16, ey, 3, ENTRY_H), UIConstants.ACCENT)
 
 		# Border
-		var border_col: Color = UIConstants.ACCENT_DIM if is_selected else Color(0.1, 0.18, 0.25)
+		var border_col: Color = UIConstants.ACCENT_DIM if is_selected else Color(0.15, 0.23, 0.32)
 		draw_rect(Rect2(16, ey, SIDEBAR_W, ENTRY_H), Color(border_col.r, border_col.g, border_col.b, 0.35), false, 1.0)
 
 		# Icon
@@ -429,26 +429,26 @@ func _draw_sidebar(s: Vector2) -> void:
 			var ic: Array = entry.icon_color
 			icon_col = Color(ic[0], ic[1], ic[2])
 		else:
-			icon_col = Color(0.15, 0.15, 0.15)
+			icon_col = Color(0.22, 0.22, 0.25)
 		var icon_center: Vector2 = Vector2(46, ey + ENTRY_H * 0.5)
 		_draw_organism_icon(icon_center, ICON_SIZE * 0.4, icon_col, entry.category, discovered)
 
 		# Name
 		var name_text: String = entry.name if discovered else "??? UNKNOWN ???"
-		var name_col: Color = Color(0.75, 0.92, 1.0) if discovered else Color(0.25, 0.25, 0.3)
+		var name_col: Color = Color(0.75, 0.92, 1.0) if discovered else Color(0.38, 0.38, 0.44)
 		draw_string(font, Vector2(74, ey + 24), name_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, name_col)
 
 		# Category + aggression preview
 		var cat_col: Color = _category_color(entry.category)
 		if discovered:
-			draw_string(mono, Vector2(74, ey + 42), entry.category, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, cat_col * 0.7)
+			draw_string(mono, Vector2(74, ey + 42), entry.category, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, cat_col * 0.7)
 			# Threat level dots
 			var threat: int = _get_threat_level(entry)
 			for t in range(5):
-				var dot_col: Color = UIConstants.STAT_RED if t < threat else Color(0.12, 0.12, 0.12)
+				var dot_col: Color = UIConstants.STAT_RED if t < threat else Color(0.18, 0.18, 0.20)
 				draw_circle(Vector2(140 + t * 12, ey + 39), 3.0, dot_col)
 		else:
-			draw_string(mono, Vector2(74, ey + 42), "UNSCANNED", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.2, 0.2, 0.2))
+			draw_string(mono, Vector2(74, ey + 42), "UNSCANNED", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.35, 0.35, 0.4))
 
 		# HP bar (if has HP and discovered)
 		if discovered and entry.hp > 0:
@@ -456,11 +456,11 @@ func _draw_sidebar(s: Vector2) -> void:
 			var bar_w: float = 110.0
 			var bar_h: float = 5.0
 			var bar_y: float = ey + ENTRY_H * 0.5 - bar_h * 0.5
-			draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(0.06, 0.06, 0.06))
+			draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(0.10, 0.10, 0.12))
 			var hp_ratio: float = clampf(float(entry.hp) / 300.0, 0.0, 1.0)
 			var hp_col: Color = UIConstants.STAT_GREEN.lerp(UIConstants.STAT_RED, 1.0 - hp_ratio)
 			draw_rect(Rect2(bar_x, bar_y, bar_w * hp_ratio, bar_h), hp_col)
-			draw_string(mono, Vector2(bar_x + bar_w + 6, bar_y + 7), str(entry.hp), HORIZONTAL_ALIGNMENT_LEFT, -1, 8, UIConstants.TEXT_DIM)
+			draw_string(mono, Vector2(bar_x + bar_w + 6, bar_y + 7), str(entry.hp), HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UIConstants.TEXT_DIM)
 
 func _draw_detail_panel(x: float) -> void:
 	var s: Vector2 = size
@@ -478,7 +478,7 @@ func _draw_detail_panel(x: float) -> void:
 	var discovered: bool = GameManager.is_creature_discovered(entry.id)
 	if not discovered:
 		_voice_btn_rects.clear()
-		draw_string(font, Vector2(x + 40, s.y * 0.4), "??? — ORGANISM NOT YET SCANNED", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.35, 0.25, 0.25, 0.6))
+		draw_string(font, Vector2(x + 40, s.y * 0.4), "??? — ORGANISM NOT YET SCANNED", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.50, 0.38, 0.38, 0.7))
 		return
 
 	var ic: Array = entry.icon_color
@@ -488,7 +488,7 @@ func _draw_detail_panel(x: float) -> void:
 	# --- Scanner readout header ---
 	# Blueprint box around organism icon
 	var icon_box: Rect2 = Rect2(x + 10, y, 70, 70)
-	draw_rect(icon_box, Color(0.02, 0.04, 0.08))
+	draw_rect(icon_box, Color(0.06, 0.10, 0.18))
 	draw_rect(icon_box, Color(icon_col.r, icon_col.g, icon_col.b, 0.3), false, 1.5)
 	_draw_organism_icon(Vector2(x + 45, y + 35), 22.0, icon_col, entry.category, true)
 	# Corner ticks on icon box
@@ -554,37 +554,37 @@ func _draw_detail_panel(x: float) -> void:
 	var col2_x: float = x + panel_w * 0.5
 
 	# HP
-	draw_string(mono, Vector2(col1_x, y + 12), "HEALTH", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, UIConstants.TEXT_DIM)
+	draw_string(mono, Vector2(col1_x, y + 12), "HEALTH", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
 	if entry.hp > 0:
 		draw_string(font, Vector2(col1_x, y + 28), str(entry.hp), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, UIConstants.STAT_GREEN)
 		# HP bar
 		var hp_bar_w: float = panel_w * 0.35
-		draw_rect(Rect2(col1_x, y + 32, hp_bar_w, 4), Color(0.06, 0.06, 0.06))
+		draw_rect(Rect2(col1_x, y + 32, hp_bar_w, 4), Color(0.10, 0.10, 0.12))
 		var hp_r: float = clampf(float(entry.hp) / 300.0, 0.0, 1.0)
 		draw_rect(Rect2(col1_x, y + 32, hp_bar_w * hp_r, 4), UIConstants.STAT_GREEN * 0.8)
 	else:
 		draw_string(font, Vector2(col1_x, y + 28), "N/A", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, UIConstants.TEXT_DIM)
 
 	# Damage
-	draw_string(mono, Vector2(col2_x, y + 12), "DAMAGE", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, UIConstants.TEXT_DIM)
+	draw_string(mono, Vector2(col2_x, y + 12), "DAMAGE", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
 	draw_string(font, Vector2(col2_x, y + 28), str(entry.damage), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, UIConstants.STAT_RED if entry.damage > 0 else UIConstants.TEXT_DIM)
 
 	y += 44
 
 	# Speed
-	draw_string(mono, Vector2(col1_x, y + 12), "SPEED", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, UIConstants.TEXT_DIM)
+	draw_string(mono, Vector2(col1_x, y + 12), "SPEED", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
 	draw_string(font, Vector2(col1_x, y + 28), "%.1f" % entry.speed, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.4, 0.7, 0.9))
 	# Speed gauge
 	var spd_bar_w: float = panel_w * 0.35
-	draw_rect(Rect2(col1_x, y + 32, spd_bar_w, 4), Color(0.06, 0.06, 0.06))
+	draw_rect(Rect2(col1_x, y + 32, spd_bar_w, 4), Color(0.10, 0.10, 0.12))
 	var spd_r: float = clampf(entry.speed / 8.0, 0.0, 1.0)
 	draw_rect(Rect2(col1_x, y + 32, spd_bar_w * spd_r, 4), Color(0.4, 0.7, 0.9, 0.7))
 
 	# Threat level
-	draw_string(mono, Vector2(col2_x, y + 12), "THREAT", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, UIConstants.TEXT_DIM)
+	draw_string(mono, Vector2(col2_x, y + 12), "THREAT", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
 	var threat: int = _get_threat_level(entry)
 	for t in range(5):
-		var dot_col: Color = UIConstants.STAT_RED if t < threat else Color(0.1, 0.1, 0.1)
+		var dot_col: Color = UIConstants.STAT_RED if t < threat else Color(0.16, 0.16, 0.18)
 		var dot_r: float = 5.0
 		draw_circle(Vector2(col2_x + t * 16 + dot_r, y + 26), dot_r, dot_col)
 
@@ -678,10 +678,10 @@ func _draw_idle_scanner(x: float, panel_w: float, s: Vector2) -> void:
 
 func _draw_organism_icon(center: Vector2, radius: float, col: Color, category: String, discovered: bool) -> void:
 	if not discovered:
-		draw_circle(center, radius, Color(0.1, 0.1, 0.1))
-		draw_arc(center, radius, 0, TAU, 16, Color(0.2, 0.2, 0.2), 1.0)
+		draw_circle(center, radius, Color(0.15, 0.15, 0.17))
+		draw_arc(center, radius, 0, TAU, 16, Color(0.28, 0.28, 0.30), 1.0)
 		var font: Font = UIConstants.get_display_font()
-		draw_string(font, Vector2(center.x - 4, center.y + 5), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.25, 0.25, 0.25))
+		draw_string(font, Vector2(center.x - 4, center.y + 5), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.35, 0.35, 0.38))
 		return
 
 	match category:

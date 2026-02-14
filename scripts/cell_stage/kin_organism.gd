@@ -158,7 +158,9 @@ func _physics_process(delta: float) -> void:
 	# Face toward movement direction
 	if velocity.length() > 5.0:
 		rotation = lerp_angle(rotation, velocity.angle(), delta * 3.0)
-	queue_redraw()
+	var _vp_cam := get_viewport().get_camera_2d()
+	if not _vp_cam or global_position.distance_squared_to(_vp_cam.global_position) < 1440000.0:
+		queue_redraw()
 
 func _do_wander(delta: float) -> void:
 	_wander_timer -= delta

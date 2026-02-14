@@ -7,10 +7,10 @@ const MAP_PADDING: float = 20.0
 const PLAYER_DOT_RADIUS: float = 5.0
 const HUB_MIN_DRAW_RADIUS: float = 12.0
 const TUNNEL_DRAW_WIDTH: float = 4.0
-const FOG_COLOR: Color = Color(0.02, 0.03, 0.05, 0.92)
-const BORDER_COLOR: Color = Color(0.12, 0.25, 0.35, 0.7)
-const GRID_COLOR: Color = Color(0.08, 0.15, 0.2, 0.15)
-const LABEL_FONT_SIZE: int = 9
+const FOG_COLOR: Color = Color(0.06, 0.08, 0.13, 0.92)
+const BORDER_COLOR: Color = Color(0.18, 0.32, 0.44, 0.75)
+const GRID_COLOR: Color = Color(0.12, 0.20, 0.28, 0.18)
+const LABEL_FONT_SIZE: int = 11
 
 # Biome display colors (brighter versions for minimap visibility)
 const BIOME_MAP_COLORS: Dictionary = {
@@ -160,7 +160,7 @@ func _draw() -> void:
 		return
 
 	# Background
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.01, 0.02, 0.04, 0.85))
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.06, 0.08, 0.14, 0.88))
 
 	# Subtle grid
 	_draw_grid()

@@ -291,6 +291,24 @@ func _spawn_chunk_population(coord: Vector2i) -> void:
 		chunk["organisms"].append(dz)
 
 func _spawn_organism(type_key: String, pos: Vector2, rng: RandomNumberGenerator) -> Node2D:
+	# Global population caps — skip spawning if world already has enough
+	match type_key:
+		"enemy", "dart_predator", "leviathan", "siren", "splitter", "electric_eel", "ink_bomber":
+			if get_tree().get_nodes_in_group("enemies").size() >= 20:
+				return null
+		"parasite":
+			if get_tree().get_nodes_in_group("parasites").size() >= 8:
+				return null
+		"food":
+			if get_tree().get_nodes_in_group("food").size() >= 80:
+				return null
+		"virus":
+			if get_tree().get_nodes_in_group("viruses").size() >= 6:
+				return null
+		"hazard":
+			if get_tree().get_nodes_in_group("hazards").size() >= 8:
+				return null
+
 	var org: Node2D = null
 	match type_key:
 		"food":

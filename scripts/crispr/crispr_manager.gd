@@ -209,13 +209,13 @@ func _random_glyph_string(length: int) -> String:
 func _draw_header(vp: Vector2) -> void:
 	var font := UIConstants.get_display_font()
 	# Header bar
-	draw_rect(Rect2(0, 0, vp.x, TAB_HEIGHT), Color(0.02, 0.06, 0.12, 0.95))
-	draw_line(Vector2(0, TAB_HEIGHT), Vector2(vp.x, TAB_HEIGHT), Color(0.1, 0.5, 0.8, 0.4), 1.0)
+	draw_rect(Rect2(0, 0, vp.x, TAB_HEIGHT), Color(0.08, 0.12, 0.22, 0.95))
+	draw_line(Vector2(0, TAB_HEIGHT), Vector2(vp.x, TAB_HEIGHT), Color(0.15, 0.55, 0.85, 0.5), 1.5)
 
 	# Title with glyph
 	var glyph: String = str(ALIEN_GLYPHS[int(fmod(_time * 0.3, ALIEN_GLYPHS.size()))])
 	var title: String = glyph + " CRISPR MUTATION WORKSHOP " + glyph
-	draw_string(font, Vector2(vp.x * 0.5 - 160, 30), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.3, 0.8, 1.0, 0.95))
+	draw_string(font, Vector2(vp.x * 0.5 - 175, 30), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(UIConstants.TEXT_TITLE.r, UIConstants.TEXT_TITLE.g, UIConstants.TEXT_TITLE.b, 0.97))
 
 func _draw_tabs(vp: Vector2) -> void:
 	var font := UIConstants.get_display_font()
@@ -225,32 +225,32 @@ func _draw_tabs(vp: Vector2) -> void:
 	# FORGE tab
 	var forge_x: float = vp.x * 0.5 - tab_w - 4
 	var forge_active: bool = _tab == Tab.FORGE
-	var forge_bg := Color(0.05, 0.15, 0.25, 0.9) if forge_active else Color(0.03, 0.08, 0.14, 0.7)
-	var forge_border := Color(0.2, 0.7, 1.0, 0.6) if forge_active else Color(0.15, 0.4, 0.6, 0.3)
+	var forge_bg := Color(0.10, 0.20, 0.32, 0.92) if forge_active else Color(0.07, 0.12, 0.22, 0.75)
+	var forge_border := Color(0.25, 0.75, 1.0, 0.7) if forge_active else Color(0.2, 0.45, 0.65, 0.4)
 	if _hover_tab == 0 and not forge_active:
-		forge_bg = Color(0.04, 0.12, 0.2, 0.85)
+		forge_bg = Color(0.08, 0.16, 0.28, 0.88)
 	draw_rect(Rect2(forge_x, tab_y, tab_w, TAB_HEIGHT), forge_bg)
 	draw_rect(Rect2(forge_x, tab_y, tab_w, 2), forge_border)
-	draw_string(font, Vector2(forge_x + 30, tab_y + 28), "FORGE", HORIZONTAL_ALIGNMENT_LEFT, -1, 15,
-		Color(0.3, 0.9, 1.0) if forge_active else Color(0.5, 0.6, 0.7))
+	draw_string(font, Vector2(forge_x + 30, tab_y + 28), "FORGE", HORIZONTAL_ALIGNMENT_LEFT, -1, 16,
+		Color(UIConstants.TEXT_TITLE.r, UIConstants.TEXT_TITLE.g, UIConstants.TEXT_TITLE.b) if forge_active else Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b))
 
 	# UPGRADE tab
 	var upgrade_x: float = vp.x * 0.5 + 4
 	var upgrade_active: bool = _tab == Tab.UPGRADE
-	var upgrade_bg := Color(0.05, 0.15, 0.25, 0.9) if upgrade_active else Color(0.03, 0.08, 0.14, 0.7)
-	var upgrade_border := Color(0.2, 0.7, 1.0, 0.6) if upgrade_active else Color(0.15, 0.4, 0.6, 0.3)
+	var upgrade_bg := Color(0.10, 0.20, 0.32, 0.92) if upgrade_active else Color(0.07, 0.12, 0.22, 0.75)
+	var upgrade_border := Color(0.25, 0.75, 1.0, 0.7) if upgrade_active else Color(0.2, 0.45, 0.65, 0.4)
 	if _hover_tab == 1 and not upgrade_active:
-		upgrade_bg = Color(0.04, 0.12, 0.2, 0.85)
+		upgrade_bg = Color(0.08, 0.16, 0.28, 0.88)
 	draw_rect(Rect2(upgrade_x, tab_y, tab_w, TAB_HEIGHT), upgrade_bg)
 	draw_rect(Rect2(upgrade_x, tab_y, tab_w, 2), upgrade_border)
-	draw_string(font, Vector2(upgrade_x + 22, tab_y + 28), "UPGRADE", HORIZONTAL_ALIGNMENT_LEFT, -1, 15,
-		Color(0.3, 0.9, 1.0) if upgrade_active else Color(0.5, 0.6, 0.7))
+	draw_string(font, Vector2(upgrade_x + 22, tab_y + 28), "UPGRADE", HORIZONTAL_ALIGNMENT_LEFT, -1, 16,
+		Color(UIConstants.TEXT_TITLE.r, UIConstants.TEXT_TITLE.g, UIConstants.TEXT_TITLE.b) if upgrade_active else Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b))
 
 func _draw_fragment_counter(vp: Vector2) -> void:
 	var font := UIConstants.get_display_font()
 	var text: String = str(ALIEN_GLYPHS[4]) + " GENE FRAGMENTS: %d" % GameManager.gene_fragments
 	var tx: float = vp.x - 280
-	draw_rect(Rect2(tx - 8, 8, 270, 28), Color(0.02, 0.08, 0.15, 0.85))
+	draw_rect(Rect2(tx - 8, 8, 270, 30), Color(0.06, 0.12, 0.22, 0.88))
 	draw_rect(Rect2(tx - 8, 8, 270, 1), Color(0.2, 0.8, 0.5, 0.4))
 	draw_string(font, Vector2(tx, 28), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.3, 0.9, 0.5, 0.95))
 

@@ -19,6 +19,53 @@ const DETAIL_PAD: float = 30.0
 const FOOTER_H: float = 36.0
 const ICON_R: float = 22.0
 
+# Fish tank ecosystem
+const TANK_BOUNDS: Rect2 = Rect2(-400, -320, 800, 640)
+const TANK_POP_PREDATORS: int = 3
+const TANK_POP_PREY: int = 5
+const TANK_POP_MISC: int = 3
+const TANK_POP_FOOD: int = 10
+const TANK_RESPAWN_DELAY: float = 2.0
+const TANK_FOOD_RESPAWN_DELAY: float = 4.0
+const TANK_CREATURE_SCALE: float = 1.8  # Scale up so creatures are visible in tank
+
+# Tank creature roster: which creatures to spawn by role
+const TANK_PREDATORS: Array = ["enemy_cell", "dart_predator", "siren_cell"]
+const TANK_PREY: Array = ["snake_prey"]
+const TANK_MISC: Array = ["ink_bomber", "electric_eel", "splitter_cell"]
+
+# Font sizes (increased for readability)
+const FONT_NAME: int = 28
+const FONT_CATEGORY: int = 14
+const FONT_STAT_LABEL: int = 13
+const FONT_STAT_VALUE: int = 18
+const FONT_BODY: int = 13
+const FONT_SECTION: int = 14
+const FONT_VOICE_BTN: int = 12
+
+# Scene paths for cell stage creatures (SubViewport live preview)
+const CELL_SCENE_PATHS: Dictionary = {
+	"food_particle": "res://scenes/food_particle.tscn",
+	"snake_prey": "res://scenes/snake_prey.tscn",
+	"enemy_cell": "res://scenes/enemy_cell.tscn",
+	"dart_predator": "res://scenes/dart_predator.tscn",
+	"siren_cell": "res://scenes/siren_cell.tscn",
+	"splitter_cell": "res://scenes/splitter_cell.tscn",
+	"electric_eel": "res://scenes/electric_eel.tscn",
+	"ink_bomber": "res://scenes/ink_bomber.tscn",
+	"leviathan": "res://scenes/leviathan.tscn",
+	"parasite_organism": "res://scenes/parasite_organism.tscn",
+	"danger_zone": "res://scenes/danger_zone.tscn",
+	"repeller": "res://scenes/repeller_organism.tscn",
+	"kin_organism": "res://scenes/kin_organism.tscn",
+	"oculus_titan": "res://scenes/oculus_titan.tscn",
+	"juggernaut": "res://scenes/juggernaut.tscn",
+	"basilisk": "res://scenes/basilisk.tscn",
+}
+
+const BOSS_CREATURES: Array = ["oculus_titan", "juggernaut", "basilisk",
+	"macrophage_queen", "cardiac_colossus", "gut_warden", "alveolar_titan", "marrow_sentinel"]
+
 # Unified creature data — merged from both stages
 const ALL_CREATURES: Array = [
 	# ==================== CELL STAGE ====================
@@ -314,6 +361,17 @@ var _voice_playing_timer: float = 0.0
 var _voice_playing_type: int = -1
 const VOICE_TYPES: Array = ["idle", "alert", "attack", "hurt", "death"]
 
+# Fish tank ecosystem
+var _tank_viewport: SubViewport = null
+var _tank_camera: Camera2D = null
+var _tank_creatures: Array = []  # All creature nodes in tank
+var _tank_food: Array = []  # Food particle nodes
+var _tank_initialized: bool = false
+var _tank_selected_node: Node2D = null  # Currently followed creature in tank
+var _tank_camera_target: Vector2 = Vector2.ZERO
+var _tank_highlight_time: float = 0.0  # For pulsing selection highlight
+var _scanner_time: float = 0.0
+
 # Discovery VFX
 var _last_seen_discoveries: Dictionary = {}
 var _discovery_vfx_timers: Dictionary = {}  # creature_id -> time_remaining
@@ -336,6 +394,9 @@ func toggle() -> void:
 		_rebuild_filtered()
 		_selected_idx = -1
 		_scroll_offset = 0.0
+		# Initialize tank on first open if cell tab
+		if _stage_tab == 0 and not _tank_initialized:
+			_initialize_tank()
 		queue_redraw()
 	else:
 		database_closed.emit()
@@ -368,11 +429,20 @@ func _process(delta: float) -> void:
 	if not _active:
 		return
 	_time += delta
+	_scanner_time += delta
 	_scan_pulse = fmod(_time * 0.8, 1.0)
 	if _voice_playing_timer > 0.0:
 		_voice_playing_timer -= delta
 	for col in _glyph_columns:
 		col.offset += col.speed * delta
+	# Update tank camera follow and selection highlight
+	if _tank_initialized and _stage_tab == 0:
+		_tank_highlight_time += delta
+		_update_tank_camera(delta)
+		# Pulse selected creature modulate
+		if _tank_selected_node and is_instance_valid(_tank_selected_node):
+			var glow: float = 1.0 + sin(_tank_highlight_time * 3.0) * 0.12
+			_tank_selected_node.modulate = Color(glow, glow, minf(glow + 0.08, 1.2), 1.0)
 	# Tick discovery VFX
 	var expired: Array = []
 	for cid in _discovery_vfx_timers:
@@ -420,6 +490,10 @@ func _handle_click(_pos: Vector2) -> void:
 		_sub_category = "ALL"
 		_scroll_offset = 0.0
 		_selected_idx = -1
+		_tank_selected_node = null
+		# Lazy-init tank when switching to cell tab
+		if _stage_tab == 0 and not _tank_initialized:
+			_initialize_tank()
 		_rebuild_filtered()
 		return
 	if _hover_sub_tab >= 0:
@@ -440,6 +514,8 @@ func _handle_click(_pos: Vector2) -> void:
 	if _hover_entry >= 0 and _hover_entry < _filtered_entries.size():
 		var data_idx: int = _filtered_entries[_hover_entry]
 		_selected_idx = data_idx
+		# Find matching creature in fish tank
+		_select_tank_creature(ALL_CREATURES[data_idx].id)
 
 func _handle_hover(pos: Vector2) -> void:
 	_hover_entry = -1
@@ -499,6 +575,190 @@ func _handle_hover(pos: Vector2) -> void:
 				if rel_y - entry_top < ENTRY_H:
 					_hover_entry = idx
 
+# ======================== FISH TANK ECOSYSTEM ========================
+
+func _initialize_tank() -> void:
+	if _tank_initialized:
+		return
+	# Create SubViewport for the ecosystem.
+	# Note: Tank creatures join SceneTree groups (prey, enemies, etc.) which is fine because
+	# the database is only accessible from the main menu where no gameplay is active.
+	# The isolated World2D prevents physics contamination.
+	_tank_viewport = SubViewport.new()
+	_tank_viewport.size = Vector2i(int(TANK_BOUNDS.size.x), int(TANK_BOUNDS.size.y))
+	_tank_viewport.transparent_bg = true
+	_tank_viewport.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
+	_tank_viewport.gui_disable_input = true
+	_tank_viewport.world_2d = World2D.new()
+	_tank_viewport.physics_object_picking = false
+	add_child(_tank_viewport)
+	# Camera centered in tank
+	_tank_camera = Camera2D.new()
+	_tank_camera.position = Vector2.ZERO
+	_tank_camera.enabled = true
+	_tank_viewport.add_child(_tank_camera)
+	# Boundary walls
+	_create_tank_walls()
+	# Populate ecosystem
+	_populate_tank()
+	_tank_initialized = true
+
+func _create_tank_walls() -> void:
+	var half_w: float = TANK_BOUNDS.size.x * 0.5
+	var half_h: float = TANK_BOUNDS.size.y * 0.5
+	var thickness: float = 20.0
+	# Wall definitions: [pos_x, pos_y, size_x, size_y]
+	var walls: Array = [
+		[0, -(half_h + thickness * 0.5), TANK_BOUNDS.size.x + thickness * 2, thickness],  # Top
+		[0, half_h + thickness * 0.5, TANK_BOUNDS.size.x + thickness * 2, thickness],  # Bottom
+		[-(half_w + thickness * 0.5), 0, thickness, TANK_BOUNDS.size.y + thickness * 2],  # Left
+		[half_w + thickness * 0.5, 0, thickness, TANK_BOUNDS.size.y + thickness * 2],  # Right
+	]
+	for w in walls:
+		var body := StaticBody2D.new()
+		body.position = Vector2(w[0], w[1])
+		var col_shape := CollisionShape2D.new()
+		var rect := RectangleShape2D.new()
+		rect.size = Vector2(w[2], w[3])
+		col_shape.shape = rect
+		body.add_child(col_shape)
+		_tank_viewport.add_child(body)
+
+func _populate_tank() -> void:
+	# Spawn predators
+	for i in range(TANK_POP_PREDATORS):
+		var cid: String = TANK_PREDATORS[i % TANK_PREDATORS.size()]
+		_spawn_tank_creature(cid)
+	# Spawn prey
+	for i in range(TANK_POP_PREY):
+		var cid: String = TANK_PREY[i % TANK_PREY.size()]
+		_spawn_tank_creature(cid)
+	# Spawn misc (ink_bomber, electric_eel, etc.)
+	for i in range(TANK_POP_MISC):
+		var cid: String = TANK_MISC[i % TANK_MISC.size()]
+		_spawn_tank_creature(cid)
+	# Spawn food particles
+	for i in range(TANK_POP_FOOD):
+		_spawn_tank_food()
+
+func _spawn_tank_creature(creature_id: String) -> void:
+	if not _tank_initialized or not _active:
+		return  # Guard: don't spawn if tank is closed or inactive
+	if not CELL_SCENE_PATHS.has(creature_id):
+		return
+	var scene: PackedScene = load(CELL_SCENE_PATHS[creature_id])
+	if not scene:
+		return
+	var creature: Node = scene.instantiate()
+	# Random position within bounds (inset from walls)
+	var hw: float = TANK_BOUNDS.size.x * 0.5 - 40
+	var hh: float = TANK_BOUNDS.size.y * 0.5 - 40
+	creature.position = Vector2(randf_range(-hw, hw), randf_range(-hh, hh))
+	# Scale up so creatures are visible
+	creature.scale = Vector2(TANK_CREATURE_SCALE, TANK_CREATURE_SCALE)
+	# Tag for identification
+	creature.set_meta("tank_creature_id", creature_id)
+	# Detect when creature dies (queue_free triggers tree_exiting)
+	creature.tree_exiting.connect(_on_tank_creature_exiting.bind(creature_id))
+	_tank_creatures.append(creature)
+	_tank_viewport.add_child(creature)
+
+func _spawn_tank_food() -> void:
+	if not _tank_initialized or not _active:
+		return  # Guard: don't spawn if tank is closed or inactive
+	var scene: PackedScene = load("res://scenes/food_particle.tscn")
+	if not scene:
+		return
+	var food: Node = scene.instantiate()
+	var hw: float = TANK_BOUNDS.size.x * 0.5 - 30
+	var hh: float = TANK_BOUNDS.size.y * 0.5 - 30
+	food.position = Vector2(randf_range(-hw, hw), randf_range(-hh, hh))
+	food.scale = Vector2(TANK_CREATURE_SCALE, TANK_CREATURE_SCALE)
+	# Setup with random biomolecule data
+	if food.has_method("setup"):
+		var bio_data: Dictionary = BiologyLoader.get_random_biomolecule()
+		if bio_data.is_empty():
+			bio_data = {"color": [0.3, 0.7, 1.0], "category": "default", "rarity": "common"}
+		food.setup(bio_data, false)
+	food.set_meta("tank_creature_id", "food_particle")
+	food.tree_exiting.connect(_on_tank_food_exiting)
+	_tank_food.append(food)
+	_tank_viewport.add_child(food)
+
+func _on_tank_creature_exiting(creature_id: String) -> void:
+	# Clean up refs — tree_exiting fires before free, so check queued_for_deletion
+	_tank_creatures = _tank_creatures.filter(func(c): return is_instance_valid(c) and not c.is_queued_for_deletion())
+	if _tank_selected_node and (not is_instance_valid(_tank_selected_node) or _tank_selected_node.is_queued_for_deletion()):
+		_tank_selected_node = null
+	# Respawn after delay (spawn function has its own _active guard)
+	if _tank_initialized:
+		get_tree().create_timer(TANK_RESPAWN_DELAY).timeout.connect(_spawn_tank_creature.bind(creature_id))
+
+func _on_tank_food_exiting() -> void:
+	_tank_food = _tank_food.filter(func(c): return is_instance_valid(c) and not c.is_queued_for_deletion())
+	# Spawn function has its own _active guard, safe to always schedule
+	if _tank_initialized:
+		get_tree().create_timer(TANK_FOOD_RESPAWN_DELAY).timeout.connect(_spawn_tank_food)
+
+func _update_tank_camera(delta: float) -> void:
+	if not _tank_camera:
+		return
+	var target: Vector2 = Vector2.ZERO
+	if _tank_selected_node and is_instance_valid(_tank_selected_node):
+		target = _tank_selected_node.position
+	_tank_camera_target = _tank_camera_target.lerp(target, delta * 3.0)
+	# Clamp camera to keep tank in view
+	var hw: float = TANK_BOUNDS.size.x * 0.25
+	var hh: float = TANK_BOUNDS.size.y * 0.25
+	_tank_camera_target.x = clampf(_tank_camera_target.x, -hw, hw)
+	_tank_camera_target.y = clampf(_tank_camera_target.y, -hh, hh)
+	_tank_camera.position = _tank_camera_target
+
+func _select_tank_creature(creature_id: String) -> void:
+	# Clear previous highlight
+	if _tank_selected_node and is_instance_valid(_tank_selected_node):
+		_tank_selected_node.modulate = Color.WHITE
+	_tank_selected_node = null
+	_tank_highlight_time = 0.0
+	# Find first matching creature in tank
+	for c in _tank_creatures:
+		if is_instance_valid(c) and not c.is_queued_for_deletion():
+			if c.get_meta("tank_creature_id", "") == creature_id:
+				_tank_selected_node = c
+				break
+
+func _draw_scanner_overlay(rect: Rect2, col: Color) -> void:
+	# Sweeping horizontal scan line with glow
+	var scan_y: float = rect.position.y + fmod(_scanner_time * 40.0, rect.size.y)
+	draw_line(Vector2(rect.position.x, scan_y), Vector2(rect.end.x, scan_y), Color(col.r, col.g, col.b, 0.25), 1.5)
+	for i in range(1, 5):
+		var fade_a: float = 0.25 * (1.0 - float(i) / 5.0)
+		draw_line(Vector2(rect.position.x, scan_y - i * 2), Vector2(rect.end.x, scan_y - i * 2), Color(col.r, col.g, col.b, fade_a * 0.3), 1.0)
+	# Corner brackets
+	var arm: float = 22.0
+	var bw: float = 2.0
+	var bc: Color = Color(col.r, col.g, col.b, 0.6)
+	draw_line(Vector2(rect.position.x, rect.position.y), Vector2(rect.position.x + arm, rect.position.y), bc, bw)
+	draw_line(Vector2(rect.position.x, rect.position.y), Vector2(rect.position.x, rect.position.y + arm), bc, bw)
+	draw_line(Vector2(rect.end.x, rect.position.y), Vector2(rect.end.x - arm, rect.position.y), bc, bw)
+	draw_line(Vector2(rect.end.x, rect.position.y), Vector2(rect.end.x, rect.position.y + arm), bc, bw)
+	draw_line(Vector2(rect.position.x, rect.end.y), Vector2(rect.position.x + arm, rect.end.y), bc, bw)
+	draw_line(Vector2(rect.position.x, rect.end.y), Vector2(rect.position.x, rect.end.y - arm), bc, bw)
+	draw_line(Vector2(rect.end.x, rect.end.y), Vector2(rect.end.x - arm, rect.end.y), bc, bw)
+	draw_line(Vector2(rect.end.x, rect.end.y), Vector2(rect.end.x, rect.end.y - arm), bc, bw)
+	# Blinking REC dot + label
+	var mono: Font = UIConstants.get_mono_font()
+	draw_string(mono, Vector2(rect.position.x + 6, rect.position.y + 14), "LIVE ECOSYSTEM", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(col.r, col.g, col.b, 0.5))
+	if fmod(_scanner_time, 1.2) < 0.8:
+		draw_circle(Vector2(rect.end.x - 14, rect.position.y + 10), 3.5, Color(0.9, 0.2, 0.15, 0.7))
+		draw_string(mono, Vector2(rect.end.x - 40, rect.position.y + 14), "REC", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.9, 0.2, 0.15, 0.5))
+	# Timestamp
+	var ts_str: String = "%02d:%02d:%02d" % [int(_scanner_time / 3600) % 24, int(_scanner_time / 60) % 60, int(_scanner_time) % 60]
+	draw_string(mono, Vector2(rect.end.x - 60, rect.end.y - 5), ts_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(col.r, col.g, col.b, 0.4))
+	# Entity count bottom-left
+	var pop_str: String = "POP: %d" % (_tank_creatures.size() + _tank_food.size())
+	draw_string(mono, Vector2(rect.position.x + 6, rect.end.y - 5), pop_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(col.r, col.g, col.b, 0.4))
+
 # ======================== DRAWING ========================
 
 func _draw() -> void:
@@ -507,7 +767,7 @@ func _draw() -> void:
 	var s: Vector2 = size
 
 	# Background
-	draw_rect(Rect2(0, 0, s.x, s.y), Color(0.01, 0.02, 0.04, 0.97))
+	draw_rect(Rect2(0, 0, s.x, s.y), Color(0.06, 0.08, 0.14, 1.0))
 
 	# Blueprint grid
 	UIConstants.draw_blueprint_grid(self, s, 0.35)
@@ -536,9 +796,9 @@ func _draw() -> void:
 
 	# Separator
 	var sep_x: float = SIDEBAR_W + 26
-	draw_line(Vector2(sep_x, HEADER_H + 5), Vector2(sep_x, s.y - FOOTER_H), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.2), 1.0)
+	draw_line(Vector2(sep_x, HEADER_H + 5), Vector2(sep_x, s.y - FOOTER_H), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.40), 1.0)
 	var glow_y: float = fmod(_time * 35.0, s.y - HEADER_H - FOOTER_H) + HEADER_H
-	draw_line(Vector2(sep_x, glow_y - 25), Vector2(sep_x, glow_y + 25), Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.35), 2.0)
+	draw_line(Vector2(sep_x, glow_y - 25), Vector2(sep_x, glow_y + 25), Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.55), 2.0)
 
 	# Detail panel
 	_draw_detail_panel(sep_x + DETAIL_PAD, s)
@@ -554,7 +814,7 @@ func _draw_header(s: Vector2) -> void:
 	var mono: Font = UIConstants.get_mono_font()
 
 	# Header background
-	draw_rect(Rect2(0, 0, s.x, HEADER_H), Color(0.02, 0.04, 0.08, 0.94))
+	draw_rect(Rect2(0, 0, s.x, HEADER_H), Color(0.08, 0.10, 0.18, 0.94))
 	draw_line(Vector2(0, HEADER_H - 1), Vector2(s.x, HEADER_H - 1), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.4), 1.0)
 
 	# Moving accent on header bottom
@@ -606,7 +866,7 @@ func _draw_stage_tabs(s: Vector2) -> void:
 		var is_active: bool = i == _stage_tab
 		var is_hovered: bool = _hover_stage_tab == i
 
-		var bg: Color = Color(0.08, 0.18, 0.28) if is_active else Color(0.02, 0.05, 0.08)
+		var bg: Color = Color(0.12, 0.22, 0.34) if is_active else Color(0.06, 0.10, 0.16)
 		if is_hovered and not is_active:
 			bg = bg.lightened(0.1)
 		draw_rect(rect, bg)
@@ -616,9 +876,9 @@ func _draw_stage_tabs(s: Vector2) -> void:
 
 		draw_rect(rect, Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.25), false, 1.0)
 
-		var text_col: Color = UIConstants.TEXT_BRIGHT if is_active else UIConstants.TEXT_DIM
-		var ts: Vector2 = font.get_string_size(tab_names[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 13)
-		draw_string(font, Vector2(rect.position.x + (tab_w - ts.x) * 0.5, rect.position.y + 30), tab_names[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, text_col)
+		var text_col: Color = UIConstants.TEXT_BRIGHT if is_active else UIConstants.TEXT_NORMAL
+		var ts: Vector2 = font.get_string_size(tab_names[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
+		draw_string(font, Vector2(rect.position.x + (tab_w - ts.x) * 0.5, rect.position.y + 30), tab_names[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 14, text_col)
 
 func _draw_sub_tabs(s: Vector2) -> void:
 	var font: Font = UIConstants.get_display_font()
@@ -632,7 +892,7 @@ func _draw_sub_tabs(s: Vector2) -> void:
 		var is_active: bool = cat_name == _sub_category
 		var is_hovered: bool = _hover_sub_tab == i
 
-		var bg: Color = Color(0.06, 0.14, 0.22) if is_active else Color(0.02, 0.04, 0.07)
+		var bg: Color = Color(0.10, 0.18, 0.28) if is_active else Color(0.06, 0.10, 0.16)
 		if is_hovered and not is_active:
 			bg = bg.lightened(0.08)
 		draw_rect(rect, bg)
@@ -640,8 +900,8 @@ func _draw_sub_tabs(s: Vector2) -> void:
 		if is_active:
 			draw_line(Vector2(rect.position.x, rect.end.y - 1), Vector2(rect.end.x, rect.end.y - 1), UIConstants.ACCENT * 0.7, 1.5)
 
-		var text_col: Color = UIConstants.TEXT_BRIGHT if is_active else UIConstants.TEXT_DIM
-		draw_string(font, Vector2(rect.position.x + 5, rect.position.y + 22), cat_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, text_col)
+		var text_col: Color = UIConstants.TEXT_BRIGHT if is_active else UIConstants.TEXT_NORMAL
+		draw_string(font, Vector2(rect.position.x + 5, rect.position.y + 22), cat_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, text_col)
 
 func _draw_sidebar(s: Vector2) -> void:
 	var font: Font = UIConstants.get_display_font()
@@ -662,11 +922,11 @@ func _draw_sidebar(s: Vector2) -> void:
 		var is_hovered: bool = fi == _hover_entry
 
 		# Entry background
-		var bg_col: Color = Color(0.03, 0.06, 0.1)
+		var bg_col: Color = Color(0.07, 0.12, 0.20)
 		if is_selected:
-			bg_col = Color(0.06, 0.14, 0.22)
+			bg_col = Color(0.10, 0.18, 0.28)
 		elif is_hovered:
-			bg_col = Color(0.05, 0.1, 0.16)
+			bg_col = Color(0.09, 0.15, 0.24)
 		draw_rect(Rect2(16, ey, SIDEBAR_W, ENTRY_H), bg_col)
 
 		# Selection bar
@@ -674,12 +934,12 @@ func _draw_sidebar(s: Vector2) -> void:
 			draw_rect(Rect2(16, ey, 3, ENTRY_H), UIConstants.ACCENT)
 
 		# Border
-		var border_col: Color = UIConstants.ACCENT_DIM if is_selected else Color(0.1, 0.18, 0.25)
-		draw_rect(Rect2(16, ey, SIDEBAR_W, ENTRY_H), Color(border_col.r, border_col.g, border_col.b, 0.3), false, 1.0)
+		var border_col: Color = UIConstants.ACCENT_DIM if is_selected else Color(0.18, 0.28, 0.38)
+		draw_rect(Rect2(16, ey, SIDEBAR_W, ENTRY_H), Color(border_col.r, border_col.g, border_col.b, 0.5), false, 1.0)
 
 		# Icon
 		var ic: Array = entry.icon_color
-		var icon_col: Color = Color(ic[0], ic[1], ic[2]) if discovered else Color(0.15, 0.15, 0.15)
+		var icon_col: Color = Color(ic[0], ic[1], ic[2]) if discovered else Color(0.28, 0.28, 0.32)
 		var icon_center: Vector2 = Vector2(48, ey + ENTRY_H * 0.5)
 		_draw_blueprint_icon(icon_center, ICON_R * 0.8, icon_col, entry, discovered)
 
@@ -689,19 +949,19 @@ func _draw_sidebar(s: Vector2) -> void:
 
 		# Name
 		var name_text: String = entry.name if discovered else "??? UNKNOWN ???"
-		var name_col: Color = Color(0.75, 0.92, 1.0) if discovered else Color(0.25, 0.25, 0.3)
+		var name_col: Color = Color(0.80, 0.95, 1.0) if discovered else Color(0.45, 0.48, 0.55)
 		draw_string(font, Vector2(76, ey + 24), name_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, name_col)
 
 		# Category + threat dots
 		var cat_col: Color = _category_color(entry.category)
 		if discovered:
-			draw_string(mono, Vector2(76, ey + 42), entry.category, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, cat_col * 0.7)
+			draw_string(mono, Vector2(76, ey + 42), entry.category, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, cat_col * 0.85)
 			var threat: int = _get_threat_level(entry)
 			for t in range(5):
-				var dot_col: Color = UIConstants.STAT_RED if t < threat else Color(0.12, 0.12, 0.12)
+				var dot_col: Color = UIConstants.STAT_RED if t < threat else Color(0.22, 0.22, 0.25)
 				draw_circle(Vector2(148 + t * 12, ey + 39), 3.0, dot_col)
 		else:
-			draw_string(mono, Vector2(76, ey + 42), "UNSCANNED", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.2, 0.2, 0.2))
+			draw_string(mono, Vector2(76, ey + 42), "UNSCANNED", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.50, 0.50, 0.58))
 
 		# HP bar
 		if discovered and entry.hp > 0:
@@ -709,17 +969,158 @@ func _draw_sidebar(s: Vector2) -> void:
 			var bar_w: float = 120.0
 			var bar_h: float = 5.0
 			var bar_y: float = ey + ENTRY_H * 0.5 - bar_h * 0.5
-			draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(0.06, 0.06, 0.06))
+			draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(0.15, 0.15, 0.18))
 			var hp_ratio: float = clampf(float(entry.hp) / 300.0, 0.0, 1.0)
 			var hp_col: Color = UIConstants.STAT_GREEN.lerp(UIConstants.STAT_RED, 1.0 - hp_ratio)
 			draw_rect(Rect2(bar_x, bar_y, bar_w * hp_ratio, bar_h), hp_col)
-			draw_string(mono, Vector2(bar_x + bar_w + 6, bar_y + 7), str(entry.hp), HORIZONTAL_ALIGNMENT_LEFT, -1, 8, UIConstants.TEXT_DIM)
+			draw_string(mono, Vector2(bar_x + bar_w + 6, bar_y + 7), str(entry.hp), HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UIConstants.TEXT_DIM)
+
+func _draw_cell_tank_panel(x: float, s: Vector2, panel_w: float, font: Font, mono: Font) -> void:
+	## Draws the fish tank ecosystem view for cell stage creatures.
+	var tank_h: float = minf(panel_w * 0.62, (s.y - HEADER_H - TAB_H - FOOTER_H) * 0.55)
+	var tank_rect: Rect2 = Rect2(x + 4, HEADER_H + TAB_H + 8, panel_w - 8, tank_h)
+
+	# Dark background behind tank
+	draw_rect(tank_rect, Color(0.02, 0.04, 0.07, 0.95))
+
+	# Draw tank viewport texture
+	if _tank_viewport and _tank_initialized:
+		var tex: ViewportTexture = _tank_viewport.get_texture()
+		if tex:
+			draw_texture_rect(tex, tank_rect, false)
+
+	# Scanner overlay color (matches selected creature or default accent)
+	var overlay_col: Color = UIConstants.ACCENT
+	if _selected_idx >= 0 and _selected_idx < ALL_CREATURES.size():
+		var oc: Array = ALL_CREATURES[_selected_idx].icon_color
+		overlay_col = Color(oc[0], oc[1], oc[2])
+	_draw_scanner_overlay(tank_rect, overlay_col)
+	UIConstants.draw_corner_frame(self, Rect2(tank_rect.position.x - 2, tank_rect.position.y - 2, tank_rect.size.x + 4, tank_rect.size.y + 4), Color(overlay_col.r, overlay_col.g, overlay_col.b, 0.35))
+
+	# --- No selection: show hint and return ---
+	if _selected_idx < 0 or _selected_idx >= ALL_CREATURES.size():
+		_voice_btn_rects.clear()
+		var cx: float = tank_rect.position.x + tank_rect.size.x * 0.5
+		var cy: float = tank_rect.position.y + tank_rect.size.y * 0.5
+		draw_string(font, Vector2(cx - 100, cy), "SELECT AN ORGANISM", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.75))
+		draw_string(mono, Vector2(cx - 118, cy + 20), "Click sidebar to track in ecosystem", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.6))
+		_draw_helix(Vector2(cx, tank_rect.end.y + 80), 75.0)
+		return
+
+	var entry: Dictionary = ALL_CREATURES[_selected_idx]
+	var discovered: bool = GameManager.is_creature_discovered(entry.id)
+	var ic: Array = entry.icon_color
+	var icon_col: Color = Color(ic[0], ic[1], ic[2])
+
+	# --- Undiscovered: locked overlay on tank ---
+	if not discovered:
+		_voice_btn_rects.clear()
+		var cx: float = tank_rect.position.x + tank_rect.size.x * 0.5
+		var cy: float = tank_rect.position.y + tank_rect.size.y * 0.5
+		draw_rect(tank_rect, Color(0, 0, 0, 0.55))
+		_draw_blueprint_icon(Vector2(cx, cy - 20), 60.0, Color(0.12, 0.12, 0.12), entry, false)
+		draw_string(font, Vector2(cx - 130, cy + 55), "ORGANISM NOT YET SCANNED", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.65, 0.55, 0.55, 0.85))
+		draw_string(mono, Vector2(cx - 148, cy + 77), "Encounter this organism in-game to unlock data.", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, Color(0.55, 0.50, 0.50, 0.72))
+		return
+
+	# --- Selection tracking indicator ---
+	if _tank_selected_node and is_instance_valid(_tank_selected_node):
+		var cp: Vector2 = _tank_selected_node.position
+		var cam_p: Vector2 = _tank_camera.position if _tank_camera else Vector2.ZERO
+		var vp_size: Vector2 = Vector2(TANK_BOUNDS.size)
+		var norm_x: float = (cp.x - cam_p.x) / vp_size.x + 0.5
+		var norm_y: float = (cp.y - cam_p.y) / vp_size.y + 0.5
+		var screen_pos: Vector2 = Vector2(
+			tank_rect.position.x + norm_x * tank_rect.size.x,
+			tank_rect.position.y + norm_y * tank_rect.size.y
+		)
+		# Only draw indicator if within tank bounds
+		if tank_rect.has_point(screen_pos):
+			# Pulsing selection ring
+			var ring_r: float = 18.0 + sin(_tank_highlight_time * 3.0) * 3.0
+			var ring_a: float = 0.5 + sin(_tank_highlight_time * 2.5) * 0.15
+			draw_arc(screen_pos, ring_r, 0, TAU, 24, Color(icon_col.r, icon_col.g, icon_col.b, ring_a), 2.0)
+			# Corner brackets around selection
+			var br: float = ring_r + 6
+			var arm_l: float = 8.0
+			var bc2: Color = Color(icon_col.r, icon_col.g, icon_col.b, ring_a * 0.7)
+			draw_line(screen_pos + Vector2(-br, -br), screen_pos + Vector2(-br + arm_l, -br), bc2, 1.5)
+			draw_line(screen_pos + Vector2(-br, -br), screen_pos + Vector2(-br, -br + arm_l), bc2, 1.5)
+			draw_line(screen_pos + Vector2(br, -br), screen_pos + Vector2(br - arm_l, -br), bc2, 1.5)
+			draw_line(screen_pos + Vector2(br, -br), screen_pos + Vector2(br, -br + arm_l), bc2, 1.5)
+			draw_line(screen_pos + Vector2(-br, br), screen_pos + Vector2(-br + arm_l, br), bc2, 1.5)
+			draw_line(screen_pos + Vector2(-br, br), screen_pos + Vector2(-br, br - arm_l), bc2, 1.5)
+			draw_line(screen_pos + Vector2(br, br), screen_pos + Vector2(br - arm_l, br), bc2, 1.5)
+			draw_line(screen_pos + Vector2(br, br), screen_pos + Vector2(br, br - arm_l), bc2, 1.5)
+
+	# --- Stats HUD overlay at bottom of tank ---
+	var hud_h: float = 88.0
+	var hud_y: float = tank_rect.end.y - hud_h
+	# Gradient fade from transparent to dark
+	for i in range(12):
+		var gy: float = hud_y - 12 + i
+		var ga: float = float(i) / 12.0 * 0.75
+		draw_line(Vector2(tank_rect.position.x, gy), Vector2(tank_rect.end.x, gy), Color(0.02, 0.04, 0.07, ga), 1.0)
+	draw_rect(Rect2(tank_rect.position.x, hud_y, tank_rect.size.x, hud_h), Color(0.02, 0.04, 0.07, 0.78))
+
+	var hx: float = tank_rect.position.x + 12
+	var hy: float = hud_y + 6
+
+	# Creature name (large)
+	draw_string(font, Vector2(hx, hy + FONT_NAME - 6), entry.name, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_NAME, UIConstants.TEXT_BRIGHT)
+	# Category
+	var cat_col: Color = _category_color(entry.category)
+	draw_string(font, Vector2(hx, hy + FONT_NAME + FONT_CATEGORY - 4), entry.category, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_CATEGORY, cat_col)
+
+	# Stats on right side of HUD
+	var stat_rx: float = tank_rect.end.x - 210
+	var stat_ry: float = hud_y + 10
+	# HP
+	draw_string(mono, Vector2(stat_rx, stat_ry + 11), "HP", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
+	var hp_str: String = str(entry.hp) if entry.hp > 0 else "N/A"
+	var hp_col: Color = UIConstants.STAT_GREEN if entry.hp > 0 else UIConstants.TEXT_DIM
+	draw_string(font, Vector2(stat_rx + 24, stat_ry + 11), hp_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, hp_col)
+	# DAMAGE
+	draw_string(mono, Vector2(stat_rx + 80, stat_ry + 11), "DMG", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
+	var dmg_col: Color = UIConstants.STAT_RED if entry.damage > 0 else UIConstants.TEXT_DIM
+	draw_string(font, Vector2(stat_rx + 112, stat_ry + 11), str(entry.damage), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, dmg_col)
+	# SPEED
+	draw_string(mono, Vector2(stat_rx, stat_ry + 32), "SPD", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
+	draw_string(font, Vector2(stat_rx + 30, stat_ry + 32), "%.1f" % entry.speed, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.4, 0.7, 0.9))
+	# THREAT
+	draw_string(mono, Vector2(stat_rx + 80, stat_ry + 32), "THREAT", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
+	var threat: int = _get_threat_level(entry)
+	for t in range(5):
+		var dot_col: Color = UIConstants.STAT_RED if t < threat else Color(0.22, 0.22, 0.25)
+		draw_circle(Vector2(stat_rx + 130 + t * 13, stat_ry + 29), 4.0, dot_col)
+
+	# Trait tags at bottom of HUD
+	if entry.has("traits") and entry.traits.size() > 0:
+		var trait_x: float = hx
+		var trait_y: float = hud_y + hud_h - 24
+		for trait_name in entry.traits:
+			var tw: float = font.get_string_size(trait_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 12
+			if trait_x + tw > tank_rect.end.x - 10:
+				break  # Don't overflow HUD
+			draw_rect(Rect2(trait_x, trait_y, tw, 18), Color(icon_col.r, icon_col.g, icon_col.b, 0.12))
+			draw_rect(Rect2(trait_x, trait_y, tw, 18), Color(icon_col.r, icon_col.g, icon_col.b, 0.3), false, 1.0)
+			draw_string(font, Vector2(trait_x + 6, trait_y + 13), trait_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(icon_col.r, icon_col.g, icon_col.b, 0.85))
+			trait_x += tw + 4
+
+	# ====== Below tank: Text sections ======
+	_draw_info_sections(x, tank_rect.end.y + 8, panel_w, entry, icon_col)
 
 func _draw_detail_panel(x: float, s: Vector2) -> void:
 	var font: Font = UIConstants.get_display_font()
 	var mono: Font = UIConstants.get_mono_font()
 	var panel_w: float = s.x - x - DETAIL_PAD
 
+	# Cell stage: Fish Tank Ecosystem
+	if _stage_tab == 0:
+		_draw_cell_tank_panel(x, s, panel_w, font, mono)
+		return
+
+	# Parasite stage: Classic blueprint layout
 	if _selected_idx < 0 or _selected_idx >= ALL_CREATURES.size():
 		_voice_btn_rects.clear()
 		_draw_idle_scanner(x, panel_w, s)
@@ -732,68 +1133,137 @@ func _draw_detail_panel(x: float, s: Vector2) -> void:
 
 	if not discovered:
 		_voice_btn_rects.clear()
-		# Show locked silhouette
-		var bp_center: Vector2 = Vector2(x + panel_w * 0.5, HEADER_H + TAB_H + 120)
-		_draw_blueprint_icon(bp_center, 55.0, Color(0.12, 0.12, 0.12), entry, false)
-		_draw_scanner_reticle(bp_center, 70.0, Color(0.2, 0.2, 0.2), 0.3)
-		draw_string(font, Vector2(x + 30, HEADER_H + TAB_H + 200), "ORGANISM NOT YET SCANNED", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.35, 0.25, 0.25, 0.6))
-		draw_string(mono, Vector2(x + 30, HEADER_H + TAB_H + 220), "Encounter this organism in-game to unlock data.", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.25, 0.2, 0.2, 0.4))
+		# Show locked silhouette — enlarged
+		var bp_center: Vector2 = Vector2(x + panel_w * 0.5, HEADER_H + TAB_H + 140)
+		_draw_blueprint_icon(bp_center, 80.0, Color(0.12, 0.12, 0.12), entry, false)
+		_draw_scanner_reticle(bp_center, 100.0, Color(0.32, 0.32, 0.35), 0.45)
+		# Scanner overlay on the silhouette area
+		var lock_rect: Rect2 = Rect2(bp_center.x - 110, bp_center.y - 110, 220, 220)
+		_draw_scanner_overlay(lock_rect, Color(0.32, 0.32, 0.35))
+		draw_string(font, Vector2(x + 30, HEADER_H + TAB_H + 270), "ORGANISM NOT YET SCANNED", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.65, 0.55, 0.55, 0.85))
+		draw_string(mono, Vector2(x + 30, HEADER_H + TAB_H + 296), "Encounter this organism in-game to unlock data.", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, Color(0.55, 0.50, 0.50, 0.72))
 		return
 
-	var y: float = HEADER_H + TAB_H + 15.0
+	# ============= TWO-COLUMN LAYOUT =============
+	var y_start: float = HEADER_H + TAB_H + 12.0
+	var preview_w: float = panel_w * 0.50
+	var stats_x: float = x + preview_w + 15
+	var stats_w: float = panel_w - preview_w - 15
 
-	# --- Blueprint illustration area ---
-	var bp_center: Vector2 = Vector2(x + panel_w * 0.5, y + 75)
-	# Blueprint background box
-	var bp_box: Rect2 = Rect2(x + 10, y, panel_w - 20, 155)
-	draw_rect(bp_box, Color(0.01, 0.03, 0.06, 0.6))
-	# Blueprint grid overlay
-	var grid_step: float = 20.0
-	for gx in range(int(bp_box.size.x / grid_step) + 1):
-		var lx: float = bp_box.position.x + gx * grid_step
-		draw_line(Vector2(lx, bp_box.position.y), Vector2(lx, bp_box.end.y), Color(0.08, 0.15, 0.22, 0.15), 0.5)
-	for gy in range(int(bp_box.size.y / grid_step) + 1):
-		var ly: float = bp_box.position.y + gy * grid_step
-		draw_line(Vector2(bp_box.position.x, ly), Vector2(bp_box.end.x, ly), Color(0.08, 0.15, 0.22, 0.15), 0.5)
-	# Blueprint creature drawing
-	_draw_blueprint_icon(bp_center, 45.0, icon_col, entry, true)
-	_draw_scanner_reticle(bp_center, 60.0, icon_col, 0.2)
-	UIConstants.draw_corner_frame(self, Rect2(bp_box.position.x - 2, bp_box.position.y - 2, bp_box.size.x + 4, bp_box.size.y + 4), Color(icon_col.r, icon_col.g, icon_col.b, 0.35))
+	# --- LEFT COLUMN: Preview ---
+	var preview_rect: Rect2 = Rect2(x + 8, y_start, preview_w - 16, preview_w - 16)
+	# Dark background
+	draw_rect(preview_rect, Color(0.04, 0.06, 0.10, 0.8))
 
-	# Measurement annotations
-	draw_line(Vector2(bp_center.x + 55, bp_center.y - 30), Vector2(bp_center.x + 100, bp_center.y - 50), Color(icon_col.r, icon_col.g, icon_col.b, 0.3), 1.0)
-	draw_circle(Vector2(bp_center.x + 55, bp_center.y - 30), 2.0, Color(icon_col.r, icon_col.g, icon_col.b, 0.5))
-	var size_label: String = "HP:%d" % entry.hp if entry.hp > 0 else "INERT"
-	draw_string(mono, Vector2(bp_center.x + 103, bp_center.y - 48), size_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(icon_col.r, icon_col.g, icon_col.b, 0.5))
+	# Enlarged procedural blueprint for parasite creatures
+	var bp_center: Vector2 = Vector2(preview_rect.position.x + preview_rect.size.x * 0.5, preview_rect.position.y + preview_rect.size.y * 0.5)
+	var bp_r: float = minf(preview_rect.size.x, preview_rect.size.y) * 0.38
+	_draw_blueprint_icon(bp_center, bp_r, icon_col, entry, true)
+	_draw_scanner_reticle(bp_center, bp_r + 15, icon_col, 0.2)
 
-	# Stage badge
+	# Scanner overlay on top of preview
+	_draw_scanner_overlay(preview_rect, icon_col)
+	# Corner frame around preview
+	UIConstants.draw_corner_frame(self, Rect2(preview_rect.position.x - 2, preview_rect.position.y - 2, preview_rect.size.x + 4, preview_rect.size.y + 4), Color(icon_col.r, icon_col.g, icon_col.b, 0.4))
+
+	# Stage badge below preview
 	var stage_label: String = "CELL STAGE" if entry.stage == "CELL" else "PARASITE STAGE"
-	draw_string(mono, Vector2(bp_box.position.x + 8, bp_box.position.y + 12), stage_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, UIConstants.ACCENT_DIM * 0.6)
-
+	draw_string(mono, Vector2(preview_rect.position.x + 4, preview_rect.end.y + 14), stage_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.ACCENT_DIM * 0.95)
 	# Alien annotation
 	var alien_note: String = UIConstants.random_glyphs(6, _time * 0.3, float(entry.id.hash() % 100))
-	draw_string(mono, Vector2(bp_box.end.x - 60, bp_box.end.y - 8), alien_note, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(0.2, 0.4, 0.5, 0.3))
+	draw_string(mono, Vector2(preview_rect.end.x - 56, preview_rect.end.y + 14), alien_note, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.45, 0.65, 0.75, 0.55))
 
-	y += 165
+	# --- RIGHT COLUMN: Name + Stats ---
+	var ry: float = y_start + 4
 
-	# --- Name + Category header ---
-	draw_string(font, Vector2(x + 15, y + 18), entry.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, UIConstants.TEXT_BRIGHT)
+	# Creature name
+	draw_string(font, Vector2(stats_x, ry + FONT_NAME - 4), entry.name, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_NAME, UIConstants.TEXT_BRIGHT)
+	ry += FONT_NAME + 4
+	# Category
 	var cat_col: Color = _category_color(entry.category)
-	draw_string(font, Vector2(x + 15, y + 36), entry.category, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, cat_col)
-	y += 46
+	draw_string(font, Vector2(stats_x, ry + FONT_CATEGORY - 2), entry.category, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_CATEGORY, cat_col)
+	ry += FONT_CATEGORY + 10
 
-	# --- Audio Signature ---
+	# Separator
+	draw_line(Vector2(stats_x, ry), Vector2(stats_x + stats_w - 10, ry), Color(0.22, 0.35, 0.48, 0.7), 1.0)
+	ry += 10
+
+	# Stats in 2x2 grid
+	var stat_col2_x: float = stats_x + stats_w * 0.5
+	# HEALTH
+	draw_string(mono, Vector2(stats_x, ry + FONT_STAT_LABEL), "HEALTH", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_STAT_LABEL, UIConstants.TEXT_DIM)
+	if entry.hp > 0:
+		draw_string(font, Vector2(stats_x, ry + FONT_STAT_LABEL + FONT_STAT_VALUE + 2), str(entry.hp), HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_STAT_VALUE, UIConstants.STAT_GREEN)
+		var hp_bar_w: float = stats_w * 0.38
+		var hp_bar_y: float = ry + FONT_STAT_LABEL + FONT_STAT_VALUE + 8
+		draw_rect(Rect2(stats_x, hp_bar_y, hp_bar_w, 4), Color(0.15, 0.15, 0.18))
+		var hp_r: float = clampf(float(entry.hp) / 300.0, 0.0, 1.0)
+		draw_rect(Rect2(stats_x, hp_bar_y, hp_bar_w * hp_r, 4), UIConstants.STAT_GREEN * 0.8)
+	else:
+		draw_string(font, Vector2(stats_x, ry + FONT_STAT_LABEL + FONT_STAT_VALUE + 2), "N/A", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_STAT_VALUE, UIConstants.TEXT_DIM)
+	# DAMAGE
+	draw_string(mono, Vector2(stat_col2_x, ry + FONT_STAT_LABEL), "DAMAGE", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_STAT_LABEL, UIConstants.TEXT_DIM)
+	var dmg_col: Color = UIConstants.STAT_RED if entry.damage > 0 else UIConstants.TEXT_DIM
+	draw_string(font, Vector2(stat_col2_x, ry + FONT_STAT_LABEL + FONT_STAT_VALUE + 2), str(entry.damage), HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_STAT_VALUE, dmg_col)
+	ry += FONT_STAT_LABEL + FONT_STAT_VALUE + 18
+
+	# SPEED
+	draw_string(mono, Vector2(stats_x, ry + FONT_STAT_LABEL), "SPEED", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_STAT_LABEL, UIConstants.TEXT_DIM)
+	draw_string(font, Vector2(stats_x, ry + FONT_STAT_LABEL + FONT_STAT_VALUE + 2), "%.1f" % entry.speed, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_STAT_VALUE, Color(0.4, 0.7, 0.9))
+	var spd_bar_w: float = stats_w * 0.38
+	var spd_bar_y: float = ry + FONT_STAT_LABEL + FONT_STAT_VALUE + 8
+	draw_rect(Rect2(stats_x, spd_bar_y, spd_bar_w, 4), Color(0.15, 0.15, 0.18))
+	var spd_r: float = clampf(entry.speed / 8.0, 0.0, 1.0)
+	draw_rect(Rect2(stats_x, spd_bar_y, spd_bar_w * spd_r, 4), Color(0.4, 0.7, 0.9, 0.7))
+	# THREAT
+	draw_string(mono, Vector2(stat_col2_x, ry + FONT_STAT_LABEL), "THREAT", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_STAT_LABEL, UIConstants.TEXT_DIM)
+	var threat: int = _get_threat_level(entry)
+	for t in range(5):
+		var dot_col: Color = UIConstants.STAT_RED if t < threat else Color(0.22, 0.22, 0.25)
+		draw_circle(Vector2(stat_col2_x + t * 16 + 5, ry + FONT_STAT_LABEL + FONT_STAT_VALUE - 2), 5.0, dot_col)
+	ry += FONT_STAT_LABEL + FONT_STAT_VALUE + 18
+
+	# Separator
+	draw_line(Vector2(stats_x, ry), Vector2(stats_x + stats_w - 10, ry), Color(0.22, 0.35, 0.48, 0.7), 1.0)
+	ry += 10
+
+	# Trait markers in right column
+	if entry.has("traits") and entry.traits.size() > 0:
+		var trait_x: float = stats_x
+		for trait_name in entry.traits:
+			var tw: float = font.get_string_size(trait_name, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY).x + 16
+			if trait_x + tw > stats_x + stats_w - 5:
+				trait_x = stats_x
+				ry += 26
+			draw_rect(Rect2(trait_x, ry, tw, 22), Color(icon_col.r, icon_col.g, icon_col.b, 0.1))
+			draw_rect(Rect2(trait_x, ry, tw, 22), Color(icon_col.r, icon_col.g, icon_col.b, 0.3), false, 1.0)
+			draw_string(font, Vector2(trait_x + 8, ry + 16), trait_name, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, Color(icon_col.r, icon_col.g, icon_col.b, 0.85))
+			trait_x += tw + 5
+		ry += 30
+
+	# ============= BOTTOM HALF (full width) =============
+	var stats_end_y: float = ry
+	var preview_end_y: float = preview_rect.end.y + 28
+	_draw_info_sections(x, maxf(stats_end_y, preview_end_y), panel_w, entry, icon_col)
+
+func _draw_info_sections(x: float, start_y: float, panel_w: float, entry: Dictionary, icon_col: Color) -> void:
+	## Shared drawing for audio signature, abilities, behavioral analysis, and field notes.
+	var font: Font = UIConstants.get_display_font()
+	var mono: Font = UIConstants.get_mono_font()
+	var y: float = start_y
+
+	# Audio Signature
 	if VoiceGenerator.SPECIES_PRESETS.has(entry.id):
-		draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.12, 0.2, 0.3, 0.5), 1.0)
-		y += 6
-		draw_string(mono, Vector2(x + 10, y + 12), "// AUDIO SIGNATURE", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, UIConstants.ACCENT_DIM)
-		y += 22
+		draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.22, 0.35, 0.48, 0.7), 1.0)
+		y += 10
+		draw_string(mono, Vector2(x + 10, y + FONT_SECTION), "// AUDIO SIGNATURE", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SECTION, UIConstants.ACCENT_DIM)
+		y += FONT_SECTION + 10
 		_voice_btn_rects.clear()
 		var vbtn_x: float = x + 20
 		for vi in range(VOICE_TYPES.size()):
 			var vlabel: String = VOICE_TYPES[vi].to_upper()
-			var vtw: float = font.get_string_size(vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x + 22
-			var vbtn_rect: Rect2 = Rect2(vbtn_x, y, vtw, 22)
+			var vtw: float = font.get_string_size(vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_VOICE_BTN).x + 24
+			var vbtn_rect: Rect2 = Rect2(vbtn_x, y, vtw, 26)
 			_voice_btn_rects.append(vbtn_rect)
 			var v_hover: bool = _hover_voice_type == vi
 			var v_playing: bool = _voice_playing_type == vi and _voice_playing_timer > 0.0
@@ -802,8 +1272,8 @@ func _draw_detail_panel(x: float, s: Vector2) -> void:
 				vbg = Color(icon_col.r, icon_col.g, icon_col.b, 0.12)
 			draw_rect(vbtn_rect, vbg)
 			draw_rect(vbtn_rect, Color(icon_col.r, icon_col.g, icon_col.b, 0.4 if v_hover else 0.2), false, 1.0)
-			var spk_cx: float = vbtn_x + 8
-			var spk_cy: float = y + 11
+			var spk_cx: float = vbtn_x + 9
+			var spk_cy: float = y + 13
 			var spk_col: Color = icon_col if (v_hover or v_playing) else UIConstants.TEXT_DIM
 			draw_colored_polygon(PackedVector2Array([
 				Vector2(spk_cx - 2, spk_cy - 2), Vector2(spk_cx + 2, spk_cy - 4),
@@ -813,118 +1283,54 @@ func _draw_detail_panel(x: float, s: Vector2) -> void:
 				var wave_a: float = _voice_playing_timer / 0.6
 				draw_arc(Vector2(spk_cx + 4, spk_cy), 3.5, -PI * 0.4, PI * 0.4, 5, Color(icon_col.r, icon_col.g, icon_col.b, wave_a * 0.6), 1.0)
 			var vlabel_col: Color = icon_col if v_playing else (UIConstants.TEXT_BRIGHT if v_hover else UIConstants.TEXT_DIM)
-			draw_string(font, Vector2(vbtn_x + 14, y + 15), vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, vlabel_col)
+			draw_string(font, Vector2(vbtn_x + 16, y + 18), vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_VOICE_BTN, vlabel_col)
 			vbtn_x += vtw + 3
-		y += 30
+		y += 34
 	else:
 		_voice_btn_rects.clear()
 
-	# --- Biometric Data ---
-	draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.12, 0.2, 0.3, 0.5), 1.0)
-	y += 6
-	draw_string(mono, Vector2(x + 10, y + 12), "// BIOMETRIC DATA", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, UIConstants.ACCENT_DIM)
-	y += 20
-
-	var col1_x: float = x + 20
-	var col2_x: float = x + panel_w * 0.5
-
-	# HP
-	draw_string(mono, Vector2(col1_x, y + 10), "HEALTH", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, UIConstants.TEXT_DIM)
-	if entry.hp > 0:
-		draw_string(font, Vector2(col1_x, y + 26), str(entry.hp), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, UIConstants.STAT_GREEN)
-		var hp_bar_w: float = panel_w * 0.32
-		draw_rect(Rect2(col1_x, y + 30, hp_bar_w, 4), Color(0.06, 0.06, 0.06))
-		var hp_r: float = clampf(float(entry.hp) / 300.0, 0.0, 1.0)
-		draw_rect(Rect2(col1_x, y + 30, hp_bar_w * hp_r, 4), UIConstants.STAT_GREEN * 0.8)
-	else:
-		draw_string(font, Vector2(col1_x, y + 26), "N/A", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, UIConstants.TEXT_DIM)
-
-	# Damage
-	draw_string(mono, Vector2(col2_x, y + 10), "DAMAGE", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, UIConstants.TEXT_DIM)
-	var dmg_col: Color = UIConstants.STAT_RED if entry.damage > 0 else UIConstants.TEXT_DIM
-	draw_string(font, Vector2(col2_x, y + 26), str(entry.damage), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, dmg_col)
-	y += 40
-
-	# Speed
-	draw_string(mono, Vector2(col1_x, y + 10), "SPEED", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, UIConstants.TEXT_DIM)
-	draw_string(font, Vector2(col1_x, y + 26), "%.1f" % entry.speed, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.4, 0.7, 0.9))
-	var spd_bar_w: float = panel_w * 0.32
-	draw_rect(Rect2(col1_x, y + 30, spd_bar_w, 4), Color(0.06, 0.06, 0.06))
-	var spd_r: float = clampf(entry.speed / 8.0, 0.0, 1.0)
-	draw_rect(Rect2(col1_x, y + 30, spd_bar_w * spd_r, 4), Color(0.4, 0.7, 0.9, 0.7))
-
-	# Threat level
-	draw_string(mono, Vector2(col2_x, y + 10), "THREAT", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, UIConstants.TEXT_DIM)
-	var threat: int = _get_threat_level(entry)
-	for t in range(5):
-		var dot_col: Color = UIConstants.STAT_RED if t < threat else Color(0.1, 0.1, 0.1)
-		draw_circle(Vector2(col2_x + t * 16 + 5, y + 24), 5.0, dot_col)
-	y += 42
-
-	# --- Trait Markers ---
-	if entry.has("traits") and entry.traits.size() > 0:
-		draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.12, 0.2, 0.3, 0.5), 1.0)
-		y += 6
-		draw_string(mono, Vector2(x + 10, y + 12), "// TRAIT MARKERS", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, UIConstants.ACCENT_DIM)
-		y += 20
-
-		var trait_x: float = x + 20
-		for trait_name in entry.traits:
-			var tw: float = font.get_string_size(trait_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 16
-			if trait_x + tw > x + panel_w - 10:
-				trait_x = x + 20
-				y += 24
-			draw_rect(Rect2(trait_x, y, tw, 19), Color(icon_col.r, icon_col.g, icon_col.b, 0.1))
-			draw_rect(Rect2(trait_x, y, tw, 19), Color(icon_col.r, icon_col.g, icon_col.b, 0.3), false, 1.0)
-			draw_string(font, Vector2(trait_x + 8, y + 14), trait_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(icon_col.r, icon_col.g, icon_col.b, 0.85))
-			trait_x += tw + 5
-		y += 28
-
-	# --- Abilities ---
-	draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.12, 0.2, 0.3, 0.5), 1.0)
-	y += 6
-	draw_string(mono, Vector2(x + 10, y + 12), "// ABILITIES", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, UIConstants.ACCENT_DIM)
-	y += 20
-
+	# Abilities
+	draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.22, 0.35, 0.48, 0.7), 1.0)
+	y += 10
+	draw_string(mono, Vector2(x + 10, y + FONT_SECTION), "// ABILITIES", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SECTION, UIConstants.ACCENT_DIM)
+	y += FONT_SECTION + 10
 	for ability in entry.abilities:
-		draw_rect(Rect2(x + 22, y + 3, 5, 5), icon_col * 0.7)
-		draw_string(font, Vector2(x + 34, y + 11), ability, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_NORMAL)
-		y += 18
-	y += 8
-
-	# --- Behavioral Analysis ---
-	if entry.has("habits") and entry.habits.length() > 0:
-		draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.12, 0.2, 0.3, 0.5), 1.0)
-		y += 6
-		draw_string(mono, Vector2(x + 10, y + 12), "// BEHAVIORAL ANALYSIS", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, UIConstants.ACCENT_DIM)
-		y += 20
-
-		var habits_lines: Array = _wrap_text(entry.habits, int(panel_w / 7.5))
-		for line in habits_lines:
-			draw_string(font, Vector2(x + 20, y + 11), line, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_NORMAL * 0.9)
-			y += 15
-		y += 8
-
-	# --- Field Notes ---
-	draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.12, 0.2, 0.3, 0.5), 1.0)
+		draw_rect(Rect2(x + 22, y + 4, 5, 5), icon_col * 0.7)
+		draw_string(font, Vector2(x + 34, y + FONT_BODY), ability, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, UIConstants.TEXT_NORMAL)
+		y += 22
 	y += 6
-	draw_string(mono, Vector2(x + 10, y + 12), "// FIELD NOTES", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, UIConstants.ACCENT_DIM)
-	y += 20
 
-	var desc_lines: Array = _wrap_text(entry.description, int(panel_w / 7.5))
+	# Behavioral Analysis
+	if entry.has("habits") and entry.habits.length() > 0:
+		draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.22, 0.35, 0.48, 0.7), 1.0)
+		y += 10
+		draw_string(mono, Vector2(x + 10, y + FONT_SECTION), "// BEHAVIORAL ANALYSIS", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SECTION, UIConstants.ACCENT_DIM)
+		y += FONT_SECTION + 10
+		var habits_lines: Array = _wrap_text(entry.habits, int(panel_w / 8.5))
+		for line in habits_lines:
+			draw_string(font, Vector2(x + 20, y + FONT_BODY), line, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, UIConstants.TEXT_NORMAL)
+			y += 19
+		y += 6
+
+	# Field Notes
+	draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.22, 0.35, 0.48, 0.7), 1.0)
+	y += 10
+	draw_string(mono, Vector2(x + 10, y + FONT_SECTION), "// FIELD NOTES", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SECTION, UIConstants.ACCENT_DIM)
+	y += FONT_SECTION + 10
+	var desc_lines: Array = _wrap_text(entry.description, int(panel_w / 8.5))
 	for line in desc_lines:
-		draw_string(font, Vector2(x + 20, y + 11), line, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.85))
-		y += 15
+		draw_string(font, Vector2(x + 20, y + FONT_BODY), line, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, UIConstants.TEXT_NORMAL)
+		y += 19
 
 func _draw_footer(s: Vector2) -> void:
 	var mono: Font = UIConstants.get_mono_font()
-	draw_rect(Rect2(0, s.y - FOOTER_H, s.x, FOOTER_H), Color(0.01, 0.02, 0.04, 0.8))
+	draw_rect(Rect2(0, s.y - FOOTER_H, s.x, FOOTER_H), Color(0.06, 0.08, 0.14, 0.8))
 	draw_line(Vector2(0, s.y - FOOTER_H), Vector2(s.x, s.y - FOOTER_H), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.2), 1.0)
-	draw_string(mono, Vector2(16, s.y - 12), "[X] Close    [Scroll] Navigate    [Click] Select", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM * 0.6)
+	draw_string(mono, Vector2(16, s.y - 12), "[X] Close    [Scroll] Navigate    [Click] Select", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM * 0.85)
 
 	# Alien readout on right
 	var alien_str: String = UIConstants.random_glyphs(10, _time, 3.0)
-	draw_string(mono, Vector2(s.x - 140, s.y - 12), alien_str, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(0.2, 0.4, 0.5, 0.25))
+	draw_string(mono, Vector2(s.x - 140, s.y - 12), alien_str, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(0.40, 0.65, 0.75, 0.50))
 
 func _draw_idle_scanner(x: float, panel_w: float, s: Vector2) -> void:
 	var font: Font = UIConstants.get_display_font()
@@ -934,24 +1340,24 @@ func _draw_idle_scanner(x: float, panel_w: float, s: Vector2) -> void:
 
 	# Scanner reticle
 	var r: float = 65.0 + sin(_time * 2.0) * 5.0
-	draw_arc(Vector2(cx, cy), r, 0, TAU, 32, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.12), 1.5)
-	draw_arc(Vector2(cx, cy), r * 0.6, 0, TAU, 24, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.08), 1.0)
+	draw_arc(Vector2(cx, cy), r, 0, TAU, 32, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.30), 1.5)
+	draw_arc(Vector2(cx, cy), r * 0.6, 0, TAU, 24, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.18), 1.0)
 
 	# Crosshairs
 	var ch_len: float = r * 1.3
-	draw_line(Vector2(cx - ch_len, cy), Vector2(cx - r * 0.3, cy), Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.1), 1.0)
-	draw_line(Vector2(cx + r * 0.3, cy), Vector2(cx + ch_len, cy), Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.1), 1.0)
-	draw_line(Vector2(cx, cy - ch_len), Vector2(cx, cy - r * 0.3), Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.1), 1.0)
-	draw_line(Vector2(cx, cy + r * 0.3), Vector2(cx, cy + ch_len), Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.1), 1.0)
+	draw_line(Vector2(cx - ch_len, cy), Vector2(cx - r * 0.3, cy), Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.25), 1.0)
+	draw_line(Vector2(cx + r * 0.3, cy), Vector2(cx + ch_len, cy), Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.25), 1.0)
+	draw_line(Vector2(cx, cy - ch_len), Vector2(cx, cy - r * 0.3), Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.25), 1.0)
+	draw_line(Vector2(cx, cy + r * 0.3), Vector2(cx, cy + ch_len), Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.25), 1.0)
 
 	# Rotating sweep
 	var sweep_angle: float = fmod(_time * 1.5, TAU)
 	var sweep_end: Vector2 = Vector2(cx + cos(sweep_angle) * r, cy + sin(sweep_angle) * r)
-	draw_line(Vector2(cx, cy), sweep_end, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.18), 1.5)
-	draw_circle(sweep_end, 3.0, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.35))
+	draw_line(Vector2(cx, cy), sweep_end, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.40), 1.5)
+	draw_circle(sweep_end, 3.0, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.55))
 
-	draw_string(font, Vector2(cx - 100, cy + r + 30), "SELECT AN ORGANISM", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.5))
-	draw_string(mono, Vector2(cx - 90, cy + r + 48), "to view xenobiology readout", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.3))
+	draw_string(font, Vector2(cx - 100, cy + r + 30), "SELECT AN ORGANISM", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.85))
+	draw_string(mono, Vector2(cx - 90, cy + r + 48), "to view xenobiology readout", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.65))
 
 	# DNA helix decoration
 	_draw_helix(Vector2(cx, cy + r + 100), 75.0)
@@ -961,10 +1367,10 @@ func _draw_idle_scanner(x: float, panel_w: float, s: Vector2) -> void:
 func _draw_blueprint_icon(center: Vector2, radius: float, col: Color, entry: Dictionary, discovered: bool) -> void:
 	if not discovered:
 		# Gray silhouette — still use creature-specific shape
-		_draw_creature_shape(center, radius, Color(0.12, 0.12, 0.12), entry.id, entry.category, 0.4)
-		draw_arc(center, radius, 0, TAU, 16, Color(0.2, 0.2, 0.2, 0.3), 1.0)
+		_draw_creature_shape(center, radius, Color(0.22, 0.22, 0.25), entry.id, entry.category, 0.5)
+		draw_arc(center, radius, 0, TAU, 16, Color(0.32, 0.32, 0.35, 0.45), 1.0)
 		var font: Font = UIConstants.get_display_font()
-		draw_string(font, Vector2(center.x - 4, center.y + 5), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.2, 0.2, 0.2))
+		draw_string(font, Vector2(center.x - 4, center.y + 5), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.35, 0.35, 0.40))
 		return
 
 	_draw_creature_shape(center, radius, col, entry.id, entry.category, 0.8)
@@ -1497,11 +1903,11 @@ func _draw_helix(center: Vector2, height: float) -> void:
 		var y: float = center.y - height * 0.5 + t * height
 		var x1: float = center.x + sin(t * TAU * 2.0 + _time) * 18.0
 		var x2: float = center.x - sin(t * TAU * 2.0 + _time) * 18.0
-		var a: float = 0.1 + sin(t * PI) * 0.1
-		draw_circle(Vector2(x1, y), 1.5, Color(0.2, 0.6, 0.4, a))
-		draw_circle(Vector2(x2, y), 1.5, Color(0.4, 0.6, 0.2, a))
+		var a: float = 0.25 + sin(t * PI) * 0.2
+		draw_circle(Vector2(x1, y), 1.5, Color(0.40, 0.85, 0.60, a))
+		draw_circle(Vector2(x2, y), 1.5, Color(0.60, 0.85, 0.40, a))
 		if i % 4 == 0:
-			draw_line(Vector2(x1, y), Vector2(x2, y), Color(0.3, 0.5, 0.3, a * 0.5), 1.0)
+			draw_line(Vector2(x1, y), Vector2(x2, y), Color(0.50, 0.75, 0.50, a * 0.6), 1.0)
 
 # ======================== HELPERS ========================
 

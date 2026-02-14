@@ -118,7 +118,9 @@ func _process(delta: float) -> void:
 		_update_creature(_creatures[idx], delta * (_creatures.size() / float(updates_per_frame)))
 	_update_index = (_update_index + updates_per_frame) % _creatures.size()
 
-	queue_redraw()
+	# Only redraw when player is within visual range
+	if _player and global_position.distance_squared_to(_player.global_position) < 1440000.0:
+		queue_redraw()
 
 func _update_creature(c: Dictionary, delta: float) -> void:
 	c.state_timer -= delta

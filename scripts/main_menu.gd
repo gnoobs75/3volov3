@@ -201,7 +201,7 @@ func _draw() -> void:
 func _draw_title(vp: Vector2, a: float) -> void:
 	var font := UIConstants.get_display_font()
 	var title := "3 V O L V 3"
-	var title_size: int = 52
+	var title_size: int = 58
 	var ts := font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, title_size)
 	var tx: float = (vp.x - ts.x) * 0.5
 	var ty: float = vp.y * 0.32

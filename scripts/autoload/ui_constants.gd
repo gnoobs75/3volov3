@@ -5,34 +5,34 @@ class_name UIConstants
 
 # ====================== COLORS ======================
 
-# Base palette
-const BG_DARK: Color = Color(0.01, 0.02, 0.05, 0.96)
-const BG_PANEL: Color = Color(0.02, 0.04, 0.08, 0.85)
-const BG_DIM: Color = Color(0.0, 0.02, 0.05, 0.75)
+# Base palette — brighter, more readable while keeping sci-fi feel
+const BG_DARK: Color = Color(0.06, 0.08, 0.14, 0.96)
+const BG_PANEL: Color = Color(0.08, 0.10, 0.18, 0.90)
+const BG_DIM: Color = Color(0.05, 0.07, 0.13, 0.80)
 
-# Accent (cyan)
-const ACCENT: Color = Color(0.4, 0.9, 1.0)
-const ACCENT_DIM: Color = Color(0.2, 0.5, 0.7)
-const ACCENT_GLOW: Color = Color(0.3, 0.8, 1.0)
+# Accent (cyan) — punchier
+const ACCENT: Color = Color(0.45, 0.92, 1.0)
+const ACCENT_DIM: Color = Color(0.25, 0.55, 0.75)
+const ACCENT_GLOW: Color = Color(0.35, 0.85, 1.0)
 
-# Text
-const TEXT_BRIGHT: Color = Color(0.8, 1.0, 1.0)
-const TEXT_NORMAL: Color = Color(0.5, 0.75, 0.85)
-const TEXT_DIM: Color = Color(0.3, 0.5, 0.6)
-const TEXT_TITLE: Color = Color(0.3, 0.9, 1.0)
+# Text — significantly brighter for readability
+const TEXT_BRIGHT: Color = Color(0.92, 1.0, 1.0)
+const TEXT_NORMAL: Color = Color(0.72, 0.88, 0.95)
+const TEXT_DIM: Color = Color(0.48, 0.65, 0.75)
+const TEXT_TITLE: Color = Color(0.4, 0.95, 1.0)
 
-# Buttons
-const BTN_BG: Color = Color(0.03, 0.08, 0.18, 0.85)
-const BTN_BG_HOVER: Color = Color(0.06, 0.2, 0.35, 0.9)
-const BTN_BORDER: Color = Color(0.2, 0.4, 0.6, 0.5)
-const BTN_BORDER_HOVER: Color = Color(0.4, 0.8, 1.0, 0.8)
-const BTN_TEXT: Color = Color(0.5, 0.8, 0.9, 0.9)
-const BTN_TEXT_HOVER: Color = Color(0.8, 1.0, 1.0, 1.0)
+# Buttons — brighter, more visible
+const BTN_BG: Color = Color(0.08, 0.14, 0.26, 0.90)
+const BTN_BG_HOVER: Color = Color(0.12, 0.26, 0.42, 0.95)
+const BTN_BORDER: Color = Color(0.28, 0.50, 0.68, 0.6)
+const BTN_BORDER_HOVER: Color = Color(0.5, 0.88, 1.0, 0.9)
+const BTN_TEXT: Color = Color(0.65, 0.88, 0.95, 0.95)
+const BTN_TEXT_HOVER: Color = Color(0.92, 1.0, 1.0, 1.0)
 
-# Grid / structural
-const GRID_COLOR: Color = Color(0.12, 0.25, 0.35)
-const SCAN_LINE_COLOR: Color = Color(0.3, 0.8, 1.0)
-const FRAME_COLOR: Color = Color(0.2, 0.5, 0.7)
+# Grid / structural — slightly more visible
+const GRID_COLOR: Color = Color(0.16, 0.30, 0.42)
+const SCAN_LINE_COLOR: Color = Color(0.35, 0.85, 1.0)
+const FRAME_COLOR: Color = Color(0.28, 0.58, 0.78)
 
 # Stats
 const STAT_GREEN: Color = Color(0.3, 0.9, 0.5)
@@ -41,21 +41,21 @@ const STAT_YELLOW: Color = Color(1.0, 0.9, 0.3)
 
 # ====================== FONT SIZES ======================
 
-const FONT_TITLE: int = 32
-const FONT_HEADER: int = 22
-const FONT_SUBHEADER: int = 16
-const FONT_BODY: int = 14
-const FONT_CAPTION: int = 11
-const FONT_TINY: int = 9
-const FONT_GLYPH: int = 12
+const FONT_TITLE: int = 38
+const FONT_HEADER: int = 26
+const FONT_SUBHEADER: int = 18
+const FONT_BODY: int = 16
+const FONT_CAPTION: int = 13
+const FONT_TINY: int = 11
+const FONT_GLYPH: int = 13
 
 # ====================== LAYOUT ======================
 
 const GRID_SPACING: float = 40.0
 const CORNER_LEN: float = 30.0
-const BTN_W: float = 260.0
-const BTN_H: float = 48.0
-const BTN_SPACING: float = 16.0
+const BTN_W: float = 300.0
+const BTN_H: float = 56.0
+const BTN_SPACING: float = 18.0
 
 # ====================== ALIEN GLYPHS ======================
 
@@ -90,7 +90,7 @@ static func get_mono_font() -> Font:
 
 ## Draw a blueprint grid background
 static func draw_blueprint_grid(target: CanvasItem, vp: Vector2, alpha: float = 1.0) -> void:
-	var grid_alpha: float = 0.09 * alpha
+	var grid_alpha: float = 0.12 * alpha
 	var gx_count: int = int(vp.x / GRID_SPACING) + 1
 	var gy_count: int = int(vp.y / GRID_SPACING) + 1
 	for i in range(gx_count):
@@ -188,7 +188,7 @@ static func draw_glyph_columns(target: CanvasItem, vp: Vector2, columns: Array, 
 				edge_fade = clampf(y / 80.0, 0.0, 1.0)
 			elif y > vp.y - 60.0:
 				edge_fade = clampf((vp.y - y) / 60.0, 0.0, 1.0)
-			target.draw_string(font, Vector2(x, y), str(col.glyphs[i]), HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_GLYPH, Color(0.2, 0.5, 0.6, col.alpha * edge_fade * alpha))
+			target.draw_string(font, Vector2(x, y), str(col.glyphs[i]), HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_GLYPH, Color(0.28, 0.55, 0.68, col.alpha * edge_fade * alpha))
 
 ## Generate glyph column data (call once at init)
 static func create_glyph_columns(num_cols: int = 10) -> Array:
@@ -198,7 +198,7 @@ static func create_glyph_columns(num_cols: int = 10) -> Array:
 			"x": 30.0 + float(i) * 120.0 + randf_range(-20, 20),
 			"offset": randf() * 400.0,
 			"speed": randf_range(8.0, 18.0),
-			"alpha": randf_range(0.08, 0.16),
+			"alpha": randf_range(0.12, 0.22),
 			"glyphs": [],
 		}
 		for j in range(24):
@@ -216,14 +216,14 @@ static func random_glyphs(length: int, time: float = 0.0, offset: float = 0.0) -
 ## Draw header bar with scan accent (reusable across screens)
 static func draw_header_bar(target: CanvasItem, vp: Vector2, title: String, time: float, alpha: float = 1.0) -> void:
 	var font: Font = get_display_font()
-	target.draw_rect(Rect2(0, 0, vp.x, 60), Color(0.02, 0.04, 0.08, 0.85 * alpha))
-	target.draw_line(Vector2(0, 59), Vector2(vp.x, 59), Color(ACCENT_DIM.r, ACCENT_DIM.g, ACCENT_DIM.b, 0.35 * alpha), 1.0)
+	target.draw_rect(Rect2(0, 0, vp.x, 64), Color(BG_PANEL.r, BG_PANEL.g, BG_PANEL.b, 0.92 * alpha))
+	target.draw_line(Vector2(0, 63), Vector2(vp.x, 63), Color(ACCENT_DIM.r, ACCENT_DIM.g, ACCENT_DIM.b, 0.45 * alpha), 1.5)
 	# Moving accent light
 	var header_scan: float = fmod(time * 120.0, vp.x + 200.0) - 100.0
-	target.draw_line(Vector2(header_scan, 59), Vector2(header_scan + 120.0, 59), Color(ACCENT.r, ACCENT.g, ACCENT.b, 0.7 * alpha), 3.0)
+	target.draw_line(Vector2(header_scan, 63), Vector2(header_scan + 120.0, 63), Color(ACCENT.r, ACCENT.g, ACCENT.b, 0.7 * alpha), 3.0)
 	# Title
 	var ts: Vector2 = font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, FONT_HEADER)
-	target.draw_string(font, Vector2((vp.x - ts.x) * 0.5, 38), title, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_HEADER, Color(TEXT_TITLE.r, TEXT_TITLE.g, TEXT_TITLE.b, alpha))
+	target.draw_string(font, Vector2((vp.x - ts.x) * 0.5, 42), title, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_HEADER, Color(TEXT_TITLE.r, TEXT_TITLE.g, TEXT_TITLE.b, alpha))
 
 ## Draw a mini stats row (for pause menus)
 static func draw_stat_row(target: CanvasItem, pos: Vector2, label: String, value: String, color: Color) -> void:

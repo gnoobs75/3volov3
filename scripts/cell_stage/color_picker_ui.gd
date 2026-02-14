@@ -45,15 +45,15 @@ var _dragging_elongation: bool = false
 var _dragging_bulge: bool = false
 
 # Layout constants — compact for 32% width panel
-const PANEL_PAD: float = 14.0
-const SECTION_GAP: float = 14.0
-const HUE_RING_OUTER: float = 55.0
-const HUE_RING_INNER: float = 42.0
-const SV_BOX_SIZE: float = 80.0
+const PANEL_PAD: float = 16.0
+const SECTION_GAP: float = 16.0
+const HUE_RING_OUTER: float = 62.0
+const HUE_RING_INNER: float = 48.0
+const SV_BOX_SIZE: float = 90.0
 
-const SLIDER_W: float = 150.0
-const SLIDER_THUMB_R: float = 10.0
-const ROTATION_DIAL_R: float = 36.0
+const SLIDER_W: float = 160.0
+const SLIDER_THUMB_R: float = 12.0
+const ROTATION_DIAL_R: float = 40.0
 
 const EYE_STYLES: Array = ["round", "anime", "compound", "googly", "slit", "lashed", "fierce", "dot", "star"]
 
@@ -433,11 +433,11 @@ func _draw() -> void:
 	var panel_h: float = size.y if size.y > 10 else 700.0
 
 	# === PANEL BACKGROUND ===
-	draw_rect(Rect2(0, 0, panel_w, panel_h), Color(0.02, 0.04, 0.08, 0.88))
+	draw_rect(Rect2(0, 0, panel_w, panel_h), Color(UIConstants.BG_PANEL.r, UIConstants.BG_PANEL.g, UIConstants.BG_PANEL.b, 0.92))
 	# Left border accent line
-	draw_rect(Rect2(0, 0, 2, panel_h), Color(0.2, 0.5, 0.7, 0.4))
+	draw_rect(Rect2(0, 0, 2, panel_h), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.5))
 	# Top border
-	draw_rect(Rect2(0, 0, panel_w, 1), Color(0.2, 0.5, 0.7, 0.3))
+	draw_rect(Rect2(0, 0, panel_w, 1), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.4))
 
 	# === SECTION: COLOR PICKER ===
 	_draw_section_header(font, "COLOR PICKER", PANEL_PAD, PANEL_PAD + 14.0, panel_w)
@@ -467,7 +467,7 @@ func _draw() -> void:
 	# Current color preview swatch inside hue ring
 	var preview_col: Color = Color.from_hsv(_current_hue, _current_sat, _current_val)
 	draw_circle(hue_center, HUE_RING_INNER * 0.6, preview_col)
-	draw_arc(hue_center, HUE_RING_INNER * 0.6, 0, TAU, 16, Color(0.3, 0.5, 0.7, 0.4), 1.0)
+	draw_arc(hue_center, HUE_RING_INNER * 0.6, 0, TAU, 16, Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.5), 1.5)
 
 	# === SV BOX (beside hue ring) ===
 	var sv_org: Vector2 = _get_sv_origin()
@@ -488,7 +488,7 @@ func _draw() -> void:
 	draw_arc(Vector2(sv_px, sv_py), 5.0, 0, TAU, 12, Color(0, 0, 0, 0.7), 2.0)
 
 	# SV box border
-	draw_rect(Rect2(sv_org.x - 1, sv_org.y - 1, SV_BOX_SIZE + 2, SV_BOX_SIZE + 2), Color(0.3, 0.5, 0.7, 0.3), false, 1.0)
+	draw_rect(Rect2(sv_org.x - 1, sv_org.y - 1, SV_BOX_SIZE + 2, SV_BOX_SIZE + 2), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.4), false, 1.0)
 
 	# === COLOR TARGET BUTTONS (2 rows of 3) ===
 	var target_y: float = _get_target_section_y()
@@ -498,17 +498,17 @@ func _draw() -> void:
 		var rect: Rect2 = _get_target_rect(i)
 		var is_active: bool = TARGET_ORDER[i] == _active_target
 		var is_hover: bool = TARGET_ORDER[i] == _hover_target
-		var bg: Color = Color(0.12, 0.25, 0.45, 0.85) if is_active else (Color(0.08, 0.15, 0.3, 0.6) if is_hover else Color(0.04, 0.08, 0.15, 0.5))
+		var bg: Color = Color(0.15, 0.28, 0.48, 0.88) if is_active else (Color(0.10, 0.18, 0.34, 0.65) if is_hover else Color(0.07, 0.12, 0.22, 0.55))
 		draw_rect(rect, bg)
-		var brd: Color = Color(0.4, 0.8, 1.0, 0.8) if is_active else Color(0.2, 0.4, 0.6, 0.3)
+		var brd: Color = Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.85) if is_active else Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.4)
 		draw_rect(rect, brd, false, 1.0)
 		# Color swatch dot
 		var swatch_col: Color = GameManager.creature_customization.get(TARGET_ORDER[i], Color(0.5, 0.5, 0.5))
-		draw_circle(Vector2(rect.position.x + 10, rect.position.y + 14), 5.0, swatch_col)
+		draw_circle(Vector2(rect.position.x + 10, rect.position.y + 14), 5.5, swatch_col)
 		# Label
 		var label: String = TARGET_LABELS[TARGET_ORDER[i]]
-		var tc: Color = Color(0.7, 0.9, 1.0, 0.95) if is_active else Color(0.5, 0.6, 0.7, 0.7)
-		draw_string(font, Vector2(rect.position.x + 19, rect.position.y + 19), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, tc)
+		var tc: Color = Color(UIConstants.TEXT_BRIGHT.r, UIConstants.TEXT_BRIGHT.g, UIConstants.TEXT_BRIGHT.b, 0.97) if is_active else Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.8)
+		draw_string(font, Vector2(rect.position.x + 19, rect.position.y + 19), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, tc)
 
 	# === EYE STYLE SELECTOR ===
 	var eye_y: float = _get_eye_section_y()
@@ -518,10 +518,10 @@ func _draw() -> void:
 		var rect: Rect2 = _get_eye_rect(i)
 		var is_sel: bool = EYE_STYLES[i] == _selected_eye
 		var is_hov: bool = i == _hover_eye
-		var bg: Color = Color(0.12, 0.25, 0.45, 0.85) if is_sel else (Color(0.08, 0.15, 0.3, 0.6) if is_hov else Color(0.04, 0.08, 0.15, 0.4))
+		var bg: Color = Color(0.15, 0.28, 0.48, 0.88) if is_sel else (Color(0.10, 0.18, 0.34, 0.65) if is_hov else Color(0.07, 0.12, 0.22, 0.45))
 		draw_rect(rect, bg)
 		if is_sel:
-			draw_rect(rect, Color(0.4, 0.8, 1.0, 0.7), false, 1.5)
+			draw_rect(rect, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.75), false, 1.5)
 		var ec: Vector2 = rect.position + rect.size * 0.5
 		_draw_eye_icon(EYE_STYLES[i], ec)
 
@@ -531,22 +531,22 @@ func _draw() -> void:
 
 	# Eye Spacing slider
 	var spacing_cy: float = _get_spacing_slider_y()
-	draw_string(font, Vector2(PANEL_PAD, spacing_cy - 10), "SPACING", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.7, 0.9, 0.8))
+	draw_string(font, Vector2(PANEL_PAD, spacing_cy - 10), "SPACING", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.9))
 	_draw_slider(spacing_cy, (_eye_spacing - 3.0) / 6.0, "%.1f" % _eye_spacing, _dragging_spacing)
 
 	# Eye Angle slider
 	var angle_cy: float = _get_angle_slider_y()
-	draw_string(font, Vector2(PANEL_PAD, angle_cy - 10), "ROTATION", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.7, 0.9, 0.8))
+	draw_string(font, Vector2(PANEL_PAD, angle_cy - 10), "ROTATION", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.9))
 	_draw_slider(angle_cy, _eye_angle / TAU, "%d°" % int(rad_to_deg(_eye_angle)), _dragging_angle)
 	# Mini rotation dial indicator
 	var angle_dial_cx: float = _get_slider_x() + SLIDER_W + 30.0
-	draw_arc(Vector2(angle_dial_cx, angle_cy), 10.0, 0, TAU, 16, Color(0.2, 0.4, 0.6, 0.4), 1.0)
+	draw_arc(Vector2(angle_dial_cx, angle_cy), 10.0, 0, TAU, 16, Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.5), 1.0)
 	var angle_dir: Vector2 = Vector2(cos(_eye_angle), sin(_eye_angle))
-	draw_line(Vector2(angle_dial_cx, angle_cy), Vector2(angle_dial_cx, angle_cy) + angle_dir * 10.0, Color(0.4, 0.8, 1.0, 0.9), 2.0)
+	draw_line(Vector2(angle_dial_cx, angle_cy), Vector2(angle_dial_cx, angle_cy) + angle_dir * 10.0, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.95), 2.0)
 
 	# Eye Size slider
 	var esize_cy: float = _get_eye_size_slider_y()
-	draw_string(font, Vector2(PANEL_PAD, esize_cy - 10), "EYE SIZE", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.7, 0.9, 0.8))
+	draw_string(font, Vector2(PANEL_PAD, esize_cy - 10), "EYE SIZE", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.9))
 	_draw_slider(esize_cy, (_eye_size - 2.0) / 4.0, "%.1f" % _eye_size, _dragging_eye_size)
 
 	# === BODY SHAPE ===
@@ -554,30 +554,30 @@ func _draw() -> void:
 	_draw_section_header(font, "BODY SHAPE", PANEL_PAD, shape_y, panel_w)
 
 	var elong_cy: float = _get_elongation_slider_y()
-	draw_string(font, Vector2(PANEL_PAD, elong_cy - 10), "STRETCH", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.7, 0.9, 0.8))
+	draw_string(font, Vector2(PANEL_PAD, elong_cy - 10), "STRETCH", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.9))
 	_draw_slider(elong_cy, (_elongation_offset + 0.5) / 1.0, "%+.2f" % _elongation_offset, _dragging_elongation)
 
 	var bulge_cy: float = _get_bulge_slider_y()
-	draw_string(font, Vector2(PANEL_PAD, bulge_cy - 10), "WIDTH", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.7, 0.9, 0.8))
+	draw_string(font, Vector2(PANEL_PAD, bulge_cy - 10), "WIDTH", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.9))
 	_draw_slider(bulge_cy, (_bulge - 0.5) / 1.5, "%.1fx" % _bulge, _dragging_bulge)
 
 	# === PREVIEW CONTROLS ===
 	var zoom_cy: float = _get_zoom_slider_y()
 	_draw_section_header(font, "PREVIEW", PANEL_PAD, zoom_cy - 20.0, panel_w)
-	draw_string(font, Vector2(PANEL_PAD, zoom_cy - 6), "ZOOM", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.7, 0.9, 0.8))
+	draw_string(font, Vector2(PANEL_PAD, zoom_cy - 6), "ZOOM", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.9))
 	_draw_slider(zoom_cy + 4, (preview_zoom - 2.0) / 4.0, "%.1fx" % preview_zoom, _dragging_zoom)
 
 	# Preview Rotation dial (larger)
 	var rot_cy: float = _get_rotation_dial_y()
-	draw_string(font, Vector2(PANEL_PAD, rot_cy - 16), "ROTATION", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.7, 0.9, 0.8))
+	draw_string(font, Vector2(PANEL_PAD, rot_cy - 16), "ROTATION", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.9))
 	var dial_cx: float = PANEL_PAD + ROTATION_DIAL_R
-	draw_arc(Vector2(dial_cx, rot_cy), ROTATION_DIAL_R, 0, TAU, 32, Color(0.2, 0.4, 0.6, 0.5), 1.5)
-	draw_arc(Vector2(dial_cx, rot_cy), ROTATION_DIAL_R - 4.0, 0, TAU, 28, Color(0.15, 0.3, 0.5, 0.25), 1.0)
+	draw_arc(Vector2(dial_cx, rot_cy), ROTATION_DIAL_R, 0, TAU, 32, Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.6), 1.5)
+	draw_arc(Vector2(dial_cx, rot_cy), ROTATION_DIAL_R - 4.0, 0, TAU, 28, Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.3), 1.0)
 	var rot_dir: Vector2 = Vector2(cos(preview_rotation), sin(preview_rotation))
-	draw_line(Vector2(dial_cx, rot_cy), Vector2(dial_cx, rot_cy) + rot_dir * (ROTATION_DIAL_R - 2.0), Color(0.4, 0.8, 1.0, 0.9), 2.5)
-	draw_circle(Vector2(dial_cx, rot_cy) + rot_dir * (ROTATION_DIAL_R - 2.0), 4.0, Color(0.5, 0.9, 1.0, 0.9))
+	draw_line(Vector2(dial_cx, rot_cy), Vector2(dial_cx, rot_cy) + rot_dir * (ROTATION_DIAL_R - 2.0), Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.95), 2.5)
+	draw_circle(Vector2(dial_cx, rot_cy) + rot_dir * (ROTATION_DIAL_R - 2.0), 4.0, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.95))
 	var deg_str: String = "%d°" % int(rad_to_deg(preview_rotation))
-	draw_string(font, Vector2(dial_cx + ROTATION_DIAL_R + 8, rot_cy + 5), deg_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.5, 0.7, 0.8, 0.8))
+	draw_string(font, Vector2(dial_cx + ROTATION_DIAL_R + 8, rot_cy + 5), deg_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.9))
 
 	# === STATS SUMMARY ===
 	var stats_y: float = _get_stats_section_y()
@@ -586,34 +586,34 @@ func _draw() -> void:
 
 func _draw_section_header(font: Font, label: String, x: float, y: float, panel_w: float) -> void:
 	# Alternating section tint band
-	draw_rect(Rect2(0, y - 12, panel_w, 22), Color(0.04, 0.08, 0.15, 0.4))
+	draw_rect(Rect2(0, y - 12, panel_w, 24), Color(0.08, 0.12, 0.22, 0.45))
 	# Alien glyph prefix
 	var glyph: String = str(ALIEN_GLYPHS[int(fmod(_time * 0.3 + float(label.hash() % 20), float(ALIEN_GLYPHS.size())))])
-	draw_string(font, Vector2(x, y), glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.25, 0.45, 0.55, 0.5))
+	draw_string(font, Vector2(x, y), glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.6))
 	# Label
-	draw_string(font, Vector2(x + 14, y), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.4, 0.7, 0.9, 0.9))
+	draw_string(font, Vector2(x + 16, y), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.95))
 	# Underline
-	var label_w: float = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
-	draw_line(Vector2(x + 14, y + 4), Vector2(x + 14 + label_w + 10, y + 4), Color(0.2, 0.5, 0.7, 0.35), 1.0)
+	var label_w: float = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+	draw_line(Vector2(x + 16, y + 5), Vector2(x + 16 + label_w + 10, y + 5), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.45), 1.0)
 	# Tech bracket accents
-	draw_line(Vector2(x - 2, y - 8), Vector2(x - 2, y + 6), Color(0.3, 0.6, 0.8, 0.3), 1.5)
-	draw_line(Vector2(x - 2, y - 8), Vector2(x + 8, y - 8), Color(0.3, 0.6, 0.8, 0.3), 1.5)
+	draw_line(Vector2(x - 2, y - 8), Vector2(x - 2, y + 6), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.4), 1.5)
+	draw_line(Vector2(x - 2, y - 8), Vector2(x + 8, y - 8), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.4), 1.5)
 
 func _draw_slider(cy: float, t: float, value_str: String, is_dragging: bool) -> void:
 	var font := UIConstants.get_display_font()
 	var sx: float = _get_slider_x()
 	# Track background
-	draw_line(Vector2(sx, cy), Vector2(sx + SLIDER_W, cy), Color(0.15, 0.25, 0.35, 0.6), 3.0)
+	draw_line(Vector2(sx, cy), Vector2(sx + SLIDER_W, cy), Color(0.18, 0.30, 0.42, 0.7), 4.0)
 	# Filled portion
-	draw_line(Vector2(sx, cy), Vector2(sx + t * SLIDER_W, cy), Color(0.2, 0.5, 0.7, 0.7), 3.0)
+	draw_line(Vector2(sx, cy), Vector2(sx + t * SLIDER_W, cy), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.8), 4.0)
 	# Thumb
 	var thumb_x: float = sx + t * SLIDER_W
-	var thumb_col: Color = Color(0.5, 0.9, 1.0, 1.0) if is_dragging else Color(0.4, 0.8, 1.0, 0.9)
+	var thumb_col: Color = Color(0.55, 0.95, 1.0, 1.0) if is_dragging else Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.95)
 	var thumb_r: float = SLIDER_THUMB_R + (2.0 if is_dragging else 0.0)
 	draw_circle(Vector2(thumb_x, cy), thumb_r, thumb_col)
-	draw_arc(Vector2(thumb_x, cy), thumb_r, 0, TAU, 12, Color(0.2, 0.4, 0.6, 0.6), 1.5)
+	draw_arc(Vector2(thumb_x, cy), thumb_r, 0, TAU, 12, Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.7), 1.5)
 	# Value text
-	draw_string(font, Vector2(sx + SLIDER_W + 8, cy + 4), value_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.5, 0.7, 0.8, 0.8))
+	draw_string(font, Vector2(sx + SLIDER_W + 8, cy + 5), value_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.9))
 
 func _draw_stats_summary(font: Font, stats_y: float, panel_w: float, panel_h: float) -> void:
 	_draw_section_header(font, "MUTATION STATS", PANEL_PAD, stats_y, panel_w)
@@ -631,7 +631,7 @@ func _draw_stats_summary(font: Font, stats_y: float, panel_w: float, panel_h: fl
 
 	var row_y: float = stats_y + 22.0
 	if stat_totals.is_empty():
-		draw_string(font, Vector2(PANEL_PAD + 4, row_y), "No mutations yet", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.5, 0.6, 0.5))
+		draw_string(font, Vector2(PANEL_PAD + 4, row_y), "No mutations yet", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.6))
 		return
 
 	var stat_labels: Dictionary = {
@@ -656,15 +656,15 @@ func _draw_stats_summary(font: Font, stats_y: float, panel_w: float, panel_h: fl
 		var label: String = stat_labels.get(key, key.capitalize())
 		var col: Color = stat_colors.get(key, Color(0.5, 0.7, 0.8))
 		# Bar background
-		draw_rect(Rect2(PANEL_PAD, row_y - 10, panel_w - PANEL_PAD * 2, 16), Color(0.03, 0.06, 0.12, 0.5))
+		draw_rect(Rect2(PANEL_PAD, row_y - 10, panel_w - PANEL_PAD * 2, 18), Color(0.07, 0.11, 0.20, 0.55))
 		# Bar fill
 		var bar_t: float = clampf(absf(val), 0.0, 1.0)
-		var bar_w: float = (panel_w - PANEL_PAD * 2 - 90) * bar_t
-		draw_rect(Rect2(PANEL_PAD + 80, row_y - 8, bar_w, 12), Color(col.r, col.g, col.b, 0.25))
+		var bar_w: float = (panel_w - PANEL_PAD * 2 - 95) * bar_t
+		draw_rect(Rect2(PANEL_PAD + 85, row_y - 8, bar_w, 14), Color(col.r, col.g, col.b, 0.3))
 		# Label + value
-		draw_string(font, Vector2(PANEL_PAD + 4, row_y), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(col.r, col.g, col.b, 0.8))
-		draw_string(font, Vector2(PANEL_PAD + 80, row_y), "%s%.0f%%" % [sign, val * 100.0], HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(col.r, col.g, col.b, 0.95))
-		row_y += 20.0
+		draw_string(font, Vector2(PANEL_PAD + 4, row_y), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(col.r, col.g, col.b, 0.9))
+		draw_string(font, Vector2(PANEL_PAD + 85, row_y), "%s%.0f%%" % [sign, val * 100.0], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(col.r, col.g, col.b, 1.0))
+		row_y += 22.0
 
 func _draw_eye_icon(style: String, center: Vector2) -> void:
 	# All icons ~1.5x larger than before

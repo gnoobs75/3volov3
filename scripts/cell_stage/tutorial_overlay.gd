@@ -71,11 +71,12 @@ func _process(delta: float) -> void:
 	_time += delta
 	_step_time += delta
 
-	# Fade in
-	if _time < 0.8:
-		_alpha = move_toward(_alpha, 1.0, delta * 3.0)
-	else:
-		_alpha = 1.0
+	# Fade in (skip during fade-out so alpha can reach 0)
+	if not _finished:
+		if _time < 0.8:
+			_alpha = move_toward(_alpha, 1.0, delta * 3.0)
+		else:
+			_alpha = 1.0
 
 	# Fade out after finishing
 	if _finished:
@@ -210,7 +211,7 @@ func _draw_action_step(vp: Vector2, font: Font, step_data: Dictionary) -> void:
 	var bg_alpha: float = 0.6 * _alpha
 	if _complete_flash > 0:
 		bg_alpha = lerpf(bg_alpha, 0.8, _complete_flash)
-	draw_rect(Rect2(pill_x, pill_y, pill_w, pill_h), Color(0.02, 0.04, 0.08, bg_alpha))
+	draw_rect(Rect2(pill_x, pill_y, pill_w, pill_h), Color(0.08, 0.10, 0.18, bg_alpha))
 
 	# Accent lines
 	var accent := Color(0.4, 0.8, 1.0, 0.5 * _alpha)
@@ -273,7 +274,7 @@ func _draw_vitals_step(vp: Vector2, font: Font) -> void:
 	var pill_h: float = 120.0
 	var pill_x: float = cx - pill_w * 0.5
 	var pill_y: float = cy - pill_h * 0.5
-	draw_rect(Rect2(pill_x, pill_y, pill_w, pill_h), Color(0.02, 0.04, 0.08, 0.65 * _alpha))
+	draw_rect(Rect2(pill_x, pill_y, pill_w, pill_h), Color(0.08, 0.10, 0.18, 0.65 * _alpha))
 
 	# Accent lines
 	var accent := Color(0.4, 0.8, 1.0, 0.5 * _alpha)
@@ -320,7 +321,7 @@ func _draw_collect_step(vp: Vector2, font: Font) -> void:
 	var bg_alpha: float = 0.6 * _alpha
 	if _complete_flash > 0:
 		bg_alpha = lerpf(bg_alpha, 0.9, _complete_flash)
-	draw_rect(Rect2(pill_x, pill_y, pill_w, pill_h), Color(0.02, 0.04, 0.08, bg_alpha))
+	draw_rect(Rect2(pill_x, pill_y, pill_w, pill_h), Color(0.08, 0.10, 0.18, bg_alpha))
 
 	var accent := Color(0.3, 0.8, 0.5, 0.5 * _alpha)
 	draw_rect(Rect2(pill_x, pill_y, pill_w, 1), accent)

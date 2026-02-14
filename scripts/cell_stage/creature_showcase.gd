@@ -469,7 +469,7 @@ func _draw_overlay(ctl: Control) -> void:
 		# Background pill
 		var pill_w: float = ts.x + 60
 		var pill_h: float = 45
-		ctl.draw_rect(Rect2(tx - 30, ty - 30, pill_w, pill_h), Color(0.02, 0.04, 0.08, 0.75 * _title_alpha))
+		ctl.draw_rect(Rect2(tx - 30, ty - 30, pill_w, pill_h), Color(0.08, 0.10, 0.18, 0.78 * _title_alpha))
 		# Accent lines
 		ctl.draw_rect(Rect2(tx - 30, ty - 31, pill_w, 1), Color(0.4, 0.7, 1.0, 0.5 * _title_alpha))
 		ctl.draw_rect(Rect2(tx - 30, ty + 14, pill_w, 1), Color(0.4, 0.7, 1.0, 0.5 * _title_alpha))

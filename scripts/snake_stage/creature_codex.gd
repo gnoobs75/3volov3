@@ -233,10 +233,10 @@ func _draw() -> void:
 	var s: Vector2 = size
 
 	# Background
-	draw_rect(Rect2(0, 0, s.x, s.y), Color(0.02, 0.03, 0.05, 0.95))
+	draw_rect(Rect2(0, 0, s.x, s.y), Color(0.06, 0.08, 0.14, 0.96))
 
 	# Header
-	draw_rect(Rect2(0, 0, s.x, HEADER_H), Color(0.05, 0.08, 0.12, 0.9))
+	draw_rect(Rect2(0, 0, s.x, HEADER_H), Color(0.10, 0.14, 0.20, 0.92))
 	var title_font: Font = UIConstants.get_display_font()
 	draw_string(title_font, Vector2(30, 34), "CREATURE CODEX", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, UIConstants.TEXT_TITLE)
 
@@ -255,12 +255,12 @@ func _draw() -> void:
 	for i in range(Category.size()):
 		var tab_name: String = Category.keys()[i]
 		var tab_rect: Rect2 = Rect2(20 + i * tab_w, tab_y, tab_w - 2, TAB_H)
-		var tab_col: Color = Color(0.1, 0.2, 0.3) if i == _category else Color(0.04, 0.08, 0.12)
+		var tab_col: Color = Color(0.14, 0.24, 0.34) if i == _category else Color(0.08, 0.12, 0.18)
 		if _hover_tab == i:
 			tab_col = tab_col.lightened(0.15)
 		draw_rect(tab_rect, tab_col)
 		draw_rect(tab_rect, Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.3), false, 1.0)
-		draw_string(title_font, Vector2(tab_rect.position.x + 8, tab_rect.position.y + 27), tab_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_NORMAL)
+		draw_string(title_font, Vector2(tab_rect.position.x + 8, tab_rect.position.y + 27), tab_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, UIConstants.TEXT_NORMAL)
 
 	# --- TRAITS tab: special full-page layout ---
 	if _category == Category.TRAITS:
@@ -283,11 +283,11 @@ func _draw() -> void:
 		var is_hovered: bool = fi == _hover_entry
 
 		# Entry background
-		var bg_col: Color = Color(0.06, 0.1, 0.15)
+		var bg_col: Color = Color(0.09, 0.13, 0.19)
 		if is_selected:
-			bg_col = Color(0.1, 0.18, 0.26)
+			bg_col = Color(0.13, 0.21, 0.30)
 		elif is_hovered:
-			bg_col = Color(0.08, 0.14, 0.2)
+			bg_col = Color(0.11, 0.17, 0.24)
 		draw_rect(Rect2(20, ey, SIDEBAR_W - 10, ENTRY_H), bg_col)
 		draw_rect(Rect2(20, ey, SIDEBAR_W - 10, ENTRY_H), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.3), false, 1.0)
 
@@ -308,7 +308,7 @@ func _draw() -> void:
 
 		# Category tag
 		var cat_col: Color = _category_color(entry.category)
-		draw_string(title_font, Vector2(75, ey + 44), entry.category, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, cat_col * 0.7)
+		draw_string(title_font, Vector2(75, ey + 44), entry.category, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, cat_col * 0.7)
 
 		# HP bar if enemy/boss and discovered
 		if discovered and entry.hp > 0:
@@ -316,7 +316,7 @@ func _draw() -> void:
 			var bar_w: float = 100.0
 			var bar_h: float = 6.0
 			var bar_y: float = ey + ENTRY_H * 0.5 - 3
-			draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(0.1, 0.1, 0.1))
+			draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(0.15, 0.15, 0.15))
 			var hp_ratio: float = clampf(entry.hp / 300.0, 0.0, 1.0)
 			var hp_col: Color = Color(0.2, 0.7, 0.3).lerp(Color(0.8, 0.2, 0.1), 1.0 - hp_ratio)
 			draw_rect(Rect2(bar_x, bar_y, bar_w * hp_ratio, bar_h), hp_col)
@@ -344,7 +344,7 @@ func _draw_detail_panel(x: float, font: Font) -> void:
 	var discovered: bool = GameManager.is_creature_discovered(entry.id)
 	if not discovered:
 		_voice_btn_rects.clear()
-		draw_string(font, Vector2(x + 40, s.y * 0.4), "??? — Not yet discovered", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.4, 0.3, 0.3, 0.5))
+		draw_string(font, Vector2(x + 40, s.y * 0.4), "??? — Not yet discovered", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.5, 0.4, 0.4, 0.6))
 		return
 
 	var y: float = HEADER_H + 30.0
@@ -364,24 +364,24 @@ func _draw_detail_panel(x: float, font: Font) -> void:
 	y += 35
 
 	# Biomes
-	draw_string(font, Vector2(x + 20, y + 16), "BIOMES:", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
+	draw_string(font, Vector2(x + 20, y + 16), "BIOMES:", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIConstants.TEXT_DIM)
 	var biome_str: String = ", ".join(entry.biomes)
-	draw_string(font, Vector2(x + 100, y + 16), biome_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_NORMAL)
+	draw_string(font, Vector2(x + 100, y + 16), biome_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIConstants.TEXT_NORMAL)
 	y += 30
 
 	# --- Audio Signature ---
 	if VoiceGenerator.SPECIES_PRESETS.has(entry.id):
-		draw_line(Vector2(x + 10, y), Vector2(x + panel_w - 10, y), Color(0.15, 0.25, 0.35, 0.4), 1.0)
+		draw_line(Vector2(x + 10, y), Vector2(x + panel_w - 10, y), Color(0.22, 0.32, 0.42, 0.5), 1.0)
 		y += 8
-		draw_string(font, Vector2(x + 20, y + 14), "AUDIO SIGNATURE", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
+		draw_string(font, Vector2(x + 20, y + 14), "AUDIO SIGNATURE", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIConstants.TEXT_DIM)
 		y += 22
 		_voice_btn_rects.clear()
 		var vbtn_x: float = x + 20
-		var ic: Array = entry.icon_color
-		var vicol: Color = Color(ic[0], ic[1], ic[2])
+		var vic: Array = entry.icon_color
+		var vicol: Color = Color(vic[0], vic[1], vic[2])
 		for vi in range(VOICE_TYPES.size()):
 			var vlabel: String = VOICE_TYPES[vi].to_upper()
-			var vtw: float = font.get_string_size(vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x + 22
+			var vtw: float = font.get_string_size(vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 22
 			var vbtn_rect: Rect2 = Rect2(vbtn_x, y, vtw, 22)
 			_voice_btn_rects.append(vbtn_rect)
 			var v_hover: bool = _hover_voice_type == vi
@@ -402,14 +402,14 @@ func _draw_detail_panel(x: float, font: Font) -> void:
 				var wave_a: float = _voice_playing_timer / 0.6
 				draw_arc(Vector2(spk_cx + 4, spk_cy), 3.5, -PI * 0.4, PI * 0.4, 5, Color(vicol.r, vicol.g, vicol.b, wave_a * 0.6), 1.0)
 			var vlabel_col: Color = vicol if v_playing else (UIConstants.TEXT_BRIGHT if v_hover else UIConstants.TEXT_DIM)
-			draw_string(font, Vector2(vbtn_x + 14, y + 15), vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, vlabel_col)
+			draw_string(font, Vector2(vbtn_x + 14, y + 15), vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, vlabel_col)
 			vbtn_x += vtw + 3
 		y += 30
 	else:
 		_voice_btn_rects.clear()
 
 	# Separator
-	draw_line(Vector2(x + 10, y), Vector2(x + panel_w - 10, y), Color(0.15, 0.25, 0.35, 0.4), 1.0)
+	draw_line(Vector2(x + 10, y), Vector2(x + panel_w - 10, y), Color(0.22, 0.32, 0.42, 0.5), 1.0)
 	y += 15
 
 	# Stats
@@ -421,7 +421,7 @@ func _draw_detail_panel(x: float, font: Font) -> void:
 		draw_string(font, Vector2(x + 30, y + 14), "HP: %d" % entry.hp, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIConstants.TEXT_NORMAL)
 		var bar_x: float = x + 120.0
 		var bar_w: float = 180.0
-		draw_rect(Rect2(bar_x, y + 4, bar_w, 10), Color(0.08, 0.08, 0.08))
+		draw_rect(Rect2(bar_x, y + 4, bar_w, 10), Color(0.15, 0.15, 0.15))
 		var hp_ratio: float = clampf(entry.hp / 300.0, 0.0, 1.0)
 		draw_rect(Rect2(bar_x, y + 4, bar_w * hp_ratio, 10), Color(0.2, 0.7, 0.3))
 		y += 22
@@ -430,15 +430,15 @@ func _draw_detail_panel(x: float, font: Font) -> void:
 		y += 22
 
 	# Damage
-	draw_string(font, Vector2(x + 30, y + 14), "DMG: %d" % entry.damage, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.8, 0.5, 0.4))
+	draw_string(font, Vector2(x + 30, y + 14), "DMG: %d" % entry.damage, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.85, 0.55, 0.45))
 	y += 22
 
 	# Speed
-	draw_string(font, Vector2(x + 30, y + 14), "SPD: %.1f" % entry.speed, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.5, 0.7, 0.8))
+	draw_string(font, Vector2(x + 30, y + 14), "SPD: %.1f" % entry.speed, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.55, 0.75, 0.85))
 	y += 30
 
 	# Separator
-	draw_line(Vector2(x + 10, y), Vector2(x + panel_w - 10, y), Color(0.15, 0.25, 0.35, 0.4), 1.0)
+	draw_line(Vector2(x + 10, y), Vector2(x + panel_w - 10, y), Color(0.22, 0.32, 0.42, 0.5), 1.0)
 	y += 15
 
 	# Abilities
@@ -453,7 +453,7 @@ func _draw_detail_panel(x: float, font: Font) -> void:
 	y += 15
 
 	# Description
-	draw_line(Vector2(x + 10, y), Vector2(x + panel_w - 10, y), Color(0.15, 0.25, 0.35, 0.4), 1.0)
+	draw_line(Vector2(x + 10, y), Vector2(x + panel_w - 10, y), Color(0.22, 0.32, 0.42, 0.5), 1.0)
 	y += 18
 
 	# Word wrap description manually
@@ -466,8 +466,8 @@ func _draw_detail_panel(x: float, font: Font) -> void:
 
 func _draw_creature_icon(center: Vector2, radius: float, col: Color, category: String, discovered: bool) -> void:
 	if not discovered:
-		draw_circle(center, radius, Color(0.15, 0.15, 0.15))
-		draw_arc(center, radius, 0, TAU, 16, Color(0.25, 0.25, 0.25), 1.0)
+		draw_circle(center, radius, Color(0.18, 0.18, 0.18))
+		draw_arc(center, radius, 0, TAU, 16, Color(0.30, 0.30, 0.30), 1.0)
 		return
 
 	match category:
@@ -585,7 +585,7 @@ func _draw_traits_panel(font: Font) -> void:
 
 		# Card background
 		var card_rect: Rect2 = Rect2(panel_x, y, panel_w, card_h)
-		var bg_col: Color = Color(0.04, 0.08, 0.14) if unlocked else Color(0.04, 0.04, 0.04)
+		var bg_col: Color = Color(0.08, 0.12, 0.20) if unlocked else Color(0.07, 0.07, 0.07)
 		draw_rect(card_rect, bg_col)
 		draw_rect(card_rect, Color(icon_col.r, icon_col.g, icon_col.b, 0.3), false, 1.5)
 
@@ -602,7 +602,7 @@ func _draw_traits_panel(font: Font) -> void:
 			draw_colored_polygon(pts, icon_col * 0.4)
 			draw_polyline(pts, icon_col, 2.0)
 		else:
-			draw_circle(icon_center, icon_r, Color(0.1, 0.1, 0.1))
+			draw_circle(icon_center, icon_r, Color(0.14, 0.14, 0.14))
 			draw_arc(icon_center, icon_r, 0, TAU, 16, Color(0.2, 0.2, 0.2), 1.5)
 			draw_string(font, Vector2(panel_x + 30, y + card_h * 0.5 + 5), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.3, 0.3, 0.3))
 
@@ -614,22 +614,22 @@ func _draw_traits_panel(font: Font) -> void:
 
 		var boss_text: String = ("Looted from: %s (%s)" % [tdata.boss, tdata.biome]) if unlocked else "Defeat the boss to unlock"
 		var boss_col: Color = UIConstants.TEXT_DIM if unlocked else Color(0.25, 0.25, 0.25)
-		draw_string(font, Vector2(name_x, y + 42), boss_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, boss_col)
+		draw_string(font, Vector2(name_x, y + 42), boss_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, boss_col)
 
 		if unlocked:
 			# Tier pips
 			var pip_x: float = name_x
 			var pip_y: float = y + 54.0
-			draw_string(font, Vector2(pip_x, pip_y + 12), "Tier:", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
+			draw_string(font, Vector2(pip_x, pip_y + 12), "Tier:", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIConstants.TEXT_DIM)
 			pip_x += 40.0
 			for t in range(1, 4):
-				var pip_col: Color = icon_col if t <= tier else Color(0.15, 0.15, 0.15)
+				var pip_col: Color = icon_col if t <= tier else Color(0.20, 0.20, 0.20)
 				draw_rect(Rect2(pip_x, pip_y + 2, 16, 10), pip_col)
 				draw_rect(Rect2(pip_x, pip_y + 2, 16, 10), icon_col * 0.5, false, 1.0)
 				pip_x += 22.0
 
 			# Description
-			draw_string(font, Vector2(name_x, y + 82), tdata.desc, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_NORMAL)
+			draw_string(font, Vector2(name_x, y + 82), tdata.desc, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIConstants.TEXT_NORMAL)
 
 			# Stats row
 			var stat_y: float = y + 100.0
@@ -637,14 +637,14 @@ func _draw_traits_panel(font: Font) -> void:
 			var cooldown: float = BossTraitSystem.get_cooldown(trait_id)
 			var dmg: float = BossTraitSystem.get_damage(trait_id)
 
-			draw_string(font, Vector2(name_x, stat_y + 12), "Energy: %.0f" % energy_cost, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.3, 0.7, 0.9))
-			draw_string(font, Vector2(name_x + 110, stat_y + 12), "CD: %.0fs" % cooldown, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.7, 0.6, 0.3))
-			draw_string(font, Vector2(name_x + 200, stat_y + 12), "DMG: %.0f" % dmg, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.8, 0.4, 0.3))
+			draw_string(font, Vector2(name_x, stat_y + 12), "Energy: %.0f" % energy_cost, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.4, 0.75, 0.95))
+			draw_string(font, Vector2(name_x + 110, stat_y + 12), "CD: %.0fs" % cooldown, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.75, 0.65, 0.35))
+			draw_string(font, Vector2(name_x + 200, stat_y + 12), "DMG: %.0f" % dmg, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.85, 0.45, 0.35))
 
 			# Multiplier display
 			var mult: float = GameManager.get_trait_multiplier(trait_id)
 			if mult > 1.0:
-				draw_string(font, Vector2(name_x + 290, stat_y + 12), "x%.1f" % mult, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.9, 0.8, 0.2))
+				draw_string(font, Vector2(name_x + 290, stat_y + 12), "x%.1f" % mult, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.95, 0.85, 0.3))
 
 			# Upgrade button (right side)
 			if tier < 3:
@@ -656,7 +656,7 @@ func _draw_traits_panel(font: Font) -> void:
 				var btn_y: float = y + card_h * 0.5 - btn_h * 0.5
 				var btn_rect: Rect2 = Rect2(btn_x, btn_y, btn_w, btn_h)
 
-				var btn_col: Color = Color(0.1, 0.3, 0.15) if can_afford else Color(0.08, 0.08, 0.08)
+				var btn_col: Color = Color(0.12, 0.32, 0.18) if can_afford else Color(0.12, 0.12, 0.12)
 				draw_rect(btn_rect, btn_col)
 				var border_col: Color = Color(0.3, 0.8, 0.4, 0.6) if can_afford else Color(0.2, 0.2, 0.2, 0.4)
 				draw_rect(btn_rect, border_col, false, 1.5)
@@ -676,4 +676,4 @@ func _draw_traits_panel(font: Font) -> void:
 
 	# Hint text at bottom
 	y += 10.0
-	draw_string(font, Vector2(panel_x, y + 14), "Hold Q to open trait radial menu in-game. Press 1-5 to quick-activate.", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
+	draw_string(font, Vector2(panel_x, y + 14), "Hold Q to open trait radial menu in-game. Press 1-5 to quick-activate.", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIConstants.TEXT_DIM)
