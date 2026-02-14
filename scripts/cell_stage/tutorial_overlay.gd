@@ -29,7 +29,7 @@ const STEPS: Array = [
 	},
 	{
 		"key": "LMB",
-		"title": "TRACTOR BEAM",
+		"title": "ORGANIC VACUUM",
 		"text": "Click a nearby building block to collect it",
 		"sub": "Hover near a glowing particle and click to pull it in",
 	},

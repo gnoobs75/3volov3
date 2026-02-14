@@ -36,9 +36,6 @@ var _hover_eye: int = -1
 var _scroll_y: float = 0.0  # Vertical scroll offset for the panel
 
 # Dragging state for sliders
-var _dragging_spacing: bool = false
-var _dragging_angle: bool = false
-var _dragging_eye_size: bool = false
 var _dragging_zoom: bool = false
 var _dragging_rotation: bool = false
 var _dragging_elongation: bool = false
@@ -110,15 +107,6 @@ func _gui_input(event: InputEvent) -> void:
 			elif _check_eye_buttons(pos):
 				accept_event()
 			# Check slider thumb clicks
-			elif _check_slider_click(pos, _get_spacing_slider_y(), (_eye_spacing - 3.0) / 6.0):
-				_dragging_spacing = true
-				accept_event()
-			elif _check_slider_click(pos, _get_angle_slider_y(), _eye_angle / TAU):
-				_dragging_angle = true
-				accept_event()
-			elif _check_slider_click(pos, _get_eye_size_slider_y(), (_eye_size - 2.0) / 4.0):
-				_dragging_eye_size = true
-				accept_event()
 			elif _check_slider_click(pos, _get_elongation_slider_y(), (_elongation_offset + 0.5) / 1.0):
 				_dragging_elongation = true
 				accept_event()
@@ -139,9 +127,6 @@ func _gui_input(event: InputEvent) -> void:
 		elif not event.pressed:
 			_dragging_hue = false
 			_dragging_sv = false
-			_dragging_spacing = false
-			_dragging_angle = false
-			_dragging_eye_size = false
 			_dragging_zoom = false
 			_dragging_rotation = false
 			_dragging_elongation = false
@@ -166,27 +151,6 @@ func _gui_input(event: InputEvent) -> void:
 				if not handled and _is_in_sv_box(pos):
 					_current_val = clampf(_current_val + 0.05 * delta_val, 0.0, 1.0)
 					_emit_color()
-					handled = true
-					accept_event()
-
-				# Eye spacing slider area
-				if not handled and _is_in_slider_area(pos, _get_spacing_slider_y()):
-					_eye_spacing = clampf(_eye_spacing + small_delta, 3.0, 9.0)
-					eye_placement_changed.emit(_eye_angle, _eye_spacing)
-					handled = true
-					accept_event()
-
-				# Eye angle slider area
-				if not handled and _is_in_slider_area(pos, _get_angle_slider_y()):
-					_eye_angle = fmod(_eye_angle + 0.1 * delta_val + TAU, TAU)
-					eye_placement_changed.emit(_eye_angle, _eye_spacing)
-					handled = true
-					accept_event()
-
-				# Eye size slider area
-				if not handled and _is_in_slider_area(pos, _get_eye_size_slider_y()):
-					_eye_size = clampf(_eye_size + 0.25 * delta_val, 2.0, 6.0)
-					eye_size_changed.emit(_eye_size)
 					handled = true
 					accept_event()
 
@@ -217,15 +181,6 @@ func _gui_input(event: InputEvent) -> void:
 			accept_event()
 		elif _dragging_sv:
 			_update_sv_from_mouse(pos)
-			accept_event()
-		elif _dragging_spacing:
-			_update_slider_from_mouse(pos, _get_spacing_slider_y(), "spacing")
-			accept_event()
-		elif _dragging_angle:
-			_update_slider_from_mouse(pos, _get_angle_slider_y(), "angle")
-			accept_event()
-		elif _dragging_eye_size:
-			_update_slider_from_mouse(pos, _get_eye_size_slider_y(), "eye_size")
 			accept_event()
 		elif _dragging_elongation:
 			_update_slider_from_mouse(pos, _get_elongation_slider_y(), "elongation")
@@ -270,20 +225,8 @@ func _get_target_section_y() -> float:
 func _get_eye_section_y() -> float:
 	return _get_target_section_y() + 52.0 + SECTION_GAP
 
-func _get_placement_section_y() -> float:
-	return _get_eye_section_y() + 16.0 + (ceili(EYE_STYLES.size() / 5.0)) * 38.0 + SECTION_GAP
-
-func _get_spacing_slider_y() -> float:
-	return _get_placement_section_y() + 28.0
-
-func _get_angle_slider_y() -> float:
-	return _get_spacing_slider_y() + 40.0
-
-func _get_eye_size_slider_y() -> float:
-	return _get_angle_slider_y() + 40.0
-
 func _get_shape_section_y() -> float:
-	return _get_eye_size_slider_y() + 48.0
+	return _get_eye_section_y() + 16.0 + (ceili(EYE_STYLES.size() / 5.0)) * 38.0 + SECTION_GAP
 
 func _get_elongation_slider_y() -> float:
 	return _get_shape_section_y() + 28.0
@@ -328,19 +271,10 @@ func _check_slider_click(pos: Vector2, slider_cy: float, t: float) -> bool:
 func _check_slider_track_click(pos: Vector2) -> bool:
 	var sx := _get_slider_x()
 	# Check each slider track
-	for slider_y in [_get_spacing_slider_y(), _get_angle_slider_y(), _get_eye_size_slider_y(), _get_elongation_slider_y(), _get_bulge_slider_y(), _get_zoom_slider_y()]:
+	for slider_y in [_get_elongation_slider_y(), _get_bulge_slider_y(), _get_zoom_slider_y()]:
 		if pos.y >= slider_y - 10 and pos.y <= slider_y + 10 and pos.x >= sx - 4 and pos.x <= sx + SLIDER_W + 4:
 			var t: float = clampf((pos.x - sx) / SLIDER_W, 0.0, 1.0)
-			if slider_y == _get_spacing_slider_y():
-				_eye_spacing = 3.0 + t * 6.0
-				eye_placement_changed.emit(_eye_angle, _eye_spacing)
-			elif slider_y == _get_angle_slider_y():
-				_eye_angle = t * TAU
-				eye_placement_changed.emit(_eye_angle, _eye_spacing)
-			elif slider_y == _get_eye_size_slider_y():
-				_eye_size = 2.0 + t * 4.0
-				eye_size_changed.emit(_eye_size)
-			elif slider_y == _get_elongation_slider_y():
+			if slider_y == _get_elongation_slider_y():
 				_elongation_offset = -0.5 + t * 1.0
 				elongation_offset_changed.emit(_elongation_offset)
 			elif slider_y == _get_bulge_slider_y():
@@ -357,15 +291,6 @@ func _is_in_slider_area(pos: Vector2, slider_cy: float) -> bool:
 func _update_slider_from_mouse(pos: Vector2, slider_cy: float, which: String) -> void:
 	var t: float = clampf((pos.x - _get_slider_x()) / SLIDER_W, 0.0, 1.0)
 	match which:
-		"spacing":
-			_eye_spacing = 3.0 + t * 6.0
-			eye_placement_changed.emit(_eye_angle, _eye_spacing)
-		"angle":
-			_eye_angle = t * TAU
-			eye_placement_changed.emit(_eye_angle, _eye_spacing)
-		"eye_size":
-			_eye_size = 2.0 + t * 4.0
-			eye_size_changed.emit(_eye_size)
 		"elongation":
 			_elongation_offset = -0.5 + t * 1.0
 			elongation_offset_changed.emit(_elongation_offset)
@@ -524,30 +449,6 @@ func _draw() -> void:
 			draw_rect(rect, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.75), false, 1.5)
 		var ec: Vector2 = rect.position + rect.size * 0.5
 		_draw_eye_icon(EYE_STYLES[i], ec)
-
-	# === EYE PLACEMENT CONTROLS ===
-	var place_y: float = _get_placement_section_y()
-	_draw_section_header(font, "EYE PLACEMENT", PANEL_PAD, place_y, panel_w)
-
-	# Eye Spacing slider
-	var spacing_cy: float = _get_spacing_slider_y()
-	draw_string(font, Vector2(PANEL_PAD, spacing_cy - 10), "SPACING", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.9))
-	_draw_slider(spacing_cy, (_eye_spacing - 3.0) / 6.0, "%.1f" % _eye_spacing, _dragging_spacing)
-
-	# Eye Angle slider
-	var angle_cy: float = _get_angle_slider_y()
-	draw_string(font, Vector2(PANEL_PAD, angle_cy - 10), "ROTATION", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.9))
-	_draw_slider(angle_cy, _eye_angle / TAU, "%d°" % int(rad_to_deg(_eye_angle)), _dragging_angle)
-	# Mini rotation dial indicator
-	var angle_dial_cx: float = _get_slider_x() + SLIDER_W + 30.0
-	draw_arc(Vector2(angle_dial_cx, angle_cy), 10.0, 0, TAU, 16, Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.5), 1.0)
-	var angle_dir: Vector2 = Vector2(cos(_eye_angle), sin(_eye_angle))
-	draw_line(Vector2(angle_dial_cx, angle_cy), Vector2(angle_dial_cx, angle_cy) + angle_dir * 10.0, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.95), 2.0)
-
-	# Eye Size slider
-	var esize_cy: float = _get_eye_size_slider_y()
-	draw_string(font, Vector2(PANEL_PAD, esize_cy - 10), "EYE SIZE", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.9))
-	_draw_slider(esize_cy, (_eye_size - 2.0) / 4.0, "%.1f" % _eye_size, _dragging_eye_size)
 
 	# === BODY SHAPE ===
 	var shape_y: float = _get_shape_section_y()

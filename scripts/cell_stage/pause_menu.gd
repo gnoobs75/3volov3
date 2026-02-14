@@ -24,7 +24,7 @@ const MAIN_BUTTONS: Array = [
 const CONTROLS: Array = [
 	{"keys": "WASD", "label": "Move / Thrust"},
 	{"keys": "SHIFT", "label": "Sprint (costs energy)"},
-	{"keys": "LMB", "label": "Tractor Beam (auto-pulls to you)"},
+	{"keys": "LMB", "label": "Organic Vacuum (auto-pulls to you)"},
 	{"keys": "RMB", "label": "Jet Stream (push enemies)"},
 	{"keys": "MMB", "label": "Golden Ability (AOE power)"},
 	{"keys": "TAB", "label": "CRISPR Mutation Workshop"},
@@ -186,7 +186,7 @@ func _draw_main_screen(vp: Vector2) -> void:
 	# Quick controls reference
 	stats_y += 26
 	var controls: Array = [
-		"WASD - Move    SHIFT - Sprint    LMB - Beam",
+		"WASD - Move    SHIFT - Sprint    LMB - Vacuum",
 		"MMB - Golden    TAB - Workshop",
 	]
 	for line in controls:
