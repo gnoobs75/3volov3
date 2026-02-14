@@ -62,7 +62,7 @@ var _phases: Array = [
 	{
 		"dur": 10.0, "offset": Vector2(300, 0),
 		"title": "BUILDING BLOCKS",
-		"body": ["Biomolecules: raw energy and growth fuel.", "Collect with tractor beam [LMB].", "Organelles grant evolution progress."],
+		"body": ["Biomolecules: raw energy and growth fuel.", "Collect with organic vacuum [LMB].", "Organelles grant evolution progress."],
 		"observer": "Abundant molecular resources...",
 		"spawns": "food",
 	},
@@ -70,7 +70,7 @@ var _phases: Array = [
 	{
 		"dur": 10.0, "offset": Vector2(300, -300),
 		"title": "EDIBLE WORMS",
-		"body": ["Snake prey: slow, nutritious organisms.", "Chase and consume for health + energy.", "Fire toxin [E] to stun them first."],
+		"body": ["Snake prey: slow, nutritious organisms.", "Use your organic vacuum [LMB] to consume them.", "Great source of health and energy."],
 		"observer": "Easy pickings for a hunter...",
 		"spawns": "snake_prey",
 	},
@@ -86,7 +86,7 @@ var _phases: Array = [
 	{
 		"dur": 10.0, "offset": Vector2(-300, -300),
 		"title": "PARASITIC WORM",
-		"body": ["Latches on and feeds off the host.", "Five attached means total takeover.", "Evade them — outrun or dodge to survive."],
+		"body": ["Latches on and feeds off the host.", "Five attached means total takeover.", "Outrun them or lure them through a Cleansing Anemone."],
 		"observer": "Disturbing symbiosis...",
 		"spawns": "parasite",
 	},

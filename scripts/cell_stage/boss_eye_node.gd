@@ -1,6 +1,6 @@
 extends Area2D
 ## Beamable eye node for the Oculus Titan boss.
-## Acts like a food particle for the tractor beam system.
+## Acts like a food particle for the organic vacuum system.
 
 var component_data: Dictionary = {"id": "boss_eye", "display_name": "Eye", "short_name": "EYE", "color": [0.9, 0.3, 0.3], "is_organelle": false}
 var _pull_progress: float = 0.0

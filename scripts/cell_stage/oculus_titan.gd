@@ -1,7 +1,7 @@
 extends CharacterBody2D
 ## Oculus Titan: Boss 1 (spawns after 3rd evolution).
 ## Massive creature covered in eyes. Cannot be killed by normal damage.
-## Player must use tractor beam (LMB) to suck each eye off one by one.
+## Player must use organic vacuum (LMB) to suck each eye off one by one.
 ## Each eye removed weakens it. Remove all eyes to kill it.
 ## Eyes are beamable targets in "food" group temporarily when exposed.
 

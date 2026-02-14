@@ -1,6 +1,6 @@
 extends Control
 ## Guided tutorial: step-by-step onboarding after creature creation.
-## Steps: Movement → Tractor Beam → Spray → Sprint → Vitals explanation → Collect 3 → Go!
+## Steps: Movement → Organic Vacuum → Spray → Sprint → Vitals explanation → Collect 3 → Go!
 ## Each step is action-gated: player must perform the action to advance.
 
 var _time: float = 0.0

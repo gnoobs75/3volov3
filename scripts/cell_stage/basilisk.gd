@@ -263,6 +263,10 @@ func _fire_spine() -> void:
 	_active_spines.append(proj)
 
 func _on_spine_hit(body: Node2D, proj: Node2D) -> void:
+	if not is_instance_valid(self):
+		if is_instance_valid(proj):
+			proj.queue_free()
+		return
 	if body.is_in_group("player") and body.has_method("take_damage"):
 		body.take_damage(proj.get_meta("damage", 10.0))
 	if is_instance_valid(proj):
@@ -489,6 +493,13 @@ func take_damage_from_behind(amount: float) -> void:
 		_state_timer = 2.0
 
 func _die() -> void:
+	# Clean up active spines to prevent freed-instance signals
+	for proj in _active_spines:
+		if is_instance_valid(proj):
+			if proj.body_entered.is_connected(_on_spine_hit):
+				proj.body_entered.disconnect(_on_spine_hit)
+			proj.queue_free()
+	_active_spines.clear()
 	AudioManager.play_creature_voice("basilisk", "death", 1.3, 0.7, 1.0)
 	var manager := get_tree().get_first_node_in_group("cell_stage_manager")
 	if manager and manager.has_method("spawn_death_nutrients"):
@@ -506,5 +517,8 @@ func confuse(_duration: float) -> void:
 	timer.wait_time = 2.0
 	timer.one_shot = true
 	timer.autostart = true
-	timer.timeout.connect(func(): _turn_speed = 1.2)
+	timer.timeout.connect(func():
+		if is_instance_valid(self):
+			_turn_speed = 1.2
+	)
 	add_child(timer)

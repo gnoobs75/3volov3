@@ -20,7 +20,7 @@ const ORGANISM_DATA: Array = [
 	# --- PREY ---
 	{"id": "food_particle", "name": "Biomolecule", "category": "PREY", "hp": 0, "damage": 0, "speed": 0.0,
 	 "aggression": "None", "traits": ["Passive", "Collectible"],
-	 "abilities": ["Absorbed by tractor beam", "Provides nutrients"],
+	 "abilities": ["Absorbed by organic vacuum", "Provides nutrients"],
 	 "habits": "Drifts passively through the cellular soup. The primary food source for all organisms.",
 	 "icon_color": [0.3, 0.7, 1.0],
 	 "description": "Free-floating biomolecular clusters — amino acids, lipids, and nucleotides. The building blocks of evolution."},
@@ -116,9 +116,9 @@ const ORGANISM_DATA: Array = [
 	{"id": "oculus_titan", "name": "Oculus Titan", "category": "BOSS", "hp": 200, "damage": 10, "speed": 1.5,
 	 "aggression": "Passive until provoked", "traits": ["Multi-eyed", "Beam-vulnerable", "Massive"],
 	 "abilities": ["Covered in beamable eyes", "Invincible to normal damage", "Thrashes when 50% eyes removed", "Each eye drops nutrients"],
-	 "habits": "A colossal all-seeing organism. Its many eyes are its weakness — each can be ripped off with the tractor beam.",
+	 "habits": "A colossal all-seeing organism. Its many eyes are its weakness — each can be ripped off with the organic vacuum.",
 	 "icon_color": [0.9, 0.3, 0.3],
-	 "description": "Towering boss covered in watchful eyes. Immune to direct attacks — you must use your tractor beam to peel off each eye one by one. Spawns after 3rd evolution."},
+	 "description": "Towering boss covered in watchful eyes. Immune to direct attacks — you must use your organic vacuum to peel off each eye one by one. Spawns after 3rd evolution."},
 
 	{"id": "juggernaut", "name": "Juggernaut", "category": "BOSS", "hp": 300, "damage": 25, "speed": 4.0,
 	 "aggression": "Berserk — relentless charger", "traits": ["Armored", "Unstoppable", "Charge attack"],

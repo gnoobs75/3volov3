@@ -326,18 +326,15 @@ func _draw_face(dc: Vector2) -> void:
 	var custom: Dictionary = GameManager.creature_customization
 	var iris_color: Color = custom.get("iris_color", Color(0.2, 0.5, 0.9))
 	var eye_style: String = custom.get("eye_style", "anime")
-	var eye_angle: float = custom.get("eye_angle", 0.0)
-	var eye_spacing_val: float = custom.get("eye_spacing", 5.5)
 	var eye_size_val: float = custom.get("eye_size", 3.5)
+	var left_x: float = custom.get("eye_left_x", -0.15)
+	var left_y: float = custom.get("eye_left_y", -0.25)
+	var right_x: float = custom.get("eye_right_x", -0.15)
+	var right_y: float = custom.get("eye_right_y", 0.25)
 
-	# Eye position based on angle and spacing — eyes sit on the membrane surface
-	var face_fwd: float = _cell_radius * (_elongation - 1.0) * 0.4 * s
-	var face_center: Vector2 = dc + Vector2(_cell_radius * 0.25 * s + face_fwd, 0)
-	# Rotate eye pair around face center by eye_angle
-	var spacing: float = eye_spacing_val * s * 0.4
-	var perp: Vector2 = Vector2(-sin(eye_angle), cos(eye_angle))
-	var left_eye: Vector2 = face_center + perp * (-spacing)
-	var right_eye: Vector2 = face_center + perp * spacing
+	# Eye position from normalized x/y coordinates
+	var left_eye: Vector2 = dc + Vector2(left_x, left_y) * _cell_radius * s
+	var right_eye: Vector2 = dc + Vector2(right_x, right_y) * _cell_radius * s
 	var eye_r: float = eye_size_val * s * 0.3  # Scale by eye_size from customization
 	var iris_r: float = eye_r * 0.65
 	var pupil_r: float = eye_r * 0.32
@@ -418,6 +415,73 @@ func _draw_face(dc: Vector2) -> void:
 				draw_colored_polygon(star_pts, Color(iris_color.r, iris_color.g * 0.8, iris_color.b * 0.3, 0.9))
 				draw_circle(ep, pupil_r * 0.8, Color(0.02, 0.02, 0.08, 0.95))
 				draw_circle(ep + Vector2(-1, -1) * s * 0.2, 0.7 * s * 0.2, Color(1, 1, 1, 0.6))
+		"hypnotize":
+			for ep: Vector2 in [left_eye, right_eye]:
+				draw_circle(ep, eye_r, Color(1, 1, 1, 0.9))
+				# Concentric rings alternating iris_color and dark, pulsing outward
+				var num_rings: int = 5
+				for ring_i in range(num_rings, 0, -1):
+					var ring_t: float = float(ring_i) / float(num_rings)
+					var ring_r: float = iris_r * ring_t
+					var phase: float = _time * 2.0 + ring_i * 0.5
+					var pulse: float = 0.8 + 0.2 * sin(phase)
+					var ring_col: Color
+					if ring_i % 2 == 0:
+						ring_col = Color(iris_color.r * pulse, iris_color.g * pulse, iris_color.b * pulse, 0.9)
+					else:
+						ring_col = Color(0.05, 0.02, 0.1, 0.85)
+					draw_circle(ep, ring_r, ring_col)
+				draw_circle(ep, pupil_r * 0.3, Color(1, 1, 1, 0.8))
+		"x_eyes":
+			for ep: Vector2 in [left_eye, right_eye]:
+				draw_circle(ep, eye_r, Color(1, 1, 1, 0.85))
+				# Two diagonal lines crossing (cartoon dazed/dead)
+				var line_len: float = eye_r * 0.65
+				draw_line(ep + Vector2(-line_len, -line_len), ep + Vector2(line_len, line_len), Color(0.1, 0.1, 0.15, 0.95), eye_r * 0.2, true)
+				draw_line(ep + Vector2(line_len, -line_len), ep + Vector2(-line_len, line_len), Color(0.1, 0.1, 0.15, 0.95), eye_r * 0.2, true)
+		"heart":
+			for ep: Vector2 in [left_eye, right_eye]:
+				draw_circle(ep, eye_r, Color(1, 1, 1, 0.9))
+				# Heart-shaped iris
+				var heart_pts: PackedVector2Array = PackedVector2Array()
+				var heart_scale: float = iris_r * 0.18
+				for i in range(24):
+					var t: float = float(i) / 24.0 * TAU
+					var hx: float = heart_scale * (sin(t) * sin(t) * sin(t)) * 16.0
+					var hy: float = -heart_scale * (13.0 * cos(t) - 5.0 * cos(2.0 * t) - 2.0 * cos(3.0 * t) - cos(4.0 * t))
+					heart_pts.append(ep + Vector2(hx, hy * 0.5 - iris_r * 0.1))
+				var heart_col: Color = Color(minf(iris_color.r + 0.3, 1.0), iris_color.g * 0.4, minf(iris_color.b * 0.5 + 0.2, 1.0), 0.9)
+				draw_colored_polygon(heart_pts, heart_col)
+				# Anime highlight
+				draw_circle(ep + Vector2(-1.5, -1.5) * s * 0.25, 1.0 * s * 0.25, Color(1, 1, 1, 0.65))
+		"spiral":
+			for ep: Vector2 in [left_eye, right_eye]:
+				draw_circle(ep, eye_r, Color(iris_color.r * 0.3, iris_color.g * 0.3, iris_color.b * 0.5, 0.8))
+				# Rotating Archimedes spiral pupil
+				var prev_sp: Vector2 = ep
+				var spiral_segs: int = 28
+				for i in range(spiral_segs):
+					var t: float = float(i + 1) / float(spiral_segs)
+					var spiral_a: float = t * TAU * 2.5 + _time * 3.0
+					var spiral_r: float = t * iris_r * 0.85
+					var sp: Vector2 = ep + Vector2(cos(spiral_a) * spiral_r, sin(spiral_a) * spiral_r)
+					draw_line(prev_sp, sp, Color(iris_color.r, iris_color.g, iris_color.b, 0.9), maxf(2.0 * s * 0.15 * (1.0 - t * 0.5), 0.8), true)
+					prev_sp = sp
+				draw_circle(ep, pupil_r * 0.25, Color(1, 1, 1, 0.7))
+		"alien":
+			for ep: Vector2 in [left_eye, right_eye]:
+				# Large almond/oval shape (tall, narrow)
+				var alien_pts: PackedVector2Array = PackedVector2Array()
+				for i in range(20):
+					var t: float = float(i) / 20.0 * TAU
+					var ax: float = cos(t) * eye_r * 0.55
+					var ay: float = sin(t) * eye_r * 1.2
+					alien_pts.append(ep + Vector2(ax, ay))
+				draw_colored_polygon(alien_pts, Color(0.03, 0.08, 0.06, 0.95))
+				# Subtle green-blue sheen
+				var sheen_a: float = 0.15 + 0.1 * sin(_time * 1.5 + ep.x * 0.1)
+				draw_arc(ep, eye_r * 0.7, -PI * 0.3, PI * 0.3, 8, Color(0.1, 0.8, 0.6, sheen_a), eye_r * 0.15, true)
+				draw_circle(ep + Vector2(0, -eye_r * 0.15), pupil_r * 0.3, Color(0.2, 0.9, 0.7, 0.4))
 
 func _draw_annotations(dc: Vector2, s: float) -> void:
 	var font := UIConstants.get_display_font()

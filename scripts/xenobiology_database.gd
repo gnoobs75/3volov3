@@ -11,19 +11,20 @@ enum SubCategory { ALL, PREY, PREDATOR, HAZARD, BOSS, UTILITY, AMBIENT, ENEMIES 
 
 const HEADER_H: float = 70.0
 const TAB_H: float = 45.0
-const SUBTAB_H: float = 34.0
+const SUBTAB_H: float = 42.0
 const SIDEBAR_W: float = 380.0
-const ENTRY_H: float = 68.0
+const ENTRY_H: float = 90.0
 const ENTRY_GAP: float = 5.0
 const DETAIL_PAD: float = 30.0
-const FOOTER_H: float = 36.0
+const FOOTER_H: float = 44.0
 const ICON_R: float = 22.0
 
 # Fish tank ecosystem
-const TANK_BOUNDS: Rect2 = Rect2(-400, -320, 800, 640)
+const TANK_BOUNDS: Rect2 = Rect2(-640, -320, 1280, 640)
 const TANK_POP_PREDATORS: int = 3
 const TANK_POP_PREY: int = 5
 const TANK_POP_MISC: int = 3
+const TANK_POP_BOSSES: int = 3
 const TANK_POP_FOOD: int = 10
 const TANK_RESPAWN_DELAY: float = 2.0
 const TANK_FOOD_RESPAWN_DELAY: float = 4.0
@@ -33,15 +34,16 @@ const TANK_CREATURE_SCALE: float = 1.8  # Scale up so creatures are visible in t
 const TANK_PREDATORS: Array = ["enemy_cell", "dart_predator", "siren_cell"]
 const TANK_PREY: Array = ["snake_prey"]
 const TANK_MISC: Array = ["ink_bomber", "electric_eel", "splitter_cell"]
+const TANK_BOSSES: Array = ["oculus_titan", "juggernaut", "basilisk"]
 
-# Font sizes (increased for readability)
-const FONT_NAME: int = 28
-const FONT_CATEGORY: int = 14
-const FONT_STAT_LABEL: int = 13
-const FONT_STAT_VALUE: int = 18
-const FONT_BODY: int = 13
-const FONT_SECTION: int = 14
-const FONT_VOICE_BTN: int = 12
+# Font sizes (doubled for readability on large screens)
+const FONT_NAME: int = 48
+const FONT_CATEGORY: int = 26
+const FONT_STAT_LABEL: int = 22
+const FONT_STAT_VALUE: int = 32
+const FONT_BODY: int = 24
+const FONT_SECTION: int = 26
+const FONT_VOICE_BTN: int = 22
 
 # Scene paths for cell stage creatures (SubViewport live preview)
 const CELL_SCENE_PATHS: Dictionary = {
@@ -72,7 +74,7 @@ const ALL_CREATURES: Array = [
 	{"id": "food_particle", "stage": "CELL", "name": "Biomolecule", "category": "PREY",
 	 "hp": 0, "damage": 0, "speed": 0.0,
 	 "traits": ["Passive", "Collectible"],
-	 "abilities": ["Absorbed by tractor beam", "Provides nutrients"],
+	 "abilities": ["Absorbed by organic vacuum", "Provides nutrients"],
 	 "habits": "Drifts passively through the cellular soup. The primary food source for all organisms.",
 	 "icon_color": [0.3, 0.7, 1.0],
 	 "description": "Free-floating biomolecular clusters — amino acids, lipids, and nucleotides. The building blocks of evolution."},
@@ -177,9 +179,9 @@ const ALL_CREATURES: Array = [
 	 "hp": 200, "damage": 10, "speed": 1.5,
 	 "traits": ["Multi-eyed", "Beam-vulnerable", "Massive"],
 	 "abilities": ["Covered in beamable eyes", "Invincible to normal damage", "Thrashes when 50% eyes removed", "Each eye drops nutrients"],
-	 "habits": "A colossal all-seeing organism. Its many eyes are its weakness — each can be ripped off with the tractor beam.",
+	 "habits": "A colossal all-seeing organism. Its many eyes are its weakness — each can be ripped off with the organic vacuum.",
 	 "icon_color": [0.9, 0.3, 0.3],
-	 "description": "Towering boss covered in watchful eyes. Immune to direct attacks — use tractor beam to peel off each eye. Spawns after 3rd evolution."},
+	 "description": "Towering boss covered in watchful eyes. Immune to direct attacks — use organic vacuum to peel off each eye. Spawns after 3rd evolution."},
 
 	{"id": "juggernaut", "stage": "CELL", "name": "Juggernaut", "category": "BOSS",
 	 "hp": 300, "damage": 25, "speed": 4.0,
@@ -435,10 +437,11 @@ func _process(delta: float) -> void:
 		_voice_playing_timer -= delta
 	for col in _glyph_columns:
 		col.offset += col.speed * delta
-	# Update tank camera follow and selection highlight
+	# Update tank camera follow, selection highlight, and viewport resolution
 	if _tank_initialized and _stage_tab == 0:
 		_tank_highlight_time += delta
 		_update_tank_camera(delta)
+		_resize_tank_viewport()
 		# Pulse selected creature modulate
 		if _tank_selected_node and is_instance_valid(_tank_selected_node):
 			var glow: float = 1.0 + sin(_tank_highlight_time * 3.0) * 0.12
@@ -550,7 +553,7 @@ func _handle_hover(pos: Vector2) -> void:
 
 	# Sub-category tabs
 	var cats: Array = CELL_CATEGORIES if _stage_tab == 0 else PARASITE_CATEGORIES
-	var sub_tab_w: float = minf(SIDEBAR_W / cats.size(), 80.0)
+	var sub_tab_w: float = (SIDEBAR_W - 16.0) / cats.size()
 	var sub_y: float = HEADER_H + TAB_H
 	for i in range(cats.size()):
 		var sub_rect: Rect2 = Rect2(16 + i * sub_tab_w, sub_y, sub_tab_w - 2, SUBTAB_H)
@@ -599,9 +602,10 @@ func _initialize_tank() -> void:
 	_tank_viewport.add_child(_tank_camera)
 	# Boundary walls
 	_create_tank_walls()
+	# Mark initialized before populating so spawn guards pass
+	_tank_initialized = true
 	# Populate ecosystem
 	_populate_tank()
-	_tank_initialized = true
 
 func _create_tank_walls() -> void:
 	var half_w: float = TANK_BOUNDS.size.x * 0.5
@@ -636,6 +640,10 @@ func _populate_tank() -> void:
 	# Spawn misc (ink_bomber, electric_eel, etc.)
 	for i in range(TANK_POP_MISC):
 		var cid: String = TANK_MISC[i % TANK_MISC.size()]
+		_spawn_tank_creature(cid)
+	# Spawn bosses
+	for i in range(TANK_POP_BOSSES):
+		var cid: String = TANK_BOSSES[i % TANK_BOSSES.size()]
 		_spawn_tank_creature(cid)
 	# Spawn food particles
 	for i in range(TANK_POP_FOOD):
@@ -714,6 +722,23 @@ func _update_tank_camera(delta: float) -> void:
 	_tank_camera_target.y = clampf(_tank_camera_target.y, -hh, hh)
 	_tank_camera.position = _tank_camera_target
 
+func _resize_tank_viewport() -> void:
+	## Resize the SubViewport to match the actual display rect so it renders at full resolution.
+	## Uses uniform zoom to avoid stretching creatures.
+	if not _tank_viewport or not _tank_camera:
+		return
+	var s: Vector2 = size
+	var x: float = SIDEBAR_W + 26.0 + DETAIL_PAD
+	var panel_w: float = s.x - x - DETAIL_PAD
+	var tank_h: float = minf(panel_w * 0.62, (s.y - HEADER_H - TAB_H - FOOTER_H) * 0.55)
+	var tank_w: float = panel_w - 8.0
+	var target_size: Vector2i = Vector2i(maxi(int(tank_w), 64), maxi(int(tank_h), 64))
+	if _tank_viewport.size != target_size:
+		_tank_viewport.size = target_size
+		# Uniform zoom: fit TANK_BOUNDS without stretching
+		var zoom_val: float = minf(tank_w / TANK_BOUNDS.size.x, tank_h / TANK_BOUNDS.size.y)
+		_tank_camera.zoom = Vector2(zoom_val, zoom_val)
+
 func _select_tank_creature(creature_id: String) -> void:
 	# Clear previous highlight
 	if _tank_selected_node and is_instance_valid(_tank_selected_node):
@@ -748,16 +773,16 @@ func _draw_scanner_overlay(rect: Rect2, col: Color) -> void:
 	draw_line(Vector2(rect.end.x, rect.end.y), Vector2(rect.end.x, rect.end.y - arm), bc, bw)
 	# Blinking REC dot + label
 	var mono: Font = UIConstants.get_mono_font()
-	draw_string(mono, Vector2(rect.position.x + 6, rect.position.y + 14), "LIVE ECOSYSTEM", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(col.r, col.g, col.b, 0.5))
+	draw_string(mono, Vector2(rect.position.x + 8, rect.position.y + 22), "LIVE ECOSYSTEM", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(col.r, col.g, col.b, 0.5))
 	if fmod(_scanner_time, 1.2) < 0.8:
-		draw_circle(Vector2(rect.end.x - 14, rect.position.y + 10), 3.5, Color(0.9, 0.2, 0.15, 0.7))
-		draw_string(mono, Vector2(rect.end.x - 40, rect.position.y + 14), "REC", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.9, 0.2, 0.15, 0.5))
+		draw_circle(Vector2(rect.end.x - 18, rect.position.y + 14), 4.0, Color(0.9, 0.2, 0.15, 0.7))
+		draw_string(mono, Vector2(rect.end.x - 56, rect.position.y + 20), "REC", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.9, 0.2, 0.15, 0.5))
 	# Timestamp
 	var ts_str: String = "%02d:%02d:%02d" % [int(_scanner_time / 3600) % 24, int(_scanner_time / 60) % 60, int(_scanner_time) % 60]
-	draw_string(mono, Vector2(rect.end.x - 60, rect.end.y - 5), ts_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(col.r, col.g, col.b, 0.4))
+	draw_string(mono, Vector2(rect.end.x - 100, rect.end.y - 8), ts_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(col.r, col.g, col.b, 0.4))
 	# Entity count bottom-left
 	var pop_str: String = "POP: %d" % (_tank_creatures.size() + _tank_food.size())
-	draw_string(mono, Vector2(rect.position.x + 6, rect.end.y - 5), pop_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(col.r, col.g, col.b, 0.4))
+	draw_string(mono, Vector2(rect.position.x + 8, rect.end.y - 8), pop_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(col.r, col.g, col.b, 0.4))
 
 # ======================== DRAWING ========================
 
@@ -877,13 +902,13 @@ func _draw_stage_tabs(s: Vector2) -> void:
 		draw_rect(rect, Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.25), false, 1.0)
 
 		var text_col: Color = UIConstants.TEXT_BRIGHT if is_active else UIConstants.TEXT_NORMAL
-		var ts: Vector2 = font.get_string_size(tab_names[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
-		draw_string(font, Vector2(rect.position.x + (tab_w - ts.x) * 0.5, rect.position.y + 30), tab_names[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 14, text_col)
+		var ts: Vector2 = font.get_string_size(tab_names[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 24)
+		draw_string(font, Vector2(rect.position.x + (tab_w - ts.x) * 0.5, rect.position.y + 32), tab_names[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 24, text_col)
 
 func _draw_sub_tabs(s: Vector2) -> void:
 	var font: Font = UIConstants.get_display_font()
 	var cats: Array = CELL_CATEGORIES if _stage_tab == 0 else PARASITE_CATEGORIES
-	var sub_tab_w: float = minf(SIDEBAR_W / cats.size(), 80.0)
+	var sub_tab_w: float = (SIDEBAR_W - 16.0) / cats.size()
 	var sub_y: float = HEADER_H + TAB_H
 
 	for i in range(cats.size()):
@@ -901,7 +926,7 @@ func _draw_sub_tabs(s: Vector2) -> void:
 			draw_line(Vector2(rect.position.x, rect.end.y - 1), Vector2(rect.end.x, rect.end.y - 1), UIConstants.ACCENT * 0.7, 1.5)
 
 		var text_col: Color = UIConstants.TEXT_BRIGHT if is_active else UIConstants.TEXT_NORMAL
-		draw_string(font, Vector2(rect.position.x + 5, rect.position.y + 22), cat_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, text_col)
+		draw_string(font, Vector2(rect.position.x + 5, rect.position.y + 24), cat_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, text_col)
 
 func _draw_sidebar(s: Vector2) -> void:
 	var font: Font = UIConstants.get_display_font()
@@ -950,30 +975,30 @@ func _draw_sidebar(s: Vector2) -> void:
 		# Name
 		var name_text: String = entry.name if discovered else "??? UNKNOWN ???"
 		var name_col: Color = Color(0.80, 0.95, 1.0) if discovered else Color(0.45, 0.48, 0.55)
-		draw_string(font, Vector2(76, ey + 24), name_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, name_col)
+		draw_string(font, Vector2(76, ey + 30), name_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, name_col)
 
 		# Category + threat dots
 		var cat_col: Color = _category_color(entry.category)
 		if discovered:
-			draw_string(mono, Vector2(76, ey + 42), entry.category, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, cat_col * 0.85)
+			draw_string(mono, Vector2(76, ey + 54), entry.category, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, cat_col * 0.85)
 			var threat: int = _get_threat_level(entry)
 			for t in range(5):
 				var dot_col: Color = UIConstants.STAT_RED if t < threat else Color(0.22, 0.22, 0.25)
-				draw_circle(Vector2(148 + t * 12, ey + 39), 3.0, dot_col)
+				draw_circle(Vector2(168 + t * 14, ey + 50), 4.0, dot_col)
 		else:
-			draw_string(mono, Vector2(76, ey + 42), "UNSCANNED", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.50, 0.50, 0.58))
+			draw_string(mono, Vector2(76, ey + 54), "UNSCANNED", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.50, 0.50, 0.58))
 
 		# HP bar
 		if discovered and entry.hp > 0:
 			var bar_x: float = 230.0
 			var bar_w: float = 120.0
-			var bar_h: float = 5.0
+			var bar_h: float = 6.0
 			var bar_y: float = ey + ENTRY_H * 0.5 - bar_h * 0.5
 			draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(0.15, 0.15, 0.18))
 			var hp_ratio: float = clampf(float(entry.hp) / 300.0, 0.0, 1.0)
 			var hp_col: Color = UIConstants.STAT_GREEN.lerp(UIConstants.STAT_RED, 1.0 - hp_ratio)
 			draw_rect(Rect2(bar_x, bar_y, bar_w * hp_ratio, bar_h), hp_col)
-			draw_string(mono, Vector2(bar_x + bar_w + 6, bar_y + 7), str(entry.hp), HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UIConstants.TEXT_DIM)
+			draw_string(mono, Vector2(bar_x + bar_w + 6, bar_y + 8), str(entry.hp), HORIZONTAL_ALIGNMENT_LEFT, -1, 18, UIConstants.TEXT_DIM)
 
 func _draw_cell_tank_panel(x: float, s: Vector2, panel_w: float, font: Font, mono: Font) -> void:
 	## Draws the fish tank ecosystem view for cell stage creatures.
@@ -1002,8 +1027,8 @@ func _draw_cell_tank_panel(x: float, s: Vector2, panel_w: float, font: Font, mon
 		_voice_btn_rects.clear()
 		var cx: float = tank_rect.position.x + tank_rect.size.x * 0.5
 		var cy: float = tank_rect.position.y + tank_rect.size.y * 0.5
-		draw_string(font, Vector2(cx - 100, cy), "SELECT AN ORGANISM", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.75))
-		draw_string(mono, Vector2(cx - 118, cy + 20), "Click sidebar to track in ecosystem", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.6))
+		draw_string(font, Vector2(cx - 160, cy), "SELECT AN ORGANISM", HORIZONTAL_ALIGNMENT_LEFT, -1, 32, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.75))
+		draw_string(mono, Vector2(cx - 185, cy + 32), "Click sidebar to track in ecosystem", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.6))
 		_draw_helix(Vector2(cx, tank_rect.end.y + 80), 75.0)
 		return
 
@@ -1019,17 +1044,20 @@ func _draw_cell_tank_panel(x: float, s: Vector2, panel_w: float, font: Font, mon
 		var cy: float = tank_rect.position.y + tank_rect.size.y * 0.5
 		draw_rect(tank_rect, Color(0, 0, 0, 0.55))
 		_draw_blueprint_icon(Vector2(cx, cy - 20), 60.0, Color(0.12, 0.12, 0.12), entry, false)
-		draw_string(font, Vector2(cx - 130, cy + 55), "ORGANISM NOT YET SCANNED", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.65, 0.55, 0.55, 0.85))
-		draw_string(mono, Vector2(cx - 148, cy + 77), "Encounter this organism in-game to unlock data.", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, Color(0.55, 0.50, 0.50, 0.72))
+		draw_string(font, Vector2(cx - 200, cy + 55), "ORGANISM NOT YET SCANNED", HORIZONTAL_ALIGNMENT_LEFT, -1, 32, Color(0.65, 0.55, 0.55, 0.85))
+		draw_string(mono, Vector2(cx - 240, cy + 90), "Encounter this organism in-game to unlock data.", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, Color(0.55, 0.50, 0.50, 0.72))
 		return
 
 	# --- Selection tracking indicator ---
 	if _tank_selected_node and is_instance_valid(_tank_selected_node):
 		var cp: Vector2 = _tank_selected_node.position
 		var cam_p: Vector2 = _tank_camera.position if _tank_camera else Vector2.ZERO
-		var vp_size: Vector2 = Vector2(TANK_BOUNDS.size)
-		var norm_x: float = (cp.x - cam_p.x) / vp_size.x + 0.5
-		var norm_y: float = (cp.y - cam_p.y) / vp_size.y + 0.5
+		# Visible world area = viewport_size / camera_zoom
+		var cam_zoom: float = _tank_camera.zoom.x if _tank_camera else 1.0
+		var visible_w: float = tank_rect.size.x / maxf(cam_zoom, 0.01)
+		var visible_h: float = tank_rect.size.y / maxf(cam_zoom, 0.01)
+		var norm_x: float = (cp.x - cam_p.x) / visible_w + 0.5
+		var norm_y: float = (cp.y - cam_p.y) / visible_h + 0.5
 		var screen_pos: Vector2 = Vector2(
 			tank_rect.position.x + norm_x * tank_rect.size.x,
 			tank_rect.position.y + norm_y * tank_rect.size.y
@@ -1054,17 +1082,17 @@ func _draw_cell_tank_panel(x: float, s: Vector2, panel_w: float, font: Font, mon
 			draw_line(screen_pos + Vector2(br, br), screen_pos + Vector2(br, br - arm_l), bc2, 1.5)
 
 	# --- Stats HUD overlay at bottom of tank ---
-	var hud_h: float = 88.0
+	var hud_h: float = 130.0
 	var hud_y: float = tank_rect.end.y - hud_h
 	# Gradient fade from transparent to dark
-	for i in range(12):
-		var gy: float = hud_y - 12 + i
-		var ga: float = float(i) / 12.0 * 0.75
+	for i in range(16):
+		var gy: float = hud_y - 16 + i
+		var ga: float = float(i) / 16.0 * 0.75
 		draw_line(Vector2(tank_rect.position.x, gy), Vector2(tank_rect.end.x, gy), Color(0.02, 0.04, 0.07, ga), 1.0)
 	draw_rect(Rect2(tank_rect.position.x, hud_y, tank_rect.size.x, hud_h), Color(0.02, 0.04, 0.07, 0.78))
 
-	var hx: float = tank_rect.position.x + 12
-	var hy: float = hud_y + 6
+	var hx: float = tank_rect.position.x + 16
+	var hy: float = hud_y + 8
 
 	# Creature name (large)
 	draw_string(font, Vector2(hx, hy + FONT_NAME - 6), entry.name, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_NAME, UIConstants.TEXT_BRIGHT)
@@ -1073,39 +1101,39 @@ func _draw_cell_tank_panel(x: float, s: Vector2, panel_w: float, font: Font, mon
 	draw_string(font, Vector2(hx, hy + FONT_NAME + FONT_CATEGORY - 4), entry.category, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_CATEGORY, cat_col)
 
 	# Stats on right side of HUD
-	var stat_rx: float = tank_rect.end.x - 210
-	var stat_ry: float = hud_y + 10
+	var stat_rx: float = tank_rect.end.x - 380
+	var stat_ry: float = hud_y + 12
 	# HP
-	draw_string(mono, Vector2(stat_rx, stat_ry + 11), "HP", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
+	draw_string(mono, Vector2(stat_rx, stat_ry + 18), "HP", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, UIConstants.TEXT_DIM)
 	var hp_str: String = str(entry.hp) if entry.hp > 0 else "N/A"
 	var hp_col: Color = UIConstants.STAT_GREEN if entry.hp > 0 else UIConstants.TEXT_DIM
-	draw_string(font, Vector2(stat_rx + 24, stat_ry + 11), hp_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, hp_col)
+	draw_string(font, Vector2(stat_rx + 36, stat_ry + 18), hp_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 28, hp_col)
 	# DAMAGE
-	draw_string(mono, Vector2(stat_rx + 80, stat_ry + 11), "DMG", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
+	draw_string(mono, Vector2(stat_rx + 130, stat_ry + 18), "DMG", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, UIConstants.TEXT_DIM)
 	var dmg_col: Color = UIConstants.STAT_RED if entry.damage > 0 else UIConstants.TEXT_DIM
-	draw_string(font, Vector2(stat_rx + 112, stat_ry + 11), str(entry.damage), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, dmg_col)
+	draw_string(font, Vector2(stat_rx + 184, stat_ry + 18), str(entry.damage), HORIZONTAL_ALIGNMENT_LEFT, -1, 28, dmg_col)
 	# SPEED
-	draw_string(mono, Vector2(stat_rx, stat_ry + 32), "SPD", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
-	draw_string(font, Vector2(stat_rx + 30, stat_ry + 32), "%.1f" % entry.speed, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.4, 0.7, 0.9))
+	draw_string(mono, Vector2(stat_rx, stat_ry + 52), "SPD", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, UIConstants.TEXT_DIM)
+	draw_string(font, Vector2(stat_rx + 48, stat_ry + 52), "%.1f" % entry.speed, HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color(0.4, 0.7, 0.9))
 	# THREAT
-	draw_string(mono, Vector2(stat_rx + 80, stat_ry + 32), "THREAT", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.TEXT_DIM)
+	draw_string(mono, Vector2(stat_rx + 130, stat_ry + 52), "THREAT", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, UIConstants.TEXT_DIM)
 	var threat: int = _get_threat_level(entry)
 	for t in range(5):
 		var dot_col: Color = UIConstants.STAT_RED if t < threat else Color(0.22, 0.22, 0.25)
-		draw_circle(Vector2(stat_rx + 130 + t * 13, stat_ry + 29), 4.0, dot_col)
+		draw_circle(Vector2(stat_rx + 224 + t * 18, stat_ry + 47), 5.0, dot_col)
 
 	# Trait tags at bottom of HUD
 	if entry.has("traits") and entry.traits.size() > 0:
 		var trait_x: float = hx
-		var trait_y: float = hud_y + hud_h - 24
+		var trait_y: float = hud_y + hud_h - 32
 		for trait_name in entry.traits:
-			var tw: float = font.get_string_size(trait_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 12
+			var tw: float = font.get_string_size(trait_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x + 16
 			if trait_x + tw > tank_rect.end.x - 10:
 				break  # Don't overflow HUD
-			draw_rect(Rect2(trait_x, trait_y, tw, 18), Color(icon_col.r, icon_col.g, icon_col.b, 0.12))
-			draw_rect(Rect2(trait_x, trait_y, tw, 18), Color(icon_col.r, icon_col.g, icon_col.b, 0.3), false, 1.0)
-			draw_string(font, Vector2(trait_x + 6, trait_y + 13), trait_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(icon_col.r, icon_col.g, icon_col.b, 0.85))
-			trait_x += tw + 4
+			draw_rect(Rect2(trait_x, trait_y, tw, 26), Color(icon_col.r, icon_col.g, icon_col.b, 0.12))
+			draw_rect(Rect2(trait_x, trait_y, tw, 26), Color(icon_col.r, icon_col.g, icon_col.b, 0.3), false, 1.0)
+			draw_string(font, Vector2(trait_x + 8, trait_y + 19), trait_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(icon_col.r, icon_col.g, icon_col.b, 0.85))
+			trait_x += tw + 5
 
 	# ====== Below tank: Text sections ======
 	_draw_info_sections(x, tank_rect.end.y + 8, panel_w, entry, icon_col)
@@ -1140,8 +1168,8 @@ func _draw_detail_panel(x: float, s: Vector2) -> void:
 		# Scanner overlay on the silhouette area
 		var lock_rect: Rect2 = Rect2(bp_center.x - 110, bp_center.y - 110, 220, 220)
 		_draw_scanner_overlay(lock_rect, Color(0.32, 0.32, 0.35))
-		draw_string(font, Vector2(x + 30, HEADER_H + TAB_H + 270), "ORGANISM NOT YET SCANNED", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.65, 0.55, 0.55, 0.85))
-		draw_string(mono, Vector2(x + 30, HEADER_H + TAB_H + 296), "Encounter this organism in-game to unlock data.", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, Color(0.55, 0.50, 0.50, 0.72))
+		draw_string(font, Vector2(x + 30, HEADER_H + TAB_H + 270), "ORGANISM NOT YET SCANNED", HORIZONTAL_ALIGNMENT_LEFT, -1, 32, Color(0.65, 0.55, 0.55, 0.85))
+		draw_string(mono, Vector2(x + 30, HEADER_H + TAB_H + 310), "Encounter this organism in-game to unlock data.", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, Color(0.55, 0.50, 0.50, 0.72))
 		return
 
 	# ============= TWO-COLUMN LAYOUT =============
@@ -1168,10 +1196,10 @@ func _draw_detail_panel(x: float, s: Vector2) -> void:
 
 	# Stage badge below preview
 	var stage_label: String = "CELL STAGE" if entry.stage == "CELL" else "PARASITE STAGE"
-	draw_string(mono, Vector2(preview_rect.position.x + 4, preview_rect.end.y + 14), stage_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIConstants.ACCENT_DIM * 0.95)
+	draw_string(mono, Vector2(preview_rect.position.x + 4, preview_rect.end.y + 22), stage_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, UIConstants.ACCENT_DIM * 0.95)
 	# Alien annotation
 	var alien_note: String = UIConstants.random_glyphs(6, _time * 0.3, float(entry.id.hash() % 100))
-	draw_string(mono, Vector2(preview_rect.end.x - 56, preview_rect.end.y + 14), alien_note, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.45, 0.65, 0.75, 0.55))
+	draw_string(mono, Vector2(preview_rect.end.x - 90, preview_rect.end.y + 22), alien_note, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.45, 0.65, 0.75, 0.55))
 
 	# --- RIGHT COLUMN: Name + Stats ---
 	var ry: float = y_start + 4
@@ -1195,10 +1223,10 @@ func _draw_detail_panel(x: float, s: Vector2) -> void:
 	if entry.hp > 0:
 		draw_string(font, Vector2(stats_x, ry + FONT_STAT_LABEL + FONT_STAT_VALUE + 2), str(entry.hp), HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_STAT_VALUE, UIConstants.STAT_GREEN)
 		var hp_bar_w: float = stats_w * 0.38
-		var hp_bar_y: float = ry + FONT_STAT_LABEL + FONT_STAT_VALUE + 8
-		draw_rect(Rect2(stats_x, hp_bar_y, hp_bar_w, 4), Color(0.15, 0.15, 0.18))
+		var hp_bar_y: float = ry + FONT_STAT_LABEL + FONT_STAT_VALUE + 10
+		draw_rect(Rect2(stats_x, hp_bar_y, hp_bar_w, 6), Color(0.15, 0.15, 0.18))
 		var hp_r: float = clampf(float(entry.hp) / 300.0, 0.0, 1.0)
-		draw_rect(Rect2(stats_x, hp_bar_y, hp_bar_w * hp_r, 4), UIConstants.STAT_GREEN * 0.8)
+		draw_rect(Rect2(stats_x, hp_bar_y, hp_bar_w * hp_r, 6), UIConstants.STAT_GREEN * 0.8)
 	else:
 		draw_string(font, Vector2(stats_x, ry + FONT_STAT_LABEL + FONT_STAT_VALUE + 2), "N/A", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_STAT_VALUE, UIConstants.TEXT_DIM)
 	# DAMAGE
@@ -1211,16 +1239,16 @@ func _draw_detail_panel(x: float, s: Vector2) -> void:
 	draw_string(mono, Vector2(stats_x, ry + FONT_STAT_LABEL), "SPEED", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_STAT_LABEL, UIConstants.TEXT_DIM)
 	draw_string(font, Vector2(stats_x, ry + FONT_STAT_LABEL + FONT_STAT_VALUE + 2), "%.1f" % entry.speed, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_STAT_VALUE, Color(0.4, 0.7, 0.9))
 	var spd_bar_w: float = stats_w * 0.38
-	var spd_bar_y: float = ry + FONT_STAT_LABEL + FONT_STAT_VALUE + 8
-	draw_rect(Rect2(stats_x, spd_bar_y, spd_bar_w, 4), Color(0.15, 0.15, 0.18))
+	var spd_bar_y: float = ry + FONT_STAT_LABEL + FONT_STAT_VALUE + 10
+	draw_rect(Rect2(stats_x, spd_bar_y, spd_bar_w, 6), Color(0.15, 0.15, 0.18))
 	var spd_r: float = clampf(entry.speed / 8.0, 0.0, 1.0)
-	draw_rect(Rect2(stats_x, spd_bar_y, spd_bar_w * spd_r, 4), Color(0.4, 0.7, 0.9, 0.7))
+	draw_rect(Rect2(stats_x, spd_bar_y, spd_bar_w * spd_r, 6), Color(0.4, 0.7, 0.9, 0.7))
 	# THREAT
 	draw_string(mono, Vector2(stat_col2_x, ry + FONT_STAT_LABEL), "THREAT", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_STAT_LABEL, UIConstants.TEXT_DIM)
 	var threat: int = _get_threat_level(entry)
 	for t in range(5):
 		var dot_col: Color = UIConstants.STAT_RED if t < threat else Color(0.22, 0.22, 0.25)
-		draw_circle(Vector2(stat_col2_x + t * 16 + 5, ry + FONT_STAT_LABEL + FONT_STAT_VALUE - 2), 5.0, dot_col)
+		draw_circle(Vector2(stat_col2_x + t * 20 + 5, ry + FONT_STAT_LABEL + FONT_STAT_VALUE - 2), 6.0, dot_col)
 	ry += FONT_STAT_LABEL + FONT_STAT_VALUE + 18
 
 	# Separator
@@ -1234,12 +1262,12 @@ func _draw_detail_panel(x: float, s: Vector2) -> void:
 			var tw: float = font.get_string_size(trait_name, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY).x + 16
 			if trait_x + tw > stats_x + stats_w - 5:
 				trait_x = stats_x
-				ry += 26
-			draw_rect(Rect2(trait_x, ry, tw, 22), Color(icon_col.r, icon_col.g, icon_col.b, 0.1))
-			draw_rect(Rect2(trait_x, ry, tw, 22), Color(icon_col.r, icon_col.g, icon_col.b, 0.3), false, 1.0)
-			draw_string(font, Vector2(trait_x + 8, ry + 16), trait_name, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, Color(icon_col.r, icon_col.g, icon_col.b, 0.85))
+				ry += 38
+			draw_rect(Rect2(trait_x, ry, tw, 32), Color(icon_col.r, icon_col.g, icon_col.b, 0.1))
+			draw_rect(Rect2(trait_x, ry, tw, 32), Color(icon_col.r, icon_col.g, icon_col.b, 0.3), false, 1.0)
+			draw_string(font, Vector2(trait_x + 8, ry + 24), trait_name, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, Color(icon_col.r, icon_col.g, icon_col.b, 0.85))
 			trait_x += tw + 5
-		ry += 30
+		ry += 40
 
 	# ============= BOTTOM HALF (full width) =============
 	var stats_end_y: float = ry
@@ -1255,15 +1283,15 @@ func _draw_info_sections(x: float, start_y: float, panel_w: float, entry: Dictio
 	# Audio Signature
 	if VoiceGenerator.SPECIES_PRESETS.has(entry.id):
 		draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.22, 0.35, 0.48, 0.7), 1.0)
-		y += 10
+		y += 14
 		draw_string(mono, Vector2(x + 10, y + FONT_SECTION), "// AUDIO SIGNATURE", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SECTION, UIConstants.ACCENT_DIM)
-		y += FONT_SECTION + 10
+		y += FONT_SECTION + 14
 		_voice_btn_rects.clear()
 		var vbtn_x: float = x + 20
 		for vi in range(VOICE_TYPES.size()):
 			var vlabel: String = VOICE_TYPES[vi].to_upper()
-			var vtw: float = font.get_string_size(vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_VOICE_BTN).x + 24
-			var vbtn_rect: Rect2 = Rect2(vbtn_x, y, vtw, 26)
+			var vtw: float = font.get_string_size(vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_VOICE_BTN).x + 32
+			var vbtn_rect: Rect2 = Rect2(vbtn_x, y, vtw, 36)
 			_voice_btn_rects.append(vbtn_rect)
 			var v_hover: bool = _hover_voice_type == vi
 			var v_playing: bool = _voice_playing_type == vi and _voice_playing_timer > 0.0
@@ -1272,65 +1300,65 @@ func _draw_info_sections(x: float, start_y: float, panel_w: float, entry: Dictio
 				vbg = Color(icon_col.r, icon_col.g, icon_col.b, 0.12)
 			draw_rect(vbtn_rect, vbg)
 			draw_rect(vbtn_rect, Color(icon_col.r, icon_col.g, icon_col.b, 0.4 if v_hover else 0.2), false, 1.0)
-			var spk_cx: float = vbtn_x + 9
-			var spk_cy: float = y + 13
+			var spk_cx: float = vbtn_x + 12
+			var spk_cy: float = y + 18
 			var spk_col: Color = icon_col if (v_hover or v_playing) else UIConstants.TEXT_DIM
 			draw_colored_polygon(PackedVector2Array([
-				Vector2(spk_cx - 2, spk_cy - 2), Vector2(spk_cx + 2, spk_cy - 4),
-				Vector2(spk_cx + 2, spk_cy + 4), Vector2(spk_cx - 2, spk_cy + 2)
+				Vector2(spk_cx - 3, spk_cy - 3), Vector2(spk_cx + 3, spk_cy - 5),
+				Vector2(spk_cx + 3, spk_cy + 5), Vector2(spk_cx - 3, spk_cy + 3)
 			]), spk_col * 0.7)
 			if v_playing:
 				var wave_a: float = _voice_playing_timer / 0.6
-				draw_arc(Vector2(spk_cx + 4, spk_cy), 3.5, -PI * 0.4, PI * 0.4, 5, Color(icon_col.r, icon_col.g, icon_col.b, wave_a * 0.6), 1.0)
+				draw_arc(Vector2(spk_cx + 5, spk_cy), 5.0, -PI * 0.4, PI * 0.4, 5, Color(icon_col.r, icon_col.g, icon_col.b, wave_a * 0.6), 1.5)
 			var vlabel_col: Color = icon_col if v_playing else (UIConstants.TEXT_BRIGHT if v_hover else UIConstants.TEXT_DIM)
-			draw_string(font, Vector2(vbtn_x + 16, y + 18), vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_VOICE_BTN, vlabel_col)
-			vbtn_x += vtw + 3
-		y += 34
+			draw_string(font, Vector2(vbtn_x + 22, y + 26), vlabel, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_VOICE_BTN, vlabel_col)
+			vbtn_x += vtw + 5
+		y += 46
 	else:
 		_voice_btn_rects.clear()
 
 	# Abilities
 	draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.22, 0.35, 0.48, 0.7), 1.0)
-	y += 10
+	y += 14
 	draw_string(mono, Vector2(x + 10, y + FONT_SECTION), "// ABILITIES", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SECTION, UIConstants.ACCENT_DIM)
-	y += FONT_SECTION + 10
+	y += FONT_SECTION + 14
 	for ability in entry.abilities:
-		draw_rect(Rect2(x + 22, y + 4, 5, 5), icon_col * 0.7)
-		draw_string(font, Vector2(x + 34, y + FONT_BODY), ability, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, UIConstants.TEXT_NORMAL)
-		y += 22
-	y += 6
+		draw_rect(Rect2(x + 22, y + 8, 7, 7), icon_col * 0.7)
+		draw_string(font, Vector2(x + 38, y + FONT_BODY), ability, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, UIConstants.TEXT_NORMAL)
+		y += 34
+	y += 8
 
 	# Behavioral Analysis
 	if entry.has("habits") and entry.habits.length() > 0:
 		draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.22, 0.35, 0.48, 0.7), 1.0)
-		y += 10
+		y += 14
 		draw_string(mono, Vector2(x + 10, y + FONT_SECTION), "// BEHAVIORAL ANALYSIS", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SECTION, UIConstants.ACCENT_DIM)
-		y += FONT_SECTION + 10
-		var habits_lines: Array = _wrap_text(entry.habits, int(panel_w / 8.5))
+		y += FONT_SECTION + 14
+		var habits_lines: Array = _wrap_text(entry.habits, int(panel_w / 15.0))
 		for line in habits_lines:
 			draw_string(font, Vector2(x + 20, y + FONT_BODY), line, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, UIConstants.TEXT_NORMAL)
-			y += 19
-		y += 6
+			y += 32
+		y += 8
 
 	# Field Notes
 	draw_line(Vector2(x + 5, y), Vector2(x + panel_w - 5, y), Color(0.22, 0.35, 0.48, 0.7), 1.0)
-	y += 10
+	y += 14
 	draw_string(mono, Vector2(x + 10, y + FONT_SECTION), "// FIELD NOTES", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SECTION, UIConstants.ACCENT_DIM)
-	y += FONT_SECTION + 10
-	var desc_lines: Array = _wrap_text(entry.description, int(panel_w / 8.5))
+	y += FONT_SECTION + 14
+	var desc_lines: Array = _wrap_text(entry.description, int(panel_w / 15.0))
 	for line in desc_lines:
 		draw_string(font, Vector2(x + 20, y + FONT_BODY), line, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_BODY, UIConstants.TEXT_NORMAL)
-		y += 19
+		y += 32
 
 func _draw_footer(s: Vector2) -> void:
 	var mono: Font = UIConstants.get_mono_font()
 	draw_rect(Rect2(0, s.y - FOOTER_H, s.x, FOOTER_H), Color(0.06, 0.08, 0.14, 0.8))
 	draw_line(Vector2(0, s.y - FOOTER_H), Vector2(s.x, s.y - FOOTER_H), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.2), 1.0)
-	draw_string(mono, Vector2(16, s.y - 12), "[X] Close    [Scroll] Navigate    [Click] Select", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM * 0.85)
+	draw_string(mono, Vector2(16, s.y - 14), "[X] Close    [Scroll] Navigate    [Click] Select", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, UIConstants.TEXT_DIM * 0.85)
 
 	# Alien readout on right
 	var alien_str: String = UIConstants.random_glyphs(10, _time, 3.0)
-	draw_string(mono, Vector2(s.x - 140, s.y - 12), alien_str, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(0.40, 0.65, 0.75, 0.50))
+	draw_string(mono, Vector2(s.x - 200, s.y - 14), alien_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.40, 0.65, 0.75, 0.50))
 
 func _draw_idle_scanner(x: float, panel_w: float, s: Vector2) -> void:
 	var font: Font = UIConstants.get_display_font()
@@ -1356,8 +1384,8 @@ func _draw_idle_scanner(x: float, panel_w: float, s: Vector2) -> void:
 	draw_line(Vector2(cx, cy), sweep_end, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.40), 1.5)
 	draw_circle(sweep_end, 3.0, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.55))
 
-	draw_string(font, Vector2(cx - 100, cy + r + 30), "SELECT AN ORGANISM", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.85))
-	draw_string(mono, Vector2(cx - 90, cy + r + 48), "to view xenobiology readout", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.65))
+	draw_string(font, Vector2(cx - 160, cy + r + 30), "SELECT AN ORGANISM", HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.85))
+	draw_string(mono, Vector2(cx - 155, cy + r + 58), "to view xenobiology readout", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.65))
 
 	# DNA helix decoration
 	_draw_helix(Vector2(cx, cy + r + 100), 75.0)
@@ -1370,7 +1398,7 @@ func _draw_blueprint_icon(center: Vector2, radius: float, col: Color, entry: Dic
 		_draw_creature_shape(center, radius, Color(0.22, 0.22, 0.25), entry.id, entry.category, 0.5)
 		draw_arc(center, radius, 0, TAU, 16, Color(0.32, 0.32, 0.35, 0.45), 1.0)
 		var font: Font = UIConstants.get_display_font()
-		draw_string(font, Vector2(center.x - 4, center.y + 5), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.35, 0.35, 0.40))
+		draw_string(font, Vector2(center.x - 6, center.y + 8), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(0.35, 0.35, 0.40))
 		return
 
 	_draw_creature_shape(center, radius, col, entry.id, entry.category, 0.8)

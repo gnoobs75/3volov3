@@ -122,7 +122,6 @@ var mood: Mood = Mood.IDLE
 var _mood_timer: float = 0.0
 var _blink_timer: float = 0.0
 var _is_blinking: bool = false
-var _eye_spacing: float = 0.0
 var _eye_size: float = 0.0
 var _pupil_size: float = 0.0
 var _has_eyebrows: bool = true
@@ -147,7 +146,6 @@ func _ready() -> void:
 	_update_sensory_zoom(false)  # Set initial zoom instantly
 
 func _randomize_face() -> void:
-	_eye_spacing = randf_range(4.5, 7.0)
 	_eye_size = GameManager.creature_customization.get("eye_size", 3.5)
 	_pupil_size = randf_range(1.2, 2.2)
 	_has_eyebrows = randf() > 0.3
@@ -568,16 +566,13 @@ func _draw_membrane_damage(pts: PackedVector2Array, health_ratio: float) -> void
 
 func _draw_face() -> void:
 	# --- EXPRESSIVE EYES (no mouth) ---
-	# Eye position uses customization angle + spacing
-	var eye_y_offset: float = 0.0
-	var custom_spacing: float = GameManager.creature_customization.get("eye_spacing", 5.5)
-	var custom_angle: float = GameManager.creature_customization.get("eye_angle", 0.0)
-	var base_spacing: float = custom_spacing * 1.2
-	var face_fwd: float = _cell_radius * (_elongation - 1.0) * 0.4
-	var face_center := Vector2(_cell_radius * 0.25 + face_fwd, 0)
-	var perp := Vector2(-sin(custom_angle), cos(custom_angle))
-	var left_eye := face_center + perp * (-base_spacing * 0.4) + Vector2(0, eye_y_offset) + _eye_shake
-	var right_eye := face_center + perp * (base_spacing * 0.4) + Vector2(0, eye_y_offset) + _eye_shake
+	# Eye position from free-placed normalized coordinates
+	var left_x: float = GameManager.creature_customization.get("eye_left_x", -0.15)
+	var left_y: float = GameManager.creature_customization.get("eye_left_y", -0.25)
+	var right_x: float = GameManager.creature_customization.get("eye_right_x", -0.15)
+	var right_y: float = GameManager.creature_customization.get("eye_right_y", 0.25)
+	var left_eye := Vector2(left_x, left_y) * _cell_radius + _eye_shake
+	var right_eye := Vector2(right_x, right_y) * _cell_radius + _eye_shake
 
 	# Anime eye colors — use customization iris color
 	var custom_iris: Color = GameManager.creature_customization.get("iris_color", Color(0.2, 0.5, 0.9))
@@ -695,6 +690,21 @@ func _draw_face() -> void:
 			iris_r = eye_r * 0.3
 		"star":
 			iris_r = eye_r * 0.7
+		"hypnotize":
+			eye_r *= 1.1
+			iris_r = eye_r * 0.65
+		"x_eyes":
+			eye_r *= 0.9
+		"heart":
+			eye_r *= 1.15
+			iris_r = eye_r * 0.6
+		"spiral":
+			eye_r *= 1.05
+			iris_r = eye_r * 0.6
+		"alien":
+			eye_squash_y *= 1.4
+			eye_r *= 1.2
+			iris_r = eye_r * 0.8
 
 	if _is_blinking:
 		eye_squash_y = 0.05
@@ -778,6 +788,134 @@ func _draw_face() -> void:
 				draw_circle(p_pos + Vector2(-iris_r * 0.3, -iris_r * 0.3), pupil_r * 0.3, Color(1, 1, 1, 0.6))
 			for i in range(eye_pts.size()):
 				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.15, 0.25, 0.6), 0.8, true)
+	elif eye_style == "hypnotize" and not _is_blinking:
+		# Concentric rings alternating iris_color and dark, pulsing outward
+		for idx in range(2):
+			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+			var ew: float = eye_r
+			var eh: float = eye_r * eye_squash_y
+			var eye_pts: PackedVector2Array = PackedVector2Array()
+			for i in range(16):
+				var a: float = TAU * i / 16.0
+				eye_pts.append(eye_pos + Vector2(cos(a) * ew, sin(a) * eh))
+			draw_colored_polygon(eye_pts, eye_white_color)
+			if eye_squash_y > 0.15:
+				var p_pos: Vector2 = eye_pos + look_dir + pupil_offset
+				var num_rings: int = 4
+				var pulse: float = fmod(_time * 0.8, 1.0)
+				for ring_i in range(num_rings, -1, -1):
+					var t: float = (ring_i + pulse) / (num_rings + 1)
+					var r_v: float = iris_r * t
+					var ring_color: Color = iris_color if ring_i % 2 == 0 else Color(0.05, 0.05, 0.1, 0.9)
+					draw_circle(p_pos, r_v, ring_color)
+				draw_circle(p_pos, pupil_r * 0.4, pupil_color)
+			for i in range(eye_pts.size()):
+				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.15, 0.25, 0.6), 0.8, true)
+	elif eye_style == "x_eyes" and not _is_blinking:
+		# Two diagonal crossing lines (cartoon dazed/dead)
+		for idx in range(2):
+			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+			var ew: float = eye_r
+			var eh: float = eye_r * eye_squash_y
+			var eye_pts: PackedVector2Array = PackedVector2Array()
+			for i in range(16):
+				var a: float = TAU * i / 16.0
+				eye_pts.append(eye_pos + Vector2(cos(a) * ew, sin(a) * eh))
+			draw_colored_polygon(eye_pts, eye_white_color)
+			if eye_squash_y > 0.15:
+				var cx: float = eye_pos.x + look_dir.x
+				var cy: float = eye_pos.y + look_dir.y
+				var xr: float = eye_r * 0.55
+				var xc: Color = Color(iris_color.r * 0.7, iris_color.g * 0.3, iris_color.b * 0.3, 0.95)
+				draw_line(Vector2(cx - xr, cy - xr * eye_squash_y), Vector2(cx + xr, cy + xr * eye_squash_y), xc, 2.5, true)
+				draw_line(Vector2(cx + xr, cy - xr * eye_squash_y), Vector2(cx - xr, cy + xr * eye_squash_y), xc, 2.5, true)
+			for i in range(eye_pts.size()):
+				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.15, 0.25, 0.6), 0.8, true)
+	elif eye_style == "heart" and not _is_blinking:
+		# Heart-shaped iris with anime highlight
+		for idx in range(2):
+			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+			var ew: float = eye_r
+			var eh: float = eye_r * eye_squash_y
+			var eye_pts: PackedVector2Array = PackedVector2Array()
+			for i in range(16):
+				var a: float = TAU * i / 16.0
+				eye_pts.append(eye_pos + Vector2(cos(a) * ew, sin(a) * eh))
+			draw_colored_polygon(eye_pts, eye_white_color)
+			if eye_squash_y > 0.15:
+				var p_pos: Vector2 = eye_pos + look_dir + pupil_offset
+				var heart_pts: PackedVector2Array = PackedVector2Array()
+				var hr: float = iris_r * 0.9
+				for i in range(32):
+					var t: float = TAU * i / 32.0
+					var hx: float = hr * 0.7 * (16.0 * pow(sin(t), 3)) / 16.0
+					var hy: float = -hr * 0.7 * (13.0 * cos(t) - 5.0 * cos(2.0 * t) - 2.0 * cos(3.0 * t) - cos(4.0 * t)) / 16.0
+					heart_pts.append(p_pos + Vector2(hx, hy * eye_squash_y))
+				var heart_color := Color(
+					minf(iris_color.r * 1.2 + 0.3, 1.0),
+					iris_color.g * 0.5,
+					iris_color.b * 0.6, 0.9)
+				draw_colored_polygon(heart_pts, heart_color)
+				draw_circle(p_pos + Vector2(-hr * 0.2, -hr * 0.2), pupil_r * 0.3, Color(1, 1, 1, 0.7))
+			for i in range(eye_pts.size()):
+				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.15, 0.25, 0.6), 0.8, true)
+	elif eye_style == "spiral" and not _is_blinking:
+		# Rotating Archimedes spiral pupil
+		for idx in range(2):
+			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+			var ew: float = eye_r
+			var eh: float = eye_r * eye_squash_y
+			var eye_pts: PackedVector2Array = PackedVector2Array()
+			for i in range(16):
+				var a: float = TAU * i / 16.0
+				eye_pts.append(eye_pos + Vector2(cos(a) * ew, sin(a) * eh))
+			draw_colored_polygon(eye_pts, eye_white_color)
+			if eye_squash_y > 0.15:
+				var p_pos: Vector2 = eye_pos + look_dir + pupil_offset
+				draw_circle(p_pos, iris_r, iris_color)
+				var spin: float = _time * 2.0
+				var spiral_turns: float = 3.0
+				var prev_pt: Vector2 = p_pos
+				for i in range(1, 41):
+					var t: float = i / 40.0
+					var sa: float = t * spiral_turns * TAU + spin
+					var sr: float = t * iris_r * 0.85
+					var sp: Vector2 = p_pos + Vector2(cos(sa) * sr, sin(sa) * sr * eye_squash_y)
+					draw_line(prev_pt, sp, pupil_color, 1.5, true)
+					prev_pt = sp
+				draw_circle(p_pos, pupil_r * 0.35, pupil_color)
+			for i in range(eye_pts.size()):
+				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.15, 0.25, 0.6), 0.8, true)
+	elif eye_style == "alien" and not _is_blinking:
+		# Large almond/oval shape, dark with subtle green-blue sheen
+		for idx in range(2):
+			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+			var ew: float = eye_r * 0.7
+			var eh: float = eye_r * eye_squash_y * 1.3
+			# Almond shape
+			var eye_pts: PackedVector2Array = PackedVector2Array()
+			for i in range(20):
+				var a: float = TAU * i / 20.0
+				eye_pts.append(eye_pos + Vector2(cos(a) * ew, sin(a) * eh))
+			# Dark fill with green-blue sheen
+			var alien_base := Color(0.02, 0.08, 0.1, 0.95)
+			draw_colored_polygon(eye_pts, alien_base)
+			if eye_squash_y > 0.15:
+				# Subtle iridescent sheen
+				var sheen_color := Color(iris_color.r * 0.3, iris_color.g * 0.5 + 0.2, iris_color.b * 0.4 + 0.3, 0.25)
+				draw_circle(eye_pos + Vector2(0, -eh * 0.2), ew * 0.6, sheen_color)
+				# Tiny bright pupil slit
+				var p_pos: Vector2 = eye_pos + look_dir * 0.5
+				var slit_h: float = eh * 0.6
+				var slit_pts: PackedVector2Array = PackedVector2Array([
+					p_pos + Vector2(-ew * 0.12, 0),
+					p_pos + Vector2(0, -slit_h),
+					p_pos + Vector2(ew * 0.12, 0),
+					p_pos + Vector2(0, slit_h),
+				])
+				draw_colored_polygon(slit_pts, Color(0.3, 0.8, 0.6, 0.7))
+			for i in range(eye_pts.size()):
+				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.05, 0.15, 0.2, 0.7), 1.0, true)
 	else:
 		for idx in range(2):
 			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
@@ -867,7 +1005,7 @@ func _draw_face() -> void:
 	# --- EYEBROWS ---
 	if _has_eyebrows:
 		var brow_len: float = eye_r * 1.6
-		var brow_y: float = eye_y_offset - eye_r * eye_squash_y - 3.0
+		var brow_y: float = -eye_r * eye_squash_y - 3.0
 		var brow_color := Color(0.12, 0.25, 0.5, 0.95)
 		var lb_start := Vector2(left_eye.x - brow_len * 0.3, left_eye.y + brow_y)
 		var lb_end := lb_start + Vector2(brow_len, 0).rotated(eyebrow_angle_l)

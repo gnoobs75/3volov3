@@ -52,6 +52,9 @@ var _golden_hover: bool = false
 var _golden_selected: bool = false
 var _golden_sparkles: Array = []  # [{pos, vel, life, angle}]
 
+# Cards pending selection (merged into customize mode)
+var _cards_pending: bool = false
+
 # Freeform placement state (Spore-style)
 var _sidebar_hover: int = -1
 var _sidebar_scroll: int = 0
@@ -96,6 +99,7 @@ var _tooltip_golden: bool = false  # Is tooltip for golden card
 
 # Eye drag state
 var _dragging_eye: bool = false
+var _dragging_eye_index: int = -1  # 0 = left, 1 = right
 var _eye_selected: bool = false
 var _eye_drag_hint_timer: float = 3.0  # Fades "DRAG TO MOVE" hint
 
@@ -144,7 +148,8 @@ func _on_evolution_triggered(category_key: String) -> void:
 		return
 	_active = true
 	_is_initial_customize = false
-	_mode = EditorMode.CARD_SELECT
+	_mode = EditorMode.CUSTOMIZE
+	_cards_pending = true
 	_appear_t = 0.0
 	_hover_index = -1
 	_prev_hover = -1
@@ -162,6 +167,8 @@ func _on_evolution_triggered(category_key: String) -> void:
 		_golden_card = {}
 	visible = true
 	get_tree().paused = true
+	_setup_preview()
+	_setup_color_picker()
 	AudioManager.play_evolution_fanfare()
 	AudioManager.play_ui_open()
 
@@ -172,13 +179,12 @@ func _process(delta: float) -> void:
 	_appear_t = minf(_appear_t + delta * 3.0, 1.0)
 	_flash_alpha = maxf(_flash_alpha - delta * 3.0, 0.0)
 
-	# Card selection animation
+	# Card selection animation (legacy CARD_SELECT path — kept for safety)
 	if _mode == EditorMode.CARD_SELECT and _selected_index >= 0:
 		_select_anim += delta * 4.0
 		if _select_anim >= 1.0:
 			_enter_customize_mode()
 			return
-	# Golden card selected — equip and transition
 	if _mode == EditorMode.CARD_SELECT and _golden_selected:
 		_select_anim += delta * 4.0
 		if _select_anim >= 1.0:
@@ -187,7 +193,7 @@ func _process(delta: float) -> void:
 			return
 
 	# Spawn golden sparkles around golden card
-	if _is_golden_evolution and _mode == EditorMode.CARD_SELECT and randf() < 0.4:
+	if _is_golden_evolution and _cards_pending and randf() < 0.4:
 		var gr := _get_golden_card_rect()
 		_golden_sparkles.append({
 			"pos": Vector2(gr.position.x + randf() * gr.size.x, gr.position.y + randf() * gr.size.y),
@@ -303,8 +309,6 @@ func _setup_color_picker() -> void:
 			_color_picker.color_changed.disconnect(_on_color_changed)
 		if _color_picker.style_changed.is_connected(_on_style_changed):
 			_color_picker.style_changed.disconnect(_on_style_changed)
-		if _color_picker.eye_placement_changed.is_connected(_on_eye_placement_changed):
-			_color_picker.eye_placement_changed.disconnect(_on_eye_placement_changed)
 		if _color_picker.eye_size_changed.is_connected(_on_eye_size_changed):
 			_color_picker.eye_size_changed.disconnect(_on_eye_size_changed)
 		if _color_picker.elongation_offset_changed.is_connected(_on_elongation_offset_changed):
@@ -324,7 +328,6 @@ func _setup_color_picker() -> void:
 	_color_picker.setup(GameManager.creature_customization)
 	_color_picker.color_changed.connect(_on_color_changed)
 	_color_picker.style_changed.connect(_on_style_changed)
-	_color_picker.eye_placement_changed.connect(_on_eye_placement_changed)
 	_color_picker.eye_size_changed.connect(_on_eye_size_changed)
 	_color_picker.elongation_offset_changed.connect(_on_elongation_offset_changed)
 	_color_picker.bulge_changed.connect(_on_bulge_changed)
@@ -334,9 +337,6 @@ func _on_color_changed(target: String, color: Color) -> void:
 
 func _on_style_changed(target: String, style: String) -> void:
 	GameManager.update_creature_customization({target: style})
-
-func _on_eye_placement_changed(angle: float, spacing: float) -> void:
-	GameManager.update_creature_customization({"eye_angle": angle, "eye_spacing": spacing})
 
 func _on_eye_size_changed(new_size: float) -> void:
 	GameManager.update_creature_customization({"eye_size": new_size})
@@ -360,8 +360,6 @@ func _close_editor() -> void:
 			_color_picker.color_changed.disconnect(_on_color_changed)
 		if _color_picker.style_changed.is_connected(_on_style_changed):
 			_color_picker.style_changed.disconnect(_on_style_changed)
-		if _color_picker.eye_placement_changed.is_connected(_on_eye_placement_changed):
-			_color_picker.eye_placement_changed.disconnect(_on_eye_placement_changed)
 		if _color_picker.eye_size_changed.is_connected(_on_eye_size_changed):
 			_color_picker.eye_size_changed.disconnect(_on_eye_size_changed)
 		if _color_picker.elongation_offset_changed.is_connected(_on_elongation_offset_changed):
@@ -372,6 +370,7 @@ func _close_editor() -> void:
 		_color_picker = null
 	_active = false
 	_is_initial_customize = false
+	_cards_pending = false
 	_choices = []
 	_dragging_mutation = {}
 	_is_dragging = false
@@ -410,11 +409,12 @@ func _get_card_rect(index: int) -> Rect2:
 		var y: float = vp.y * 0.2 + (1.0 - _appear_t) * 80.0
 		return Rect2(x, y, CARD_WIDTH, CARD_HEIGHT)
 	else:
-		# Cards at bottom in customize mode, centered in the preview area
-		var cw: float = SMALL_CARD_W
-		var ch: float = SMALL_CARD_H
-		var sp: float = 12.0
-		var total_w: float = _choices.size() * cw + (_choices.size() - 1) * sp
+		# Cards at bottom in customize mode — larger when pending selection
+		var cw: float = 190.0 if _cards_pending else SMALL_CARD_W
+		var ch: float = 230.0 if _cards_pending else SMALL_CARD_H
+		var sp: float = 16.0 if _cards_pending else 12.0
+		var card_count: int = _choices.size() + (1 if _cards_pending and _is_golden_evolution else 0)
+		var total_w: float = card_count * cw + (card_count - 1) * sp
 		var center_x: float = vp.x * 0.43  # Center of preview area
 		var start_x: float = center_x - total_w * 0.5
 		var x: float = start_x + index * (cw + sp)
@@ -423,12 +423,25 @@ func _get_card_rect(index: int) -> Rect2:
 
 func _get_golden_card_rect() -> Rect2:
 	var vp := _get_vp()
-	var card_count: int = _choices.size() + 1
-	var total_w: float = card_count * CARD_WIDTH + (card_count - 1) * CARD_SPACING
-	var start_x: float = (vp.x - total_w) * 0.5
-	var x: float = start_x + _choices.size() * (CARD_WIDTH + CARD_SPACING)
-	var y: float = vp.y * 0.2 + (1.0 - _appear_t) * 80.0
-	return Rect2(x, y, CARD_WIDTH, CARD_HEIGHT)
+	if _mode == EditorMode.CUSTOMIZE and _cards_pending:
+		# Position golden card after the regular cards at bottom
+		var cw: float = 190.0
+		var ch: float = 230.0
+		var sp: float = 16.0
+		var card_count: int = _choices.size() + 1
+		var total_w: float = card_count * cw + (card_count - 1) * sp
+		var center_x: float = vp.x * 0.43
+		var start_x: float = center_x - total_w * 0.5
+		var x: float = start_x + _choices.size() * (cw + sp)
+		var y: float = vp.y - ch - 16.0
+		return Rect2(x, y, cw, ch)
+	else:
+		var card_count: int = _choices.size() + 1
+		var total_w: float = card_count * CARD_WIDTH + (card_count - 1) * CARD_SPACING
+		var start_x: float = (vp.x - total_w) * 0.5
+		var x: float = start_x + _choices.size() * (CARD_WIDTH + CARD_SPACING)
+		var y: float = vp.y * 0.2 + (1.0 - _appear_t) * 80.0
+		return Rect2(x, y, CARD_WIDTH, CARD_HEIGHT)
 
 func _get_preview_center() -> Vector2:
 	var vp := _get_vp()
@@ -468,8 +481,8 @@ func _screen_pos_to_distance(screen_pos: Vector2) -> float:
 
 func _get_confirm_rect() -> Rect2:
 	var vp := _get_vp()
-	var btn_w: float = 180.0
-	var btn_h: float = 48.0
+	var btn_w: float = 240.0
+	var btn_h: float = 56.0
 	return Rect2(vp.x * 0.43 - btn_w * 0.5, vp.y * 0.78, btn_w, btn_h)
 
 func _get_palette_rect() -> Rect2:
@@ -480,7 +493,7 @@ func _get_palette_item_rect(index: int) -> Rect2:
 	var vp := _get_vp()
 	var pr := _get_palette_rect()
 	var row: int = index - _sidebar_scroll
-	return Rect2(pr.position.x + 4, pr.position.y + 28 + row * 36.0, pr.size.x - 8, 32.0)
+	return Rect2(pr.position.x + 4, pr.position.y + 36 + row * 56.0, pr.size.x - 8, 50.0)
 
 func _get_mutation_at_angle(screen_pos: Vector2) -> String:
 	# Find the placed mutation closest to this screen position
@@ -593,12 +606,17 @@ func _handle_customize_input(event: InputEvent) -> void:
 		if _get_confirm_rect().has_point(pos):
 			_confirm_hover = true
 
-		# Check small cards at bottom for tooltip hover
+		# Check cards at bottom for tooltip hover
 		_hover_index = -1
+		_golden_hover = false
 		for i in range(_choices.size()):
 			if _get_card_rect(i).has_point(pos):
 				_hover_index = i
 				break
+		# Golden card hover (when cards pending)
+		if _cards_pending and _is_golden_evolution and not _golden_card.is_empty():
+			if _get_golden_card_rect().has_point(pos):
+				_golden_hover = true
 
 		# Check eye hit-test on creature preview
 		if not _is_dragging and not _dragging_eye:
@@ -623,11 +641,40 @@ func _handle_customize_input(event: InputEvent) -> void:
 			var eye_hit: int = _get_eye_at_pos(pos)
 			if eye_hit >= 0 and _mode == EditorMode.CUSTOMIZE:
 				_dragging_eye = true
+				_dragging_eye_index = eye_hit
 				_eye_selected = true
 				_selected_mutation_id = ""
 				_end_ring_drag()
 				AudioManager.play_ui_hover()
 				return
+
+			# Click pending card at bottom to apply mutation
+			if _cards_pending:
+				var card_clicked: bool = false
+				for i in range(_choices.size()):
+					if _get_card_rect(i).has_point(pos):
+						var choice: Dictionary = _choices[i]
+						GameManager.consume_vial_for_evolution(_category)
+						var vis: String = choice.get("visual", "")
+						var angle: float = SnapPointSystem.get_default_angle_for_visual(vis)
+						var distance: float = SnapPointSystem.get_default_distance_for_visual(vis)
+						GameManager.apply_mutation_with_angle(choice, angle, distance)
+						_cards_pending = false
+						_selected_index = i
+						AudioManager.play_ui_select()
+						card_clicked = true
+						break
+				# Check golden card click
+				if not card_clicked and _is_golden_evolution and not _golden_card.is_empty():
+					if _get_golden_card_rect().has_point(pos):
+						GameManager.equipped_golden_card = _golden_card.get("id", "")
+						GameManager.consume_vial_for_evolution(_category)
+						_cards_pending = false
+						_golden_selected = true
+						AudioManager.play_ui_select()
+						card_clicked = true
+				if card_clicked:
+					return
 
 			# Click palette item to start drag
 			if _sidebar_hover >= 0 and _sidebar_hover < GameManager.active_mutations.size():
@@ -765,7 +812,7 @@ func _get_preview_area_rect() -> Rect2:
 
 func _get_symmetry_toggle_rect() -> Rect2:
 	var vp := _get_vp()
-	return Rect2(vp.x * 0.43 - 60, 68, 120, 24)
+	return Rect2(vp.x * 0.43 - 80, 68, 160, 34)
 
 func _spawn_place_particles(pos: Vector2) -> void:
 	for i in range(12):
@@ -1054,15 +1101,15 @@ func _draw_customize_mode(vp: Vector2, font: Font) -> void:
 	if _is_initial_customize:
 		title = glyph_l + "DESIGN YOUR ORGANISM" + glyph_r
 	var title_cx: float = vp.x * 0.43
-	var ts := font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 24)
-	_card_draw.draw_string(font, Vector2(title_cx - ts.x * 0.5, 42), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color(UIConstants.TEXT_TITLE.r, UIConstants.TEXT_TITLE.g, UIConstants.TEXT_TITLE.b, _appear_t))
+	var ts := font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 32)
+	_card_draw.draw_string(font, Vector2(title_cx - ts.x * 0.5, 44), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 32, Color(UIConstants.TEXT_TITLE.r, UIConstants.TEXT_TITLE.g, UIConstants.TEXT_TITLE.b, _appear_t))
 
 	# Subtitle/hint
 	var hint := "Drag parts onto creature. Click to select, drag handles to rotate/scale, Right-click=remove"
 	if _is_initial_customize:
 		hint = "Choose your colors and eyes — make it yours!"
-	var hs := font.get_string_size(hint, HORIZONTAL_ALIGNMENT_CENTER, -1, 11)
-	_card_draw.draw_string(font, Vector2(title_cx - hs.x * 0.5, 58), hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, _appear_t * 0.8))
+	var hs := font.get_string_size(hint, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
+	_card_draw.draw_string(font, Vector2(title_cx - hs.x * 0.5, 62), hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, _appear_t * 0.8))
 
 	# Symmetry toggle
 	_draw_symmetry_toggle(vp, font)
@@ -1070,11 +1117,11 @@ func _draw_customize_mode(vp: Vector2, font: Font) -> void:
 	# Tech frame around preview area
 	var preview_frame := Rect2(vp.x * 0.18, 72, vp.x * 0.50, vp.y * 0.63)
 	_draw_corner_frame(preview_frame, Color(UIConstants.FRAME_COLOR.r, UIConstants.FRAME_COLOR.g, UIConstants.FRAME_COLOR.b, 0.22 * _appear_t))
-	_card_draw.draw_string(font, Vector2(preview_frame.position.x + 8, preview_frame.position.y + 16), "SPECIMEN VIEW", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.6 * _appear_t))
+	_card_draw.draw_string(font, Vector2(preview_frame.position.x + 8, preview_frame.position.y + 18), "SPECIMEN VIEW", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.6 * _appear_t))
 	var spec_glyph: String = ""
 	for i in range(5):
 		spec_glyph += str(ALIEN_GLYPHS[int(fmod(_time * 0.15 + float(i) * 3.1, float(ALIEN_GLYPHS.size())))])
-	_card_draw.draw_string(font, Vector2(preview_frame.position.x + preview_frame.size.x - 70, preview_frame.position.y + 16), spec_glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.4 * _appear_t))
+	_card_draw.draw_string(font, Vector2(preview_frame.position.x + preview_frame.size.x - 80, preview_frame.position.y + 18), spec_glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.4 * _appear_t))
 
 	# Draw placement handles on creature
 	_draw_placement_handles(vp, font)
@@ -1095,18 +1142,27 @@ func _draw_customize_mode(vp: Vector2, font: Font) -> void:
 	# Placement particles
 	_draw_placement_particles()
 
-	# Cards at bottom (if this came from an evolution, show the chosen card)
+	# Cards at bottom
 	if _choices.size() > 0:
 		var card_top: float = vp.y - SMALL_CARD_H - 24.0
 		_card_draw.draw_line(Vector2(vp.x * 0.18, card_top), Vector2(vp.x * 0.68 - 8, card_top), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.3), 1.0)
-		var lbl := "MUTATIONS AVAILABLE"
-		var ls := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_CENTER, -1, 11)
-		_card_draw.draw_string(font, Vector2(vp.x * 0.43 - ls.x * 0.5, card_top - 4), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.7))
+		var lbl := "CHOOSE YOUR MUTATION" if _cards_pending else "MUTATIONS AVAILABLE"
+		var lbl_fs: int = 20 if _cards_pending else 16
+		var lbl_col: Color = Color(UIConstants.TEXT_TITLE.r, UIConstants.TEXT_TITLE.g, UIConstants.TEXT_TITLE.b, 0.95) if _cards_pending else Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.7)
+		var ls := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_CENTER, -1, lbl_fs)
+		_card_draw.draw_string(font, Vector2(vp.x * 0.43 - ls.x * 0.5, card_top - 4), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, lbl_fs, lbl_col)
+		# Pulsing accent line when cards pending
+		if _cards_pending:
+			var pulse_a: float = 0.4 + 0.3 * sin(_time * 3.0)
+			_card_draw.draw_line(Vector2(vp.x * 0.18, card_top), Vector2(vp.x * 0.68 - 8, card_top), Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, pulse_a), 2.0)
 		for i in range(_choices.size()):
-			_draw_single_card(i, false)
-		# Tooltip for hovered small card (drawn above)
+			_draw_single_card(i, _cards_pending)
+		# Golden card at bottom when pending
+		if _cards_pending and _is_golden_evolution and not _golden_card.is_empty():
+			_draw_golden_card(vp, font)
+		# Tooltip for hovered card (drawn above)
 		if _tooltip_alpha > 0.01 and _hover_index >= 0 and _hover_index < _choices.size():
-			_draw_card_tooltip(_choices[_hover_index], _get_card_rect(_hover_index), false, false)
+			_draw_card_tooltip(_choices[_hover_index], _get_card_rect(_hover_index), _cards_pending, false)
 
 func _draw_placement_handles(vp: Vector2, font: Font) -> void:
 	# Draw handles on each placed mutation
@@ -1152,7 +1208,7 @@ func _draw_placement_handles(vp: Vector2, font: Font) -> void:
 			var arc_end: float = angle + rot_offset - PI * 0.5 + 0.3
 			_card_draw.draw_arc(sp, RING_RADIUS + 3.0, arc_start, arc_end, 8, Color(rot_col.r, rot_col.g, rot_col.b, 0.4), 2.0, true)
 			# "R" label
-			_card_draw.draw_string(font, rot_handle_pos + Vector2(-3, -10), "R", HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(rot_col.r, rot_col.g, rot_col.b, 0.7))
+			_card_draw.draw_string(font, rot_handle_pos + Vector2(-4, -12), "R", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(rot_col.r, rot_col.g, rot_col.b, 0.7))
 
 			# Scale handles (4 cardinal directions relative to mutation orientation)
 			for i in range(4):
@@ -1167,13 +1223,13 @@ func _draw_placement_handles(vp: Vector2, font: Font) -> void:
 
 			# Info readout below
 			var info_str: String = "%.0f%% | %d°" % [scale_val * 100.0, int(rad_to_deg(rot_offset))]
-			var is_sz := font.get_string_size(info_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 10)
-			_card_draw.draw_string(font, Vector2(sp.x - is_sz.x * 0.5, sp.y + RING_RADIUS + 16), info_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.6, 0.95, 0.7, 0.8))
+			var is_sz := font.get_string_size(info_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
+			_card_draw.draw_string(font, Vector2(sp.x - is_sz.x * 0.5, sp.y + RING_RADIUS + 18), info_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.6, 0.95, 0.7, 0.8))
 
 			# Hint text for selected mutation
 			var hint_str: String = "Drag handles to rotate/scale"
-			var hint_sz := font.get_string_size(hint_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 9)
-			_card_draw.draw_string(font, Vector2(sp.x - hint_sz.x * 0.5, sp.y + RING_RADIUS + 28), hint_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.6))
+			var hint_sz := font.get_string_size(hint_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 14)
+			_card_draw.draw_string(font, Vector2(sp.x - hint_sz.x * 0.5, sp.y + RING_RADIUS + 34), hint_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.6))
 
 		# Hover tooltip
 		if is_hover and not is_selected:
@@ -1183,16 +1239,16 @@ func _draw_placement_handles(vp: Vector2, font: Font) -> void:
 					mname = m.get("name", mid)
 					break
 			if mname != "":
-				var ns := font.get_string_size(mname, HORIZONTAL_ALIGNMENT_CENTER, -1, 11)
-				_card_draw.draw_string(font, Vector2(sp.x - ns.x * 0.5, sp.y - handle_r - 6), mname, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.85))
+				var ns := font.get_string_size(mname, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
+				_card_draw.draw_string(font, Vector2(sp.x - ns.x * 0.5, sp.y - handle_r - 8), mname, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.85))
 
 		# Mirror handle
 		if p.get("mirrored", false):
 			var ma: float = SnapPointSystem.get_mirror_angle(angle)
 			var msp: Vector2 = _get_angle_screen_pos(ma, distance)
 			_card_draw.draw_arc(msp, handle_r * 0.8, 0, TAU, 12, Color(base_col.r, base_col.g, base_col.b, base_col.a * 0.5), 1.0, true)
-			var m_sz := font.get_string_size("M", HORIZONTAL_ALIGNMENT_CENTER, -1, 7)
-			_card_draw.draw_string(font, Vector2(msp.x - m_sz.x * 0.5, msp.y + 4), "M", HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(1.0, 0.9, 0.3, 0.4))
+			var m_sz := font.get_string_size("M", HORIZONTAL_ALIGNMENT_CENTER, -1, 12)
+			_card_draw.draw_string(font, Vector2(msp.x - m_sz.x * 0.5, msp.y + 5), "M", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1.0, 0.9, 0.3, 0.4))
 
 func _draw_parts_palette(vp: Vector2, font: Font) -> void:
 	var pr := _get_palette_rect()
@@ -1203,11 +1259,11 @@ func _draw_parts_palette(vp: Vector2, font: Font) -> void:
 
 	# Header
 	var side_glyph: String = str(ALIEN_GLYPHS[int(fmod(_time * 0.4 + 3.0, ALIEN_GLYPHS.size()))])
-	_card_draw.draw_string(font, Vector2(pr.position.x + 6, pr.position.y + 20), side_glyph + " PARTS", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.95))
-	_card_draw.draw_line(Vector2(pr.position.x + 4, pr.position.y + 26), Vector2(pr.position.x + pr.size.x - 4, pr.position.y + 26), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.4), 1.0)
+	_card_draw.draw_string(font, Vector2(pr.position.x + 6, pr.position.y + 26), side_glyph + " PARTS", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.95))
+	_card_draw.draw_line(Vector2(pr.position.x + 4, pr.position.y + 34), Vector2(pr.position.x + pr.size.x - 4, pr.position.y + 34), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.4), 1.0)
 
 	if GameManager.active_mutations.is_empty():
-		_card_draw.draw_string(font, Vector2(pr.position.x + 8, pr.position.y + 50), "No mutations yet", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.6))
+		_card_draw.draw_string(font, Vector2(pr.position.x + 8, pr.position.y + 60), "No mutations yet", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.6))
 		return
 
 	var max_visible: int = mini(8, GameManager.active_mutations.size() - _sidebar_scroll)
@@ -1227,26 +1283,26 @@ func _draw_parts_palette(vp: Vector2, font: Font) -> void:
 			_card_draw.draw_rect(rect, Color(0.35, 0.75, 1.0, 0.5), false, 1.5)
 
 		# Drag handle indicator
-		_card_draw.draw_rect(Rect2(rect.position.x + 2, rect.position.y + 8, 3, 18), Color(0.35, 0.65, 0.85, 0.5))
-		_card_draw.draw_rect(Rect2(rect.position.x + 7, rect.position.y + 8, 3, 18), Color(0.35, 0.65, 0.85, 0.5))
+		_card_draw.draw_rect(Rect2(rect.position.x + 3, rect.position.y + 12, 4, 26), Color(0.35, 0.65, 0.85, 0.5))
+		_card_draw.draw_rect(Rect2(rect.position.x + 10, rect.position.y + 12, 4, 26), Color(0.35, 0.65, 0.85, 0.5))
 
 		# Mutation name
 		var name_str: String = m.get("name", "Unknown")
 		var name_col: Color = Color(0.8, 0.95, 1.0, 0.95) if is_hover else Color(0.65, 0.82, 0.90, 0.85)
 		if is_placed:
 			name_col = Color(0.5, 0.95, 0.6, 0.9) if not is_hover else Color(0.6, 1.0, 0.7, 1.0)
-		_card_draw.draw_string(font, Vector2(rect.position.x + 14, rect.position.y + 22), name_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, name_col)
+		_card_draw.draw_string(font, Vector2(rect.position.x + 20, rect.position.y + 32), name_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, name_col)
 
 		# Placed indicator
 		if is_placed:
 			var placed_label := "PLACED"
-			_card_draw.draw_string(font, Vector2(rect.position.x + rect.size.x - 48, rect.position.y + 22), placed_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.9, 0.5, 0.75))
+			_card_draw.draw_string(font, Vector2(rect.position.x + rect.size.x - 64, rect.position.y + 32), placed_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.4, 0.9, 0.5, 0.75))
 
 	# Scroll indicators
 	if _sidebar_scroll > 0:
-		_card_draw.draw_string(font, Vector2(pr.position.x + pr.size.x * 0.5 - 4, pr.position.y + 34), "^", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.7))
+		_card_draw.draw_string(font, Vector2(pr.position.x + pr.size.x * 0.5 - 6, pr.position.y + 42), "^", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.7))
 	if _sidebar_scroll + 8 < GameManager.active_mutations.size():
-		_card_draw.draw_string(font, Vector2(pr.position.x + pr.size.x * 0.5 - 4, pr.position.y + pr.size.y - 8), "v", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.7))
+		_card_draw.draw_string(font, Vector2(pr.position.x + pr.size.x * 0.5 - 6, pr.position.y + pr.size.y - 10), "v", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.7))
 
 func _draw_drag_ghost(vp: Vector2, font: Font) -> void:
 	var vis: String = _dragging_mutation.get("visual", "")
@@ -1255,8 +1311,8 @@ func _draw_drag_ghost(vp: Vector2, font: Font) -> void:
 	# Ghost at cursor
 	_card_draw.draw_circle(_drag_pos, 16.0, Color(0.2, 0.5, 0.8, 0.25))
 	_card_draw.draw_arc(_drag_pos, 16.0, 0, TAU, 16, Color(0.4, 0.8, 1.0, 0.5), 1.5, true)
-	var ns := font.get_string_size(name_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 10)
-	_card_draw.draw_string(font, Vector2(_drag_pos.x - ns.x * 0.5, _drag_pos.y + 26), name_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.7, 0.9, 1.0, 0.7))
+	var ns := font.get_string_size(name_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
+	_card_draw.draw_string(font, Vector2(_drag_pos.x - ns.x * 0.5, _drag_pos.y + 28), name_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.7, 0.9, 1.0, 0.7))
 
 	# If over preview area, show snapping ghost on perimeter + mirror
 	var preview_area := _get_preview_area_rect()
@@ -1278,8 +1334,8 @@ func _draw_drag_ghost(vp: Vector2, font: Font) -> void:
 			_card_draw.draw_arc(mirror_pos, 8.0, 0, TAU, 12, Color(1.0, 0.9, 0.3, 0.4), 1.5, true)
 			# "Mirror" label
 			var ml := "Mirror"
-			var mls := font.get_string_size(ml, HORIZONTAL_ALIGNMENT_CENTER, -1, 8)
-			_card_draw.draw_string(font, Vector2(mirror_pos.x - mls.x * 0.5, mirror_pos.y - 14), ml, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(1.0, 0.9, 0.3, 0.5))
+			var mls := font.get_string_size(ml, HORIZONTAL_ALIGNMENT_CENTER, -1, 12)
+			_card_draw.draw_string(font, Vector2(mirror_pos.x - mls.x * 0.5, mirror_pos.y - 16), ml, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1.0, 0.9, 0.3, 0.5))
 
 func _draw_symmetry_toggle(vp: Vector2, font: Font) -> void:
 	var rect := _get_symmetry_toggle_rect()
@@ -1289,8 +1345,8 @@ func _draw_symmetry_toggle(vp: Vector2, font: Font) -> void:
 	_card_draw.draw_rect(rect, border_col, false, 1.5)
 	var label: String = "SYMMETRY: ON" if _symmetry_enabled else "SYMMETRY: OFF"
 	var label_col: Color = Color(1.0, 0.92, 0.45, 0.95) if _symmetry_enabled else Color(0.6, 0.6, 0.7, 0.7)
-	var ls := font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 11)
-	_card_draw.draw_string(font, Vector2(rect.position.x + (rect.size.x - ls.x) * 0.5, rect.position.y + 18), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, label_col)
+	var ls := font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
+	_card_draw.draw_string(font, Vector2(rect.position.x + (rect.size.x - ls.x) * 0.5, rect.position.y + 24), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, label_col)
 
 func _draw_placement_particles() -> void:
 	for pp in _place_particles:
@@ -1322,8 +1378,8 @@ func _draw_confirm_button(vp: Vector2, font: Font) -> void:
 	var glyph: String = str(ALIEN_GLYPHS[int(fmod(_time * 0.6, ALIEN_GLYPHS.size()))])
 	var label := glyph + " SAVE " + glyph if not _is_initial_customize else glyph + " CONFIRM " + glyph
 	var text_col: Color = Color(UIConstants.TEXT_BRIGHT.r, UIConstants.TEXT_BRIGHT.g, UIConstants.TEXT_BRIGHT.b, 1.0) if _confirm_hover else Color(UIConstants.BTN_TEXT.r, UIConstants.BTN_TEXT.g, UIConstants.BTN_TEXT.b, 0.95)
-	var ls := font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
-	_card_draw.draw_string(font, Vector2(rect.position.x + (rect.size.x - ls.x) * 0.5, rect.position.y + 28), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, text_col)
+	var ls := font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 24)
+	_card_draw.draw_string(font, Vector2(rect.position.x + (rect.size.x - ls.x) * 0.5, rect.position.y + 36), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 24, text_col)
 
 # --- Card drawing ---
 
@@ -1851,24 +1907,21 @@ func _wrap_text(font: Font, text: String, max_width: float, font_size: int) -> A
 # --- Eye drag system ---
 
 func _get_eye_screen_positions() -> Array:
-	## Returns [left_eye_pos, right_eye_pos, eye_radius] in screen coords
+	## Returns [left_eye_pos, right_eye_pos, eye_radius, body_center] in screen coords
 	var center := _get_preview_center()
 	var s: float = _get_preview_scale()
 	var cr: float = _get_preview_cell_radius()
-	var elong: float = _get_preview_elongation()
 	var custom: Dictionary = GameManager.creature_customization
-	var eye_angle: float = custom.get("eye_angle", 0.0)
-	var eye_spacing_val: float = custom.get("eye_spacing", 5.5)
 	var eye_size_val: float = custom.get("eye_size", 3.5)
+	var left_x: float = custom.get("eye_left_x", -0.15)
+	var left_y: float = custom.get("eye_left_y", -0.25)
+	var right_x: float = custom.get("eye_right_x", -0.15)
+	var right_y: float = custom.get("eye_right_y", 0.25)
 
-	var face_fwd: float = cr * (elong - 1.0) * 0.4 * s
-	var face_center: Vector2 = center + Vector2(cr * 0.25 * s + face_fwd, 0)
-	var spacing: float = eye_spacing_val * s * 0.4
-	var perp: Vector2 = Vector2(-sin(eye_angle), cos(eye_angle))
-	var left_eye: Vector2 = face_center + perp * (-spacing)
-	var right_eye: Vector2 = face_center + perp * spacing
+	var left_eye: Vector2 = center + Vector2(left_x, left_y) * cr * s
+	var right_eye: Vector2 = center + Vector2(right_x, right_y) * cr * s
 	var eye_r: float = eye_size_val * s * 0.3
-	return [left_eye, right_eye, eye_r, face_center]
+	return [left_eye, right_eye, eye_r, center]
 
 func _get_eye_at_pos(pos: Vector2) -> int:
 	## Returns 0 for left eye, 1 for right eye, -1 for none
@@ -1886,20 +1939,22 @@ func _get_eye_at_pos(pos: Vector2) -> int:
 	return -1
 
 func _update_eye_drag(pos: Vector2) -> void:
-	## Compute eye spacing and angle from mouse position relative to face center
-	var eye_data: Array = _get_eye_screen_positions()
-	if eye_data.size() < 4:
-		return
-	var face_center: Vector2 = eye_data[3]
+	## Convert screen position to normalized eye coords and update customization
+	var center := _get_preview_center()
 	var s: float = _get_preview_scale()
-	var mouse_offset: Vector2 = pos - face_center
-	var raw_spacing: float = mouse_offset.length() / (s * 0.4)
-	var new_spacing: float = clampf(raw_spacing, 3.0, 9.0)
-	var new_angle: float = atan2(-mouse_offset.x, mouse_offset.y)
-	GameManager.update_creature_customization({"eye_angle": new_angle, "eye_spacing": new_spacing})
-	if _color_picker:
-		_color_picker._eye_angle = new_angle
-		_color_picker._eye_spacing = new_spacing
+	var cr: float = _get_preview_cell_radius()
+	var offset: Vector2 = pos - center
+	var new_x: float = clampf(offset.x / (cr * s), -1.0, 1.0)
+	var new_y: float = clampf(offset.y / (cr * s), -1.0, 1.0)
+	# Clamp to unit circle
+	var dist: float = sqrt(new_x * new_x + new_y * new_y)
+	if dist > 1.0:
+		new_x /= dist
+		new_y /= dist
+	if _dragging_eye_index == 0:
+		GameManager.update_creature_customization({"eye_left_x": new_x, "eye_left_y": new_y, "eye_right_x": new_x, "eye_right_y": -new_y})
+	elif _dragging_eye_index == 1:
+		GameManager.update_creature_customization({"eye_right_x": new_x, "eye_right_y": new_y, "eye_left_x": new_x, "eye_left_y": -new_y})
 
 func _draw_eye_handles(vp: Vector2, font: Font) -> void:
 	var eye_data: Array = _get_eye_screen_positions()
@@ -1928,7 +1983,7 @@ func _draw_eye_handles(vp: Vector2, font: Font) -> void:
 	# "DRAG TO MOVE" hint (fades after 3s on first open)
 	if _eye_drag_hint_timer > 0.0 and _eye_drag_hint_timer < 3.0:
 		var hint_alpha: float = clampf(_eye_drag_hint_timer / 1.0, 0.0, 1.0) * 0.7
-		var hint_pos: Vector2 = (left_eye + right_eye) * 0.5 + Vector2(0, eye_r + 18.0)
+		var hint_pos: Vector2 = (left_eye + right_eye) * 0.5 + Vector2(0, eye_r + 22.0)
 		var hint_str := "Click eye to drag, scroll to resize"
-		var hs := font.get_string_size(hint_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 9)
-		_card_draw.draw_string(font, Vector2(hint_pos.x - hs.x * 0.5, hint_pos.y), hint_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.4, 0.9, 1.0, hint_alpha))
+		var hs := font.get_string_size(hint_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 14)
+		_card_draw.draw_string(font, Vector2(hint_pos.x - hs.x * 0.5, hint_pos.y), hint_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.4, 0.9, 1.0, hint_alpha))

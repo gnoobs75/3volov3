@@ -42,8 +42,10 @@ var creature_customization: Dictionary = {
 	"cilia_color": Color(0.4, 0.7, 1.0),
 	"organelle_tint": Color(0.3, 0.8, 0.5),
 	"eye_style": "anime",   # round, anime, compound, googly, slit, lashed, fierce, dot, star
-	"eye_angle": 0.0,       # Radians — angle on membrane where eyes face (0 = front)
-	"eye_spacing": 5.5,     # Distance between eyes (3.0 to 9.0)
+	"eye_left_x": -0.15,    # Normalized X (-1 to 1) relative to cell radius
+	"eye_left_y": -0.25,    # Normalized Y (-1 to 1)
+	"eye_right_x": -0.15,   # Mirrors left_x (same x when symmetry on)
+	"eye_right_y": 0.25,    # Mirrors left_y (negated y when symmetry on)
 	"eye_size": 3.5,        # Eye radius scale (2.0 to 6.0)
 	"body_elongation_offset": 0.0,  # User offset added to evolution-driven elongation (-0.5 to +0.5)
 	"body_bulge": 1.0,              # Mid-body width multiplier (0.5 to 2.0, 1.0 = normal)
@@ -139,14 +141,12 @@ func go_to_menu() -> void:
 	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 	stage_changed.emit("menu")
 
-## Win condition: 5 organelles collected
+## Win condition: evolution level 20
 func check_cell_win() -> bool:
-	return player_stats.organelles_collected >= 5
+	return evolution_level >= 20
 
 func add_organelle() -> void:
 	player_stats.organelles_collected += 1
-	if check_cell_win():
-		cell_stage_won.emit()
 
 ## Add a collected biomolecule or organelle to inventory
 func collect_biomolecule(item: Dictionary) -> void:
@@ -222,6 +222,9 @@ func consume_vial_for_evolution(category_key: String) -> void:
 	inventory_changed.emit()
 	# Bonus: award gene fragments for filling a vial
 	add_gene_fragments(2)
+	# Check win condition
+	if check_cell_win():
+		cell_stage_won.emit()
 
 func apply_mutation(mutation: Dictionary) -> void:
 	active_mutations.append(mutation)

@@ -92,6 +92,7 @@ const MAX_PARASITES: int = 8
 const MAX_FOOD: int = 80
 const MAX_HAZARDS: int = 8
 const MAX_VIRUSES: int = 6
+const MAX_KIN: int = 12
 const DESPAWN_DISTANCE: float = 1800.0  # Despawn orphans beyond this distance from player
 
 # --- FEATURE: Dynamic World Events ---
@@ -259,13 +260,14 @@ func _process(delta: float) -> void:
 				"hazards": get_tree().get_nodes_in_group("hazards").size(),
 				"parasites": get_tree().get_nodes_in_group("parasites").size(),
 				"viruses": get_tree().get_nodes_in_group("viruses").size(),
+				"kin": get_tree().get_nodes_in_group("kin").size(),
 			}
 			var total_entities: int = 0
 			for key in _entity_counts:
 				total_entities += _entity_counts[key]
 			var profiler_text: String = "FPS: %d | %.1fms\n" % [current_fps, _avg_frame_time]
 			profiler_text += "Entities: %d\n" % total_entities
-			profiler_text += "Food:%d Enem:%d Comp:%d\n" % [_entity_counts["food"], _entity_counts["enemies"], _entity_counts["competitors"]]
+			profiler_text += "Food:%d Enem:%d Comp:%d Kin:%d\n" % [_entity_counts["food"], _entity_counts["enemies"], _entity_counts["competitors"], _entity_counts["kin"]]
 			profiler_text += "Prey:%d Haz:%d Para:%d Vir:%d\n" % [_entity_counts["prey"], _entity_counts["hazards"], _entity_counts["parasites"], _entity_counts["viruses"]]
 			profiler_text += "Draw: %d | Objects: %d" % [Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME), Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME)]
 			fps_label.text = profiler_text
@@ -658,6 +660,10 @@ func _reveal_player_and_start_tutorial(overlay_layer: CanvasLayer) -> void:
 		var cam := player.get_node_or_null("Camera2D")
 		if cam:
 			cam.set_process(true)
+	# Refresh body shape from customization (shape is computed at _ready before editor opens)
+	if player:
+		player._compute_elongation()
+		player._init_procedural_shape()
 	_start_tutorial(overlay_layer)
 
 func _on_initial_customize_done() -> void:
@@ -1117,6 +1123,7 @@ func _enforce_population_caps() -> void:
 	_cull.call("food", MAX_FOOD)
 	_cull.call("hazards", MAX_HAZARDS)
 	_cull.call("viruses", MAX_VIRUSES)
+	_cull.call("kin", MAX_KIN)
 
 func _pause() -> void:
 	_paused = true

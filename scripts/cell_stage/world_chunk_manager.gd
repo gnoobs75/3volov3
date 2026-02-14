@@ -251,9 +251,9 @@ func _spawn_chunk_population(coord: Vector2i) -> void:
 		if remaining_override.has(kin_key):
 			kin_base = remaining_override[kin_key]
 		else:
-			# More kin appear at higher evolution levels: 0-1 at evo1, 0-2 at evo2, 1-3 at evo3+
-			var kin_min: int = clampi(evo - 2, 0, 1)
-			var kin_max: int = clampi(evo, 1, 3)
+			# Kin appear gradually: 0-1 at evo1-2, 0-2 at evo3+. Cap prevents flooding.
+			var kin_min: int = 0
+			var kin_max: int = 1 if evo < 3 else 2
 			kin_base = rng.randi_range(kin_min, kin_max)
 		for i in range(kin_base):
 			var pos := center + Vector2(
@@ -307,6 +307,9 @@ func _spawn_organism(type_key: String, pos: Vector2, rng: RandomNumberGenerator)
 				return null
 		"hazard":
 			if get_tree().get_nodes_in_group("hazards").size() >= 8:
+				return null
+		"kin":
+			if get_tree().get_nodes_in_group("kin").size() >= 12:
 				return null
 
 	var org: Node2D = null
