@@ -1,12 +1,11 @@
 extends Control
 ## Creature customization dashboard: HSV color picker, eye style selector,
-## body shape, preview zoom/rotation, stats summary. Full right-side panel with sci-fi styling.
+## preview zoom/rotation, stats summary. Full right-side panel with sci-fi styling.
 
 signal color_changed(target: String, color: Color)
 signal style_changed(target: String, style: String)
 signal eye_size_changed(new_size: float)
-signal elongation_offset_changed(value: float)
-signal bulge_changed(value: float)
+signal add_eye_requested
 
 var _active_target: String = "membrane_color"
 var _current_hue: float = 0.6
@@ -19,10 +18,6 @@ var _dragging_sv: bool = false
 var _selected_eye: String = "anime"
 var _eye_size: float = 3.5
 
-# Body shape
-var _elongation_offset: float = 0.0
-var _bulge: float = 1.0
-
 # Preview controls (local state, read by evolution_ui)
 var preview_zoom: float = 3.5
 var preview_rotation: float = 0.0
@@ -30,13 +25,12 @@ var preview_rotation: float = 0.0
 var _time: float = 0.0
 var _hover_target: String = ""
 var _hover_eye: int = -1
+var _hover_add_eye: bool = false
 var _scroll_y: float = 0.0  # Vertical scroll offset for the panel
 
 # Dragging state for sliders
 var _dragging_zoom: bool = false
 var _dragging_rotation: bool = false
-var _dragging_elongation: bool = false
-var _dragging_bulge: bool = false
 
 # Layout constants — scaled to fit 1080px height comfortably
 const PANEL_PAD: float = 16.0
@@ -75,8 +69,6 @@ func setup(custom: Dictionary) -> void:
 	_current_val = col.v
 	_selected_eye = custom.get("eye_style", "anime")
 	_eye_size = custom.get("eye_size", 3.5)
-	_elongation_offset = custom.get("body_elongation_offset", 0.0)
-	_bulge = custom.get("body_bulge", 1.0)
 
 func _process(delta: float) -> void:
 	_time += delta
@@ -101,13 +93,9 @@ func _gui_input(event: InputEvent) -> void:
 				accept_event()
 			elif _check_eye_buttons(pos):
 				accept_event()
+			elif _check_add_eye_button(pos):
+				accept_event()
 			# Check slider thumb clicks
-			elif _check_slider_click(pos, _get_elongation_slider_y(), (_elongation_offset + 0.5) / 1.0):
-				_dragging_elongation = true
-				accept_event()
-			elif _check_slider_click(pos, _get_bulge_slider_y(), (_bulge - 0.5) / 1.5):
-				_dragging_bulge = true
-				accept_event()
 			elif _check_slider_click(pos, _get_zoom_slider_y(), (preview_zoom - 2.0) / 4.0):
 				_dragging_zoom = true
 				accept_event()
@@ -124,8 +112,6 @@ func _gui_input(event: InputEvent) -> void:
 			_dragging_sv = false
 			_dragging_zoom = false
 			_dragging_rotation = false
-			_dragging_elongation = false
-			_dragging_bulge = false
 
 		# Mouse wheel
 		if event.pressed:
@@ -149,20 +135,6 @@ func _gui_input(event: InputEvent) -> void:
 					handled = true
 					accept_event()
 
-				# Elongation slider area
-				if not handled and _is_in_slider_area(pos, _get_elongation_slider_y()):
-					_elongation_offset = clampf(_elongation_offset + 0.05 * delta_val, -0.5, 0.5)
-					elongation_offset_changed.emit(_elongation_offset)
-					handled = true
-					accept_event()
-
-				# Bulge slider area
-				if not handled and _is_in_slider_area(pos, _get_bulge_slider_y()):
-					_bulge = clampf(_bulge + 0.1 * delta_val, 0.5, 2.0)
-					bulge_changed.emit(_bulge)
-					handled = true
-					accept_event()
-
 				# Zoom slider area
 				if not handled and _is_in_slider_area(pos, _get_zoom_slider_y()):
 					preview_zoom = clampf(preview_zoom + 0.25 * delta_val, 2.0, 6.0)
@@ -177,12 +149,6 @@ func _gui_input(event: InputEvent) -> void:
 		elif _dragging_sv:
 			_update_sv_from_mouse(pos)
 			accept_event()
-		elif _dragging_elongation:
-			_update_slider_from_mouse(pos, _get_elongation_slider_y(), "elongation")
-			accept_event()
-		elif _dragging_bulge:
-			_update_slider_from_mouse(pos, _get_bulge_slider_y(), "bulge")
-			accept_event()
 		elif _dragging_zoom:
 			_update_slider_from_mouse(pos, _get_zoom_slider_y(), "zoom")
 			accept_event()
@@ -193,6 +159,7 @@ func _gui_input(event: InputEvent) -> void:
 		# Track hover for visual feedback
 		_hover_target = ""
 		_hover_eye = -1
+		_hover_add_eye = _get_add_eye_rect().has_point(pos)
 		for i in range(TARGET_ORDER.size()):
 			var rect: Rect2 = _get_target_rect(i)
 			if rect.has_point(pos):
@@ -220,17 +187,11 @@ func _get_target_section_y() -> float:
 func _get_eye_section_y() -> float:
 	return _get_target_section_y() + 62.0 + SECTION_GAP
 
-func _get_shape_section_y() -> float:
-	return _get_eye_section_y() + 20.0 + (ceili(EYE_STYLES.size() / 5.0)) * 46.0 + SECTION_GAP
-
-func _get_elongation_slider_y() -> float:
-	return _get_shape_section_y() + 28.0
-
-func _get_bulge_slider_y() -> float:
-	return _get_elongation_slider_y() + 38.0
+func _get_add_eye_button_y() -> float:
+	return _get_eye_section_y() + 22.0 + (ceili(EYE_STYLES.size() / 5.0)) * 46.0 + 6.0
 
 func _get_zoom_slider_y() -> float:
-	return _get_bulge_slider_y() + 42.0
+	return _get_add_eye_button_y() + 36.0 + SECTION_GAP
 
 func _get_rotation_dial_y() -> float:
 	return _get_zoom_slider_y() + 36.0
@@ -265,19 +226,11 @@ func _check_slider_click(pos: Vector2, slider_cy: float, t: float) -> bool:
 
 func _check_slider_track_click(pos: Vector2) -> bool:
 	var sx := _get_slider_x()
-	# Check each slider track
-	for slider_y in [_get_elongation_slider_y(), _get_bulge_slider_y(), _get_zoom_slider_y()]:
-		if pos.y >= slider_y - 10 and pos.y <= slider_y + 10 and pos.x >= sx - 4 and pos.x <= sx + SLIDER_W + 4:
-			var t: float = clampf((pos.x - sx) / SLIDER_W, 0.0, 1.0)
-			if slider_y == _get_elongation_slider_y():
-				_elongation_offset = -0.5 + t * 1.0
-				elongation_offset_changed.emit(_elongation_offset)
-			elif slider_y == _get_bulge_slider_y():
-				_bulge = 0.5 + t * 1.5
-				bulge_changed.emit(_bulge)
-			elif slider_y == _get_zoom_slider_y():
-				preview_zoom = 2.0 + t * 4.0
-			return true
+	var slider_y: float = _get_zoom_slider_y()
+	if pos.y >= slider_y - 10 and pos.y <= slider_y + 10 and pos.x >= sx - 4 and pos.x <= sx + SLIDER_W + 4:
+		var t: float = clampf((pos.x - sx) / SLIDER_W, 0.0, 1.0)
+		preview_zoom = 2.0 + t * 4.0
+		return true
 	return false
 
 func _is_in_slider_area(pos: Vector2, slider_cy: float) -> bool:
@@ -286,12 +239,6 @@ func _is_in_slider_area(pos: Vector2, slider_cy: float) -> bool:
 func _update_slider_from_mouse(pos: Vector2, slider_cy: float, which: String) -> void:
 	var t: float = clampf((pos.x - _get_slider_x()) / SLIDER_W, 0.0, 1.0)
 	match which:
-		"elongation":
-			_elongation_offset = -0.5 + t * 1.0
-			elongation_offset_changed.emit(_elongation_offset)
-		"bulge":
-			_bulge = 0.5 + t * 1.5
-			bulge_changed.emit(_bulge)
 		"zoom":
 			preview_zoom = 2.0 + t * 4.0
 
@@ -334,6 +281,18 @@ func _check_target_buttons(pos: Vector2) -> bool:
 			_current_val = col.v
 			AudioManager.play_ui_hover()
 			return true
+	return false
+
+func _get_add_eye_rect() -> Rect2:
+	return Rect2(PANEL_PAD, _get_add_eye_button_y(), 120.0, 26.0)
+
+func _check_add_eye_button(pos: Vector2) -> bool:
+	if GameManager.get_eyes().size() >= 6:
+		return false
+	if _get_add_eye_rect().has_point(pos):
+		add_eye_requested.emit()
+		AudioManager.play_ui_select()
+		return true
 	return false
 
 func _check_eye_buttons(pos: Vector2) -> bool:
@@ -445,17 +404,16 @@ func _draw() -> void:
 		var ec: Vector2 = rect.position + rect.size * 0.5
 		_draw_eye_icon(EYE_STYLES[i], ec)
 
-	# === BODY SHAPE ===
-	var shape_y: float = _get_shape_section_y()
-	_draw_section_header(font, "BODY SHAPE", PANEL_PAD, shape_y, panel_w)
-
-	var elong_cy: float = _get_elongation_slider_y()
-	draw_string(font, Vector2(PANEL_PAD, elong_cy - 10), "STRETCH", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.9))
-	_draw_slider(elong_cy, (_elongation_offset + 0.5) / 1.0, "%+.2f" % _elongation_offset, _dragging_elongation)
-
-	var bulge_cy: float = _get_bulge_slider_y()
-	draw_string(font, Vector2(PANEL_PAD, bulge_cy - 10), "WIDTH", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(UIConstants.TEXT_NORMAL.r, UIConstants.TEXT_NORMAL.g, UIConstants.TEXT_NORMAL.b, 0.9))
-	_draw_slider(bulge_cy, (_bulge - 0.5) / 1.5, "%.1fx" % _bulge, _dragging_bulge)
+	# === ADD EYE BUTTON ===
+	var eye_count: int = GameManager.get_eyes().size()
+	if eye_count < 6:
+		var btn_y: float = _get_add_eye_button_y()
+		var btn_rect: Rect2 = Rect2(PANEL_PAD, btn_y, 120.0, 26.0)
+		var btn_hover: bool = _hover_add_eye
+		var btn_bg: Color = Color(0.12, 0.30, 0.45, 0.85) if btn_hover else Color(0.08, 0.18, 0.32, 0.65)
+		draw_rect(btn_rect, btn_bg)
+		draw_rect(btn_rect, Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.6), false, 1.0)
+		draw_string(font, Vector2(PANEL_PAD + 8, btn_y + 18), "+ ADD EYE (%d/6)" % eye_count, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(UIConstants.TEXT_BRIGHT.r, UIConstants.TEXT_BRIGHT.g, UIConstants.TEXT_BRIGHT.b, 0.9))
 
 	# === PREVIEW CONTROLS ===
 	var zoom_cy: float = _get_zoom_slider_y()

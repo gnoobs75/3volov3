@@ -85,9 +85,8 @@ var _damage_flash: float = 0.0
 const NUM_MEMBRANE_PTS: int = 32
 const NUM_CILIA: int = 12
 const NUM_ORGANELLES: int = 5
-var _elongation: float = 1.0  # X-axis stretch factor, grows with evolution level
-var _elongation_offset: float = 0.0
-var _bulge: float = 1.0
+var _handles: Array = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+var _evo_scale: float = 1.0
 
 # Camera zoom (sensory-based)
 const ZOOM_LEVELS: Array = [1.6, 1.4, 1.23, 1.07, 0.93, 0.8]  # Sensory 0-5 (zoomed out 50% more)
@@ -138,7 +137,7 @@ var _idle_voice_timer: float = 3.0  # Delay before first idle vocalization
 func _ready() -> void:
 	_apply_gene_traits()
 	_apply_mutation_stats()
-	_compute_elongation()
+	_compute_body_shape()
 	_init_procedural_shape()
 	_randomize_face()
 	add_to_group("player")
@@ -146,24 +145,25 @@ func _ready() -> void:
 	_update_sensory_zoom(false)  # Set initial zoom instantly
 
 func _randomize_face() -> void:
-	_eye_size = GameManager.creature_customization.get("eye_size", 3.5)
+	var eyes: Array = GameManager.get_eyes()
+	_eye_size = eyes[0].get("size", 3.5) if eyes.size() > 0 else 3.5
 	_pupil_size = randf_range(1.2, 2.2)
 	_has_eyebrows = randf() > 0.3
 
 func _init_procedural_shape() -> void:
 	_membrane_points.clear()
+	var effective: Array = _get_effective_handles()
 	for i in range(NUM_MEMBRANE_PTS):
 		var angle: float = TAU * i / NUM_MEMBRANE_PTS
-		var bulge_factor: float = 1.0 + (absf(sin(angle)) * (_bulge - 1.0))
-		var rx: float = _cell_radius * _elongation + randf_range(-2.0, 2.0)
-		var ry: float = _cell_radius * bulge_factor + randf_range(-2.0, 2.0)
-		_membrane_points.append(Vector2(cos(angle) * rx, sin(angle) * ry))
+		var r: float = SnapPointSystem.get_radius_at_angle(angle, _cell_radius, effective) + randf_range(-1.5, 1.5)
+		_membrane_points.append(Vector2(cos(angle) * r, sin(angle) * r))
 	# Tightened organelles — stay in center 35% to avoid eye area
 	_organelle_positions.clear()
 	for i in range(NUM_ORGANELLES):
 		var a: float = randf() * TAU
-		var dx: float = randf_range(2.0, _cell_radius * _elongation * 0.35)
-		var dy: float = randf_range(2.0, _cell_radius * 0.35)
+		var max_r: float = SnapPointSystem.get_radius_at_angle(a, _cell_radius, effective)
+		var dx: float = randf_range(2.0, max_r * 0.35)
+		var dy: float = randf_range(2.0, max_r * 0.35)
 		_organelle_positions.append(Vector2(cos(a) * dx, sin(a) * dy))
 	_cilia_angles.clear()
 	for i in range(NUM_CILIA):
@@ -385,8 +385,8 @@ func _draw() -> void:
 	var glow_base: float = 0.08 if not is_energy_depleted else 0.03
 	var glow_alpha: float = glow_base + 0.06 * sin(_time * 2.0)
 	var glow_color := custom_glow if not is_energy_depleted else Color(0.3, 0.3, 0.4)
-	_draw_ellipse(Vector2.ZERO, _cell_radius * _elongation * 2.2, _cell_radius * 2.2, Color(glow_color.r, glow_color.g, glow_color.b, glow_alpha))
-	_draw_ellipse(Vector2.ZERO, _cell_radius * _elongation * 1.6, _cell_radius * 1.6, Color(glow_color.r, glow_color.g, glow_color.b, glow_alpha * 1.5))
+	_draw_ellipse(Vector2.ZERO, _get_front_radius() * 2.2, _cell_radius * 2.2, Color(glow_color.r, glow_color.g, glow_color.b, glow_alpha))
+	_draw_ellipse(Vector2.ZERO, _get_front_radius() * 1.6, _cell_radius * 1.6, Color(glow_color.r, glow_color.g, glow_color.b, glow_alpha * 1.5))
 
 	# Cilia (sluggish when depleted) — use cilia_color
 	var custom_cilia: Color = GameManager.creature_customization.get("cilia_color", Color(0.4, 0.7, 1.0))
@@ -397,7 +397,7 @@ func _draw() -> void:
 		var base_angle: float = _cilia_angles[i]
 		var wave: float = sin(_time * cilia_speed + i * 1.3) * cilia_amp
 		var angle: float = base_angle + wave
-		var base_pt := Vector2(cos(base_angle) * _cell_radius * _elongation, sin(base_angle) * _cell_radius)
+		var base_pt := Vector2(cos(base_angle) * _get_front_radius(), sin(base_angle) * _cell_radius)
 		var tip_len: float = 8.0 + 3.0 * sin(_time * 5.0 + i)
 		if is_energy_depleted:
 			tip_len *= 0.6
@@ -453,7 +453,7 @@ func _draw() -> void:
 	var energy_arc_color := Color(0.3, 0.8, 1.0, 0.15 + energy_ratio * 0.25)
 	if is_energy_depleted:
 		energy_arc_color = Color(0.8, 0.3, 0.2, 0.15 + 0.2 * sin(_time * 4.0))  # Flashing red
-	var arc_r: float = _cell_radius * (1.0 + (_elongation - 1.0) * 0.5)  # Average radius for arcs
+	var arc_r: float = (_get_front_radius() + _cell_radius) * 0.5  # Average radius for arcs
 	draw_arc(Vector2.ZERO, arc_r + 3.0, 0, TAU * energy_ratio, 48, energy_arc_color, 2.0, true)
 	if health_ratio < 1.0:
 		draw_arc(Vector2.ZERO, arc_r + 5.0, 0, TAU * health_ratio, 48, Color(1.0, 0.3, 0.3, 0.4), 1.5, true)
@@ -561,18 +561,19 @@ func _draw_membrane_damage(pts: PackedVector2Array, health_ratio: float) -> void
 	# Low health: flickering membrane with breathing pulse
 	if health_ratio < 0.25:
 		var pulse: float = 0.1 + 0.15 * sin(_time * 4.0)
-		var warning_r: float = _cell_radius * _elongation + 2.0
+		var warning_r: float = _get_front_radius() + 2.0
 		draw_arc(Vector2.ZERO, warning_r, 0, TAU, 32, Color(0.9, 0.1, 0.1, pulse), 2.0, true)
 
 func _draw_face() -> void:
 	# --- EXPRESSIVE EYES (no mouth) ---
-	# Eye position from free-placed normalized coordinates
-	var left_x: float = GameManager.creature_customization.get("eye_left_x", -0.15)
-	var left_y: float = GameManager.creature_customization.get("eye_left_y", -0.25)
-	var right_x: float = GameManager.creature_customization.get("eye_right_x", -0.15)
-	var right_y: float = GameManager.creature_customization.get("eye_right_y", 0.25)
-	var left_eye := Vector2(left_x, left_y) * _cell_radius + _eye_shake
-	var right_eye := Vector2(right_x, right_y) * _cell_radius + _eye_shake
+	# Eye positions from multi-eye array
+	var eyes: Array = GameManager.get_eyes()
+	var eye_positions: Array = []
+	for eye in eyes:
+		eye_positions.append(Vector2(eye.get("x", 0.0), eye.get("y", 0.0)) * _cell_radius + _eye_shake)
+	# Legacy compatibility: ensure at least 2 eyes for paired rendering
+	var left_eye: Vector2 = eye_positions[0] if eye_positions.size() > 0 else Vector2(-0.15, -0.25) * _cell_radius
+	var right_eye: Vector2 = eye_positions[1] if eye_positions.size() > 1 else Vector2(-0.15, 0.25) * _cell_radius
 
 	# Anime eye colors — use customization iris color
 	var custom_iris: Color = GameManager.creature_customization.get("iris_color", Color(0.2, 0.5, 0.9))
@@ -718,7 +719,7 @@ func _draw_face() -> void:
 
 	# Compound eyes: draw cluster of small facets instead of two big eyes
 	if eye_style == "compound" and not _is_blinking:
-		for eye_pos_v: Vector2 in [left_eye, right_eye]:
+		for eye_pos_v: Vector2 in eye_positions:
 			var facet_r: float = eye_r * 0.35
 			for row in range(3):
 				for col in range(3):
@@ -733,16 +734,16 @@ func _draw_face() -> void:
 					draw_arc(fp, facet_r, 0, TAU, 8, Color(0.2, 0.2, 0.3, 0.5), 0.5, true)
 	elif eye_style == "dot" and not _is_blinking:
 		# Minimalist dot eyes — just solid dark circles with subtle highlight
-		for eye_pos_v: Vector2 in [left_eye, right_eye]:
+		for eye_pos_v: Vector2 in eye_positions:
 			draw_circle(eye_pos_v, eye_r, pupil_color)
 			draw_circle(eye_pos_v + Vector2(-eye_r * 0.2, -eye_r * 0.25), eye_r * 0.3, Color(1, 1, 1, 0.35))
 	elif eye_style == "fierce" and not _is_blinking:
 		# Angular aggressive eyes with heavy brow ridge
-		for idx in range(2):
-			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+		for idx in range(eye_positions.size()):
+			var eye_pos: Vector2 = eye_positions[idx]
 			var hw: float = eye_r * 1.1
 			var hh: float = eye_r * eye_squash_y * 0.7
-			var side_flip: float = -1.0 if idx == 0 else 1.0
+			var side_flip: float = signf(eye_pos.y) if absf(eye_pos.y) > 0.1 else (-1.0 if idx == 0 else 1.0)
 			# Angular eye shape
 			var eye_pts: PackedVector2Array = PackedVector2Array([
 				eye_pos + Vector2(-hw, 0),
@@ -765,8 +766,8 @@ func _draw_face() -> void:
 				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.1, 0.2, 0.6), 0.8, true)
 	elif eye_style == "star" and not _is_blinking:
 		# Star-shaped decorative iris
-		for idx in range(2):
-			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+		for idx in range(eye_positions.size()):
+			var eye_pos: Vector2 = eye_positions[idx]
 			var ew: float = eye_r
 			var eh: float = eye_r * eye_squash_y
 			# White sclera
@@ -790,8 +791,8 @@ func _draw_face() -> void:
 				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.15, 0.25, 0.6), 0.8, true)
 	elif eye_style == "hypnotize" and not _is_blinking:
 		# Concentric rings alternating iris_color and dark, pulsing outward
-		for idx in range(2):
-			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+		for idx in range(eye_positions.size()):
+			var eye_pos: Vector2 = eye_positions[idx]
 			var ew: float = eye_r
 			var eh: float = eye_r * eye_squash_y
 			var eye_pts: PackedVector2Array = PackedVector2Array()
@@ -813,8 +814,8 @@ func _draw_face() -> void:
 				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.15, 0.25, 0.6), 0.8, true)
 	elif eye_style == "x_eyes" and not _is_blinking:
 		# Two diagonal crossing lines (cartoon dazed/dead)
-		for idx in range(2):
-			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+		for idx in range(eye_positions.size()):
+			var eye_pos: Vector2 = eye_positions[idx]
 			var ew: float = eye_r
 			var eh: float = eye_r * eye_squash_y
 			var eye_pts: PackedVector2Array = PackedVector2Array()
@@ -833,8 +834,8 @@ func _draw_face() -> void:
 				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.15, 0.25, 0.6), 0.8, true)
 	elif eye_style == "heart" and not _is_blinking:
 		# Heart-shaped iris with anime highlight
-		for idx in range(2):
-			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+		for idx in range(eye_positions.size()):
+			var eye_pos: Vector2 = eye_positions[idx]
 			var ew: float = eye_r
 			var eh: float = eye_r * eye_squash_y
 			var eye_pts: PackedVector2Array = PackedVector2Array()
@@ -861,8 +862,8 @@ func _draw_face() -> void:
 				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.15, 0.25, 0.6), 0.8, true)
 	elif eye_style == "spiral" and not _is_blinking:
 		# Rotating Archimedes spiral pupil
-		for idx in range(2):
-			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+		for idx in range(eye_positions.size()):
+			var eye_pos: Vector2 = eye_positions[idx]
 			var ew: float = eye_r
 			var eh: float = eye_r * eye_squash_y
 			var eye_pts: PackedVector2Array = PackedVector2Array()
@@ -888,8 +889,8 @@ func _draw_face() -> void:
 				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.15, 0.25, 0.6), 0.8, true)
 	elif eye_style == "alien" and not _is_blinking:
 		# Large almond/oval shape, dark with subtle green-blue sheen
-		for idx in range(2):
-			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+		for idx in range(eye_positions.size()):
+			var eye_pos: Vector2 = eye_positions[idx]
 			var ew: float = eye_r * 0.7
 			var eh: float = eye_r * eye_squash_y * 1.3
 			# Almond shape
@@ -917,8 +918,8 @@ func _draw_face() -> void:
 			for i in range(eye_pts.size()):
 				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.05, 0.15, 0.2, 0.7), 1.0, true)
 	else:
-		for idx in range(2):
-			var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
+		for idx in range(eye_positions.size()):
+			var eye_pos: Vector2 = eye_positions[idx]
 			var ew: float = eye_r
 			var eh: float = eye_r * eye_squash_y
 			# Slit pupil: override pupil shape to vertical slit
@@ -1511,7 +1512,7 @@ func _on_evolution_applied(mutation: Dictionary) -> void:
 	if mutation.get("visual", "") == "larger_membrane":
 		_cell_radius += 3.0
 	# Elongate cell with each evolution
-	_compute_elongation()
+	_compute_body_shape()
 	_init_procedural_shape()
 	# Update camera zoom for sensory upgrades
 	if mutation.get("sensory_upgrade", false):
@@ -1524,25 +1525,49 @@ func _update_sensory_zoom(animate: bool) -> void:
 		_current_zoom = _target_zoom
 		camera.zoom = Vector2(_current_zoom, _current_zoom)
 
-func _compute_elongation() -> void:
-	_elongation_offset = GameManager.creature_customization.get("body_elongation_offset", 0.0)
-	_bulge = GameManager.creature_customization.get("body_bulge", 1.0)
-	_elongation = clampf(1.0 + GameManager.evolution_level * 0.15 + _elongation_offset, 0.5, 2.5)
+func _compute_body_shape() -> void:
+	_handles = GameManager.get_body_handles()
+	_evo_scale = 1.0 + GameManager.evolution_level * 0.08
 	_update_collision_shape()
+
+func _get_front_radius() -> float:
+	return _handles[0] * _evo_scale * _cell_radius if _handles.size() > 0 else _cell_radius
+
+func _get_max_radius() -> float:
+	var effective: Array = _get_effective_handles()
+	var max_r: float = 1.0
+	for h in effective:
+		max_r = maxf(max_r, h)
+	return max_r * _cell_radius
+
+func _get_effective_handles() -> Array:
+	var effective: Array = []
+	for h in _handles:
+		effective.append(h * _evo_scale)
+	return effective
 
 func _update_collision_shape() -> void:
 	var coll := get_node_or_null("CollisionShape2D")
 	if not coll:
 		return
-	if _elongation > 1.1:
+	var effective: Array = _get_effective_handles()
+	# Compute bounding radii from handles
+	var max_r: float = 0.0
+	var front_r: float = effective[0] if effective.size() > 0 else 1.0
+	var back_r: float = effective[4] if effective.size() > 4 else 1.0
+	for h in effective:
+		max_r = maxf(max_r, h)
+	var x_extent: float = maxf(front_r, back_r) * _cell_radius
+	var y_extent: float = max_r * _cell_radius
+	if absf(x_extent - y_extent) > _cell_radius * 0.15:
 		var cap := CapsuleShape2D.new()
-		cap.radius = _cell_radius
-		cap.height = _cell_radius * _elongation * 2.0
+		cap.radius = y_extent
+		cap.height = x_extent * 2.0
 		coll.shape = cap
 		coll.rotation = PI / 2.0
 	else:
 		var circle := CircleShape2D.new()
-		circle.radius = _cell_radius
+		circle.radius = max_r * _cell_radius
 		coll.shape = circle
 		coll.rotation = 0.0
 
@@ -1625,13 +1650,14 @@ func _draw_mutations() -> void:
 			var mirrored: bool = placement.get("mirrored", false)
 			var mut_scale: float = placement.get("scale", 1.0)
 			var rot_offset: float = placement.get("rotation_offset", 0.0)
-			var pos: Vector2 = SnapPointSystem.angle_to_perimeter_position(angle, _cell_radius, _elongation, distance)
+			var eff_handles: Array = _get_effective_handles()
+			var pos: Vector2 = SnapPointSystem.angle_to_perimeter_position_morphed(angle, _cell_radius, eff_handles, distance)
 			var outward_rot: float = SnapPointSystem.get_outward_rotation(angle) + rot_offset
 			draw_set_transform(pos, outward_rot, Vector2(mut_scale, mut_scale))
 			_draw_mutation_visual(vis)
 			if mirrored:
 				var mirror_angle: float = SnapPointSystem.get_mirror_angle(angle)
-				var mirror_pos: Vector2 = SnapPointSystem.angle_to_perimeter_position(mirror_angle, _cell_radius, _elongation, distance)
+				var mirror_pos: Vector2 = SnapPointSystem.angle_to_perimeter_position_morphed(mirror_angle, _cell_radius, eff_handles, distance)
 				var mirror_rot: float = SnapPointSystem.get_outward_rotation(mirror_angle) - rot_offset
 				draw_set_transform(mirror_pos, mirror_rot, Vector2(mut_scale, mut_scale))
 				_draw_mutation_visual(vis)
@@ -1643,7 +1669,7 @@ func _draw_mutations() -> void:
 		if slot < 0:
 			_draw_mutation_visual(vis)
 			continue
-		var snap_pos: Vector2 = SnapPointSystem.get_snap_position(slot, _cell_radius, _elongation)
+		var snap_pos: Vector2 = SnapPointSystem.get_snap_position(slot, _cell_radius, _evo_scale)
 		var mut_scale: float = placement.get("scale", 1.0)
 		var scale_vec: Vector2 = Vector2(mut_scale, mut_scale)
 		draw_set_transform(snap_pos, 0.0, scale_vec)
@@ -1651,7 +1677,7 @@ func _draw_mutations() -> void:
 		if mirrored:
 			var mirror_slot: int = SnapPointSystem.get_mirrored_slot(slot)
 			if mirror_slot >= 0:
-				var mirror_pos: Vector2 = SnapPointSystem.get_snap_position(mirror_slot, _cell_radius, _elongation)
+				var mirror_pos: Vector2 = SnapPointSystem.get_snap_position(mirror_slot, _cell_radius, _evo_scale)
 				draw_set_transform(mirror_pos, 0.0, scale_vec)
 				_draw_mutation_visual(vis)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
@@ -1698,7 +1724,7 @@ func _draw_mut_bioluminescence() -> void:
 	draw_circle(Vector2.ZERO, _cell_radius * 1.2, Color(0.3, 0.9, 0.6, pulse * 0.15))
 
 func _draw_mut_flagellum() -> void:
-	var base := Vector2(-_cell_radius * _elongation - 2.0, 0)
+	var base := Vector2(-_get_front_radius() - 2.0, 0)
 	for i in range(14):
 		var t: float = float(i) / 13.0
 		var px: float = base.x - t * 28.0
@@ -1870,7 +1896,7 @@ func _draw_mut_lateral_line() -> void:
 
 func _draw_mut_beak() -> void:
 	# Pointed beak at front
-	var fr: float = _cell_radius * _elongation
+	var fr: float = _get_front_radius()
 	var pts: PackedVector2Array = PackedVector2Array([
 		Vector2(fr + 1.0, -3.0),
 		Vector2(fr + 9.0, 0),
@@ -1896,7 +1922,7 @@ func _draw_mut_front_spike() -> void:
 	if _front_hit_flash > 0:
 		spike_col = spike_col.lerp(Color(1.0, 0.9, 0.6, 1.0), _front_hit_flash)
 		edge_col = edge_col.lerp(Color(1.0, 0.8, 0.4, 1.0), _front_hit_flash)
-	var fr: float = _cell_radius * _elongation
+	var fr: float = _get_front_radius()
 	var base1 := Vector2(fr - 2.0, -4.0)
 	var base2 := Vector2(fr - 2.0, 4.0)
 	# Jab forward on hit
@@ -1922,7 +1948,7 @@ func _draw_mut_front_spike() -> void:
 func _draw_mut_mandibles() -> void:
 	# Two pincer jaws at front
 	var open: float = 0.2 + abs(sin(_time * 4.0)) * 0.3
-	var fr: float = _cell_radius * _elongation
+	var fr: float = _get_front_radius()
 	for side in [-1.0, 1.0]:
 		var base := Vector2(fr - 1.0, side * 5.0)
 		var mid := Vector2(fr + 8.0, side * (4.0 + open * 6.0))
@@ -1937,7 +1963,7 @@ func _draw_mut_mandibles() -> void:
 
 func _draw_mut_side_barbs() -> void:
 	# Barbs along both sides
-	var er: float = _cell_radius * _elongation
+	var er: float = _get_front_radius()
 	for side in [-1.0, 1.0]:
 		for i in range(4):
 			var x: float = -er * 0.5 + i * (er * 0.4)
@@ -1950,7 +1976,7 @@ func _draw_mut_side_barbs() -> void:
 
 func _draw_mut_rear_stinger() -> void:
 	# Scorpion-like stinger at back
-	var rr: float = _cell_radius * _elongation
+	var rr: float = _get_front_radius()
 	var segments: int = 5
 	var prev := Vector2(-rr, 0)
 	var base_color := Color(0.3, 0.7, 0.2, 0.9)
@@ -1985,7 +2011,7 @@ func _draw_mut_rear_stinger() -> void:
 
 func _draw_mut_ramming_crest() -> void:
 	# Armored head plate
-	var fr: float = _cell_radius * _elongation
+	var fr: float = _get_front_radius()
 	var pts: PackedVector2Array = PackedVector2Array()
 	for i in range(7):
 		var t: float = float(i) / 6.0
@@ -2004,7 +2030,7 @@ func _draw_mut_ramming_crest() -> void:
 
 func _draw_mut_proboscis() -> void:
 	# Long feeding needle at front
-	var fr: float = _cell_radius * _elongation
+	var fr: float = _get_front_radius()
 	var wave: float = sin(_time * 8.0) * 1.5
 	var base := Vector2(fr, 0)
 	var segments: int = 6
@@ -2020,7 +2046,7 @@ func _draw_mut_proboscis() -> void:
 
 func _draw_mut_tail_club() -> void:
 	# Heavy club at back
-	var rr: float = _cell_radius * _elongation
+	var rr: float = _get_front_radius()
 	var stem_col := Color(0.6, 0.5, 0.4, 0.9)
 	var club_col := Color(0.55, 0.45, 0.35, 0.85)
 	var outline_col := Color(0.4, 0.35, 0.3, 0.9)
@@ -2064,7 +2090,7 @@ func _draw_mut_electroreceptors() -> void:
 
 func _draw_mut_antenna() -> void:
 	# Two long antennae at front
-	var fr: float = _cell_radius * _elongation
+	var fr: float = _get_front_radius()
 	for side in [-1.0, 1.0]:
 		var base := Vector2(fr - 2.0, side * 4.0)
 		var segments: int = 8
@@ -2211,19 +2237,19 @@ func _draw_golden_vfx() -> void:
 	if _golden_flash > 0.01:
 		var card: Dictionary = GoldenCardData.get_card_by_id(GameManager.equipped_golden_card)
 		var flash_col: Color = card.get("color", Color(1.0, 0.9, 0.3))
-		var r: float = _cell_radius * _elongation * (3.0 + (1.0 - _golden_flash) * 4.0)
+		var r: float = _get_front_radius() * (3.0 + (1.0 - _golden_flash) * 4.0)
 		draw_arc(Vector2.ZERO, r, 0, TAU, 32, Color(flash_col.r, flash_col.g, flash_col.b, _golden_flash * 0.4), 3.0, true)
 
 	# Healing aura shimmer while active
 	if _golden_aura_active:
 		var shimmer: float = 0.15 + 0.1 * sin(_time * 8.0)
-		var shield_r: float = _cell_radius * _elongation * 1.5
+		var shield_r: float = _get_front_radius() * 1.5
 		draw_arc(Vector2.ZERO, shield_r, 0, TAU, 32, Color(1.0, 0.9, 0.3, shimmer), 2.5, true)
 		draw_arc(Vector2.ZERO, shield_r + 3.0, _time * 2.0, _time * 2.0 + PI, 16, Color(1.0, 0.95, 0.5, shimmer * 0.5), 1.5, true)
 
 	# Cooldown indicator near the cell (small arc below)
 	if GameManager.equipped_golden_card != "":
-		var cd_r: float = _cell_radius * _elongation + 12.0
+		var cd_r: float = _get_front_radius() + 12.0
 		var cd_center := Vector2(0, _cell_radius + 16.0)
 		if _golden_cooldown > 0:
 			var progress: float = 1.0 - _golden_cooldown / GOLDEN_COOLDOWN_MAX

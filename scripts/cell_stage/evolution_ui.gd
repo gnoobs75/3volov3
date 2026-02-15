@@ -99,7 +99,10 @@ var _tooltip_golden: bool = false  # Is tooltip for golden card
 
 # Eye drag state
 var _dragging_eye: bool = false
-var _dragging_eye_index: int = -1  # 0 = left, 1 = right
+var _dragging_eye_index: int = -1  # index into eyes array
+
+# Morph handle drag state
+var _dragging_morph_handle: int = -1  # -1 = not dragging, 0-7 = handle index
 var _eye_selected: bool = false
 var _eye_drag_hint_timer: float = 3.0  # Fades "DRAG TO MOVE" hint
 
@@ -302,6 +305,7 @@ func _setup_preview() -> void:
 	var vp := get_viewport().get_visible_rect().size
 	_preview.preview_center = Vector2(vp.x * 0.43, vp.y * 0.42)
 	_preview.preview_scale = _preview_zoom
+	_preview.show_morph_handles = true
 
 func _setup_color_picker() -> void:
 	if _color_picker:
@@ -311,10 +315,8 @@ func _setup_color_picker() -> void:
 			_color_picker.style_changed.disconnect(_on_style_changed)
 		if _color_picker.eye_size_changed.is_connected(_on_eye_size_changed):
 			_color_picker.eye_size_changed.disconnect(_on_eye_size_changed)
-		if _color_picker.elongation_offset_changed.is_connected(_on_elongation_offset_changed):
-			_color_picker.elongation_offset_changed.disconnect(_on_elongation_offset_changed)
-		if _color_picker.bulge_changed.is_connected(_on_bulge_changed):
-			_color_picker.bulge_changed.disconnect(_on_bulge_changed)
+		if _color_picker.add_eye_requested.is_connected(_on_add_eye_requested):
+			_color_picker.add_eye_requested.disconnect(_on_add_eye_requested)
 		_color_picker.queue_free()
 	var PickerScript := preload("res://scripts/cell_stage/color_picker_ui.gd")
 	_color_picker = Control.new()
@@ -329,8 +331,7 @@ func _setup_color_picker() -> void:
 	_color_picker.color_changed.connect(_on_color_changed)
 	_color_picker.style_changed.connect(_on_style_changed)
 	_color_picker.eye_size_changed.connect(_on_eye_size_changed)
-	_color_picker.elongation_offset_changed.connect(_on_elongation_offset_changed)
-	_color_picker.bulge_changed.connect(_on_bulge_changed)
+	_color_picker.add_eye_requested.connect(_on_add_eye_requested)
 
 func _on_color_changed(target: String, color: Color) -> void:
 	GameManager.update_creature_customization({target: color})
@@ -341,15 +342,14 @@ func _on_style_changed(target: String, style: String) -> void:
 func _on_eye_size_changed(new_size: float) -> void:
 	GameManager.update_creature_customization({"eye_size": new_size})
 
-func _on_elongation_offset_changed(value: float) -> void:
-	GameManager.update_body_elongation_offset(value)
-	if _preview and _preview.has_method("set_body_shape"):
-		_preview.set_body_shape(value, GameManager.creature_customization.get("body_bulge", 1.0))
-
-func _on_bulge_changed(value: float) -> void:
-	GameManager.update_body_bulge(value)
-	if _preview and _preview.has_method("set_body_shape"):
-		_preview.set_body_shape(GameManager.creature_customization.get("body_elongation_offset", 0.0), value)
+func _on_add_eye_requested() -> void:
+	var eyes: Array = GameManager.get_eyes()
+	if eyes.size() >= 6:
+		return
+	# Add new eye at a default position
+	GameManager.add_eye(0.0, 0.0)
+	if _preview and _preview.has_method("refresh_handles"):
+		_preview.refresh_handles()
 
 func _close_editor() -> void:
 	if _preview:
@@ -362,10 +362,8 @@ func _close_editor() -> void:
 			_color_picker.style_changed.disconnect(_on_style_changed)
 		if _color_picker.eye_size_changed.is_connected(_on_eye_size_changed):
 			_color_picker.eye_size_changed.disconnect(_on_eye_size_changed)
-		if _color_picker.elongation_offset_changed.is_connected(_on_elongation_offset_changed):
-			_color_picker.elongation_offset_changed.disconnect(_on_elongation_offset_changed)
-		if _color_picker.bulge_changed.is_connected(_on_bulge_changed):
-			_color_picker.bulge_changed.disconnect(_on_bulge_changed)
+		if _color_picker.add_eye_requested.is_connected(_on_add_eye_requested):
+			_color_picker.add_eye_requested.disconnect(_on_add_eye_requested)
 		_color_picker.queue_free()
 		_color_picker = null
 	_active = false
@@ -388,6 +386,7 @@ func _close_editor() -> void:
 	_ring_drag_mode = ""
 	_ring_hover_handle = ""
 	_dragging_eye = false
+	_dragging_morph_handle = -1
 	_eye_selected = false
 	_tooltip_alpha = 0.0
 	_hover_index = -1
@@ -450,8 +449,13 @@ func _get_preview_center() -> Vector2:
 func _get_preview_cell_radius() -> float:
 	return 18.0
 
-func _get_preview_elongation() -> float:
-	return minf(1.0 + GameManager.evolution_level * 0.15, 2.5)
+func _get_preview_handles() -> Array:
+	var handles: Array = GameManager.get_body_handles()
+	var evo_scale: float = 1.0 + GameManager.evolution_level * 0.08
+	var effective: Array = []
+	for h in handles:
+		effective.append(h * evo_scale)
+	return effective
 
 func _get_preview_scale() -> float:
 	return _preview_zoom
@@ -460,8 +464,8 @@ func _get_angle_screen_pos(angle: float, distance: float) -> Vector2:
 	var center := _get_preview_center()
 	var s: float = _get_preview_scale()
 	var cr: float = _get_preview_cell_radius()
-	var elong: float = _get_preview_elongation()
-	return center + SnapPointSystem.angle_to_perimeter_position(angle, cr, elong, distance) * s
+	var handles: Array = _get_preview_handles()
+	return center + SnapPointSystem.angle_to_perimeter_position_morphed(angle, cr, handles, distance) * s
 
 func _screen_pos_to_angle(screen_pos: Vector2) -> float:
 	var center := _get_preview_center()
@@ -472,12 +476,13 @@ func _screen_pos_to_distance(screen_pos: Vector2) -> float:
 	var center := _get_preview_center()
 	var s: float = _get_preview_scale()
 	var cr: float = _get_preview_cell_radius()
-	var elong: float = _get_preview_elongation()
+	var handles: Array = _get_preview_handles()
 	var delta: Vector2 = screen_pos - center
-	# Normalize by ellipse radii
-	var nx: float = delta.x / (cr * elong * s) if cr * elong * s > 0.01 else 0.0
-	var ny: float = delta.y / (cr * s) if cr * s > 0.01 else 0.0
-	return clampf(sqrt(nx * nx + ny * ny), 0.0, 1.2)
+	var angle: float = atan2(delta.y, delta.x)
+	var membrane_r: float = SnapPointSystem.get_radius_at_angle(angle, cr, handles) * s
+	if membrane_r < 0.01:
+		return 0.0
+	return clampf(delta.length() / membrane_r, 0.0, 1.2)
 
 func _get_confirm_rect() -> Rect2:
 	var vp := _get_vp()
@@ -561,6 +566,11 @@ func _handle_customize_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var pos: Vector2 = event.position
 
+		# Morph handle drag in progress — update handle radius
+		if _dragging_morph_handle >= 0:
+			_update_morph_handle_drag(pos)
+			return
+
 		# Eye drag in progress — update eye placement
 		if _dragging_eye:
 			_update_eye_drag(pos)
@@ -632,6 +642,16 @@ func _handle_customize_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton:
 		var pos: Vector2 = event.position
 		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			# Check morph handle click
+			var morph_hit: int = _get_morph_handle_at(pos)
+			if morph_hit >= 0:
+				_dragging_morph_handle = morph_hit
+				_selected_mutation_id = ""
+				_eye_selected = false
+				if _preview:
+					_preview.dragging_morph_handle = morph_hit
+				return
+
 			# Check ring handles first (highest priority when mutation is selected)
 			if _ring_hover_handle != "":
 				_start_ring_drag(_ring_hover_handle, pos)
@@ -720,6 +740,13 @@ func _handle_customize_input(event: InputEvent) -> void:
 				_end_ring_drag()
 
 		elif not event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			# End morph handle drag
+			if _dragging_morph_handle >= 0:
+				_dragging_morph_handle = -1
+				if _preview:
+					_preview.dragging_morph_handle = -1
+				return
+
 			# End eye drag
 			if _dragging_eye:
 				_dragging_eye = false
@@ -746,9 +773,18 @@ func _handle_customize_input(event: InputEvent) -> void:
 			_dragging_mutation = {}
 			_drag_source = ""
 
-		# Right-click: unplace mutation (remove placement, stays in inventory)
+		# Right-click: unplace mutation or remove eye
 		if event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
-			if _hover_placed_mutation != "":
+			# Check eye right-click (remove)
+			var eye_rc: int = _get_eye_at_pos(pos)
+			if eye_rc >= 0 and GameManager.get_eyes().size() > 1:
+				GameManager.remove_eye(eye_rc)
+				_eye_selected = false
+				_dragging_eye = false
+				if _preview and _preview.has_method("refresh_handles"):
+					_preview.refresh_handles()
+				AudioManager.play_ui_hover()
+			elif _hover_placed_mutation != "":
 				GameManager.remove_mutation_placement(_hover_placed_mutation)
 				if _selected_mutation_id == _hover_placed_mutation:
 					_selected_mutation_id = ""
@@ -761,12 +797,12 @@ func _handle_customize_input(event: InputEvent) -> void:
 		if event.pressed and _eye_selected and (event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN):
 			var eye_hit_scroll: int = _get_eye_at_pos(pos)
 			if eye_hit_scroll >= 0:
-				var cur_eye_size: float = GameManager.creature_customization.get("eye_size", 3.5)
-				var delta_sz: float = 0.3 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -0.3
-				cur_eye_size = clampf(cur_eye_size + delta_sz, 2.0, 6.0)
-				GameManager.update_creature_customization({"eye_size": cur_eye_size})
-				if _color_picker:
-					_color_picker._eye_size = cur_eye_size
+				var eyes: Array = GameManager.get_eyes()
+				if eye_hit_scroll < eyes.size():
+					var cur_eye_size: float = eyes[eye_hit_scroll].get("size", 3.5)
+					var delta_sz: float = 0.3 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -0.3
+					cur_eye_size = clampf(cur_eye_size + delta_sz, 2.0, 6.0)
+					GameManager.update_eye(eye_hit_scroll, {"size": cur_eye_size})
 
 		# Mouse wheel: rotate or scale placed mutations (scroll fallback still works)
 		if event.pressed and _hover_mutation_id != "":
@@ -1904,42 +1940,65 @@ func _wrap_text(font: Font, text: String, max_width: float, font_size: int) -> A
 			lines[-1] = test
 	return lines
 
-# --- Eye drag system ---
+# --- Morph handle system ---
 
-func _get_eye_screen_positions() -> Array:
-	## Returns [left_eye_pos, right_eye_pos, eye_radius, body_center] in screen coords
+func _get_morph_handle_at(pos: Vector2) -> int:
+	## Returns handle index (0-7) if pos is near a morph handle, -1 otherwise
 	var center := _get_preview_center()
 	var s: float = _get_preview_scale()
 	var cr: float = _get_preview_cell_radius()
-	var custom: Dictionary = GameManager.creature_customization
-	var eye_size_val: float = custom.get("eye_size", 3.5)
-	var left_x: float = custom.get("eye_left_x", -0.15)
-	var left_y: float = custom.get("eye_left_y", -0.25)
-	var right_x: float = custom.get("eye_right_x", -0.15)
-	var right_y: float = custom.get("eye_right_y", 0.25)
+	var handles: Array = _get_preview_handles()
+	var hit_dist: float = 15.0
+	for i in range(8):
+		var angle: float = TAU * float(i) / 8.0
+		var r: float = SnapPointSystem.get_radius_at_angle(angle, cr, handles)
+		var handle_pos: Vector2 = center + Vector2(cos(angle), sin(angle)) * r * s
+		if pos.distance_to(handle_pos) < hit_dist:
+			return i
+	return -1
 
-	var left_eye: Vector2 = center + Vector2(left_x, left_y) * cr * s
-	var right_eye: Vector2 = center + Vector2(right_x, right_y) * cr * s
-	var eye_r: float = eye_size_val * s * 0.3
-	return [left_eye, right_eye, eye_r, center]
+func _update_morph_handle_drag(pos: Vector2) -> void:
+	## Update handle radius based on drag position
+	if _dragging_morph_handle < 0 or _dragging_morph_handle >= 8:
+		return
+	var center := _get_preview_center()
+	var s: float = _get_preview_scale()
+	var cr: float = _get_preview_cell_radius()
+	var evo_scale: float = 1.0 + GameManager.evolution_level * 0.08
+	var dist_from_center: float = (pos - center).length() / (cr * s)
+	# Convert screen distance to raw handle value (divide out evo_scale)
+	var raw_value: float = clampf(dist_from_center / evo_scale, 0.5, 2.0)
+	GameManager.update_body_handle(_dragging_morph_handle, raw_value)
+	if _preview and _preview.has_method("refresh_handles"):
+		_preview.refresh_handles()
+
+# --- Eye drag system ---
+
+func _get_eye_screen_positions() -> Array:
+	## Returns [{pos, size}] for each eye in screen coords
+	var center := _get_preview_center()
+	var s: float = _get_preview_scale()
+	var cr: float = _get_preview_cell_radius()
+	var eyes: Array = GameManager.get_eyes()
+	var result: Array = []
+	for eye in eyes:
+		var ep: Vector2 = center + Vector2(eye.get("x", 0.0), eye.get("y", 0.0)) * cr * s
+		var er: float = eye.get("size", 3.5) * s * 0.3
+		result.append({"pos": ep, "size": er})
+	return result
 
 func _get_eye_at_pos(pos: Vector2) -> int:
-	## Returns 0 for left eye, 1 for right eye, -1 for none
+	## Returns eye index or -1 for none
 	var eye_data: Array = _get_eye_screen_positions()
-	if eye_data.size() < 4:
-		return -1
-	var left_eye: Vector2 = eye_data[0]
-	var right_eye: Vector2 = eye_data[1]
-	var eye_r: float = eye_data[2]
-	var hit_r: float = eye_r * 2.0
-	if pos.distance_to(left_eye) < hit_r:
-		return 0
-	if pos.distance_to(right_eye) < hit_r:
-		return 1
+	for i in range(eye_data.size()):
+		var ep: Vector2 = eye_data[i].pos
+		var er: float = eye_data[i].size
+		if pos.distance_to(ep) < er * 2.0:
+			return i
 	return -1
 
 func _update_eye_drag(pos: Vector2) -> void:
-	## Convert screen position to normalized eye coords and update customization
+	## Convert screen position to normalized eye coords and update
 	var center := _get_preview_center()
 	var s: float = _get_preview_scale()
 	var cr: float = _get_preview_cell_radius()
@@ -1951,39 +2010,36 @@ func _update_eye_drag(pos: Vector2) -> void:
 	if dist > 1.0:
 		new_x /= dist
 		new_y /= dist
-	if _dragging_eye_index == 0:
-		GameManager.update_creature_customization({"eye_left_x": new_x, "eye_left_y": new_y, "eye_right_x": new_x, "eye_right_y": -new_y})
-	elif _dragging_eye_index == 1:
-		GameManager.update_creature_customization({"eye_right_x": new_x, "eye_right_y": new_y, "eye_left_x": new_x, "eye_left_y": -new_y})
+	if _dragging_eye_index >= 0:
+		GameManager.update_eye(_dragging_eye_index, {"x": new_x, "y": new_y})
 
 func _draw_eye_handles(vp: Vector2, font: Font) -> void:
 	var eye_data: Array = _get_eye_screen_positions()
-	if eye_data.size() < 4:
+	if eye_data.is_empty():
 		return
-	var left_eye: Vector2 = eye_data[0]
-	var right_eye: Vector2 = eye_data[1]
-	var eye_r: float = eye_data[2]
 	var handle_col: Color = Color(0.3, 0.9, 1.0, 0.5)
 	var active_col: Color = Color(0.5, 1.0, 1.0, 0.8)
 
 	var show_handles: bool = _eye_selected or _dragging_eye
 	if show_handles:
-		# Draw ring handles around both eyes
-		for ep: Vector2 in [left_eye, right_eye]:
-			var ring_r: float = eye_r + 6.0
-			var col: Color = active_col if _dragging_eye else handle_col
+		for i in range(eye_data.size()):
+			var ep: Vector2 = eye_data[i].pos
+			var er: float = eye_data[i].size
+			var ring_r: float = er + 6.0
+			var is_dragged: bool = _dragging_eye and _dragging_eye_index == i
+			var col: Color = active_col if is_dragged else handle_col
 			_card_draw.draw_arc(ep, ring_r, 0, TAU, 16, col, 1.5, true)
 			# Small resize squares at corners
-			for i in range(4):
-				var sq_angle: float = PI * 0.25 + i * PI * 0.5
+			for j in range(4):
+				var sq_angle: float = PI * 0.25 + j * PI * 0.5
 				var sq_pos: Vector2 = ep + Vector2(cos(sq_angle), sin(sq_angle)) * ring_r
 				var sq_sz: float = 4.0
 				_card_draw.draw_rect(Rect2(sq_pos.x - sq_sz * 0.5, sq_pos.y - sq_sz * 0.5, sq_sz, sq_sz), col)
 
 	# "DRAG TO MOVE" hint (fades after 3s on first open)
-	if _eye_drag_hint_timer > 0.0 and _eye_drag_hint_timer < 3.0:
+	if _eye_drag_hint_timer > 0.0 and _eye_drag_hint_timer < 3.0 and eye_data.size() >= 1:
 		var hint_alpha: float = clampf(_eye_drag_hint_timer / 1.0, 0.0, 1.0) * 0.7
-		var hint_pos: Vector2 = (left_eye + right_eye) * 0.5 + Vector2(0, eye_r + 22.0)
-		var hint_str := "Click eye to drag, scroll to resize"
+		var hint_pos: Vector2 = eye_data[0].pos + Vector2(0, eye_data[0].size + 22.0)
+		var hint_str := "Click eye to drag, scroll to resize, right-click to remove"
 		var hs := font.get_string_size(hint_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 14)
 		_card_draw.draw_string(font, Vector2(hint_pos.x - hs.x * 0.5, hint_pos.y), hint_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.4, 0.9, 1.0, hint_alpha))

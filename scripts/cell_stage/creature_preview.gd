@@ -5,15 +5,16 @@ extends Control
 
 var _time: float = 0.0
 var _cell_radius: float = 18.0
-var _elongation: float = 1.0
-var _elongation_offset: float = 0.0
-var _bulge: float = 1.0
+var _handles: Array = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+var _evo_scale: float = 1.0
 var _membrane_points: Array[Vector2] = []
 var _organelle_positions: Array[Vector2] = []
 var _cilia_angles: Array[float] = []
 var preview_center: Vector2 = Vector2.ZERO
 var preview_scale: float = 3.5
 var preview_rotation: float = 0.0
+var show_morph_handles: bool = false
+var dragging_morph_handle: int = -1  # -1 = not dragging
 
 const NUM_MEMBRANE_PTS: int = 32
 const NUM_CILIA: int = 12
@@ -21,37 +22,47 @@ const NUM_ORGANELLES: int = 5
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_elongation_offset = GameManager.creature_customization.get("body_elongation_offset", 0.0)
-	_bulge = GameManager.creature_customization.get("body_bulge", 1.0)
-	_elongation = clampf(1.0 + GameManager.evolution_level * 0.15 + _elongation_offset, 0.5, 2.5)
+	_handles = GameManager.get_body_handles()
+	_evo_scale = 1.0 + GameManager.evolution_level * 0.08
 	_cell_radius = 18.0
 	for m in GameManager.active_mutations:
 		if m.get("id", "") == "larger_membrane":
 			_cell_radius += 3.0
 	_init_shape()
 
-func set_body_shape(elongation_offset: float, bulge: float) -> void:
-	_elongation_offset = elongation_offset
-	_bulge = bulge
-	_elongation = clampf(1.0 + GameManager.evolution_level * 0.15 + _elongation_offset, 0.5, 2.5)
+func set_body_shape(_elongation_offset: float, _bulge: float) -> void:
+	# Legacy compat — ignored, handles are now used directly
+	_handles = GameManager.get_body_handles()
 	_init_shape()
+
+func refresh_handles() -> void:
+	_handles = GameManager.get_body_handles()
+	_init_shape()
+
+func _get_handle_radius_at_angle(angle: float) -> float:
+	return SnapPointSystem.get_radius_at_angle(angle, _cell_radius, _get_effective_handles())
+
+func _get_effective_handles() -> Array:
+	var eff: Array = []
+	for h in _handles:
+		eff.append(h * _evo_scale)
+	return eff
 
 func _init_shape() -> void:
 	_membrane_points.clear()
+	var eff_handles: Array = _get_effective_handles()
 	for i in range(NUM_MEMBRANE_PTS):
 		var angle: float = TAU * i / NUM_MEMBRANE_PTS
-		# Bulge widens the perpendicular axis (sin component = top/bottom)
-		var bulge_factor: float = 1.0 + (absf(sin(angle)) * (_bulge - 1.0))
-		var rx: float = _cell_radius * _elongation + randf_range(-1.5, 1.5)
-		var ry: float = _cell_radius * bulge_factor + randf_range(-1.5, 1.5)
-		_membrane_points.append(Vector2(cos(angle) * rx, sin(angle) * ry))
+		var r: float = SnapPointSystem.get_radius_at_angle(angle, _cell_radius, eff_handles) + randf_range(-1.5, 1.5)
+		_membrane_points.append(Vector2(cos(angle) * r, sin(angle) * r))
 
 	# Tightened organelles — stay in center 40% to avoid eye area
 	_organelle_positions.clear()
 	for i in range(NUM_ORGANELLES):
 		var a: float = randf() * TAU
-		var dx: float = randf_range(2.0, _cell_radius * _elongation * 0.35)
-		var dy: float = randf_range(2.0, _cell_radius * 0.35)
+		var max_r: float = _cell_radius * 0.35
+		var dx: float = randf_range(2.0, max_r)
+		var dy: float = randf_range(2.0, max_r)
 		_organelle_positions.append(Vector2(cos(a) * dx, sin(a) * dy))
 
 	_cilia_angles.clear()
@@ -86,14 +97,17 @@ func _draw() -> void:
 
 	# Outer glow
 	var glow_a: float = 0.06 + 0.04 * sin(_time * 2.0)
-	_draw_ellipse_at(dc, _cell_radius * _elongation * 2.2 * s, _cell_radius * 2.2 * s, Color(glow_col.r, glow_col.g, glow_col.b, glow_a))
+	var avg_r: float = _cell_radius * _evo_scale * 2.2
+	_draw_ellipse_at(dc, avg_r * s, avg_r * s, Color(glow_col.r, glow_col.g, glow_col.b, glow_a))
 
 	# Cilia — use cilia_color
+	var eff_handles: Array = _get_effective_handles()
 	for i in range(NUM_CILIA):
 		var base_angle: float = _cilia_angles[i]
 		var wave: float = sin(_time * 6.0 + i * 1.3) * 0.15
 		var angle: float = base_angle + wave
-		var base_pt: Vector2 = dc + Vector2(cos(base_angle) * _cell_radius * _elongation, sin(base_angle) * _cell_radius) * s
+		var cilia_r: float = SnapPointSystem.get_radius_at_angle(base_angle, _cell_radius, eff_handles)
+		var base_pt: Vector2 = dc + Vector2(cos(base_angle) * cilia_r, sin(base_angle) * cilia_r) * s
 		var tip_len: float = (8.0 + 3.0 * sin(_time * 5.0 + i)) * s
 		var tip_pt: Vector2 = base_pt + Vector2(cos(angle) * tip_len, sin(angle) * tip_len)
 		draw_line(base_pt, tip_pt, Color(cilia_col.r * 1.1, cilia_col.g * 1.1, cilia_col.b * 1.1, 0.5), 1.2 * s * 0.4, true)
@@ -130,6 +144,9 @@ func _draw() -> void:
 	# Face (eyes only — no mouth)
 	_draw_face(dc)
 
+	# Morph handles (in editor CUSTOMIZE mode)
+	draw_morph_handles_overlay(dc)
+
 	# Blueprint annotations (drawn on top of creature)
 	_draw_annotations(dc, s)
 
@@ -139,8 +156,10 @@ func _draw() -> void:
 
 func _draw_direction_indicator(s: float, dc: Vector2) -> void:
 	# Arrow pointing in the forward (+X) direction
-	var arrow_start: Vector2 = dc + Vector2(_cell_radius * _elongation * 1.4 * s, 0)
-	var arrow_end: Vector2 = dc + Vector2(_cell_radius * _elongation * 1.8 * s, 0)
+	var front_r: float = _get_handle_radius_at_angle(0.0)
+	var back_r: float = _get_handle_radius_at_angle(PI)
+	var arrow_start: Vector2 = dc + Vector2(front_r * 1.4 * s, 0)
+	var arrow_end: Vector2 = dc + Vector2(front_r * 1.8 * s, 0)
 	var arrow_col: Color = Color(0.4, 0.8, 1.0, 0.4 + 0.15 * sin(_time * 2.0))
 
 	# Arrow shaft
@@ -157,11 +176,12 @@ func _draw_direction_indicator(s: float, dc: Vector2) -> void:
 	draw_string(font, label_pos, "FRONT", HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(0.4, 0.8, 1.0, 0.5))
 
 	# BACK label on opposite side
-	var back_pos: Vector2 = dc + Vector2(-_cell_radius * _elongation * 1.6 * s, 4)
+	var back_pos: Vector2 = dc + Vector2(-back_r * 1.6 * s, 4)
 	draw_string(font, back_pos, "BACK", HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(0.4, 0.6, 0.7, 0.3))
 
 func _draw_mutations_at_angles(dc: Vector2) -> void:
 	var s: float = preview_scale
+	var eff_handles: Array = _get_effective_handles()
 	for m in GameManager.active_mutations:
 		var mid: String = m.get("id", "")
 		var vis: String = m.get("visual", "")
@@ -173,7 +193,7 @@ func _draw_mutations_at_angles(dc: Vector2) -> void:
 		var mirrored: bool = placement.get("mirrored", false)
 		var mut_scale: float = placement.get("scale", 1.0)
 		var rot_offset: float = placement.get("rotation_offset", 0.0)
-		var pos: Vector2 = SnapPointSystem.angle_to_perimeter_position(angle, _cell_radius, _elongation, distance) * s
+		var pos: Vector2 = SnapPointSystem.angle_to_perimeter_position_morphed(angle, _cell_radius, eff_handles, distance) * s
 		var outward_rot: float = SnapPointSystem.get_outward_rotation(angle) + rot_offset
 		# Draw with oriented transform
 		draw_set_transform(dc + pos, outward_rot, Vector2(s * 0.8 * mut_scale, s * 0.8 * mut_scale))
@@ -182,7 +202,7 @@ func _draw_mutations_at_angles(dc: Vector2) -> void:
 		# Draw mirrored copy
 		if mirrored:
 			var mirror_angle: float = SnapPointSystem.get_mirror_angle(angle)
-			var mpos: Vector2 = SnapPointSystem.angle_to_perimeter_position(mirror_angle, _cell_radius, _elongation, distance) * s
+			var mpos: Vector2 = SnapPointSystem.angle_to_perimeter_position_morphed(mirror_angle, _cell_radius, eff_handles, distance) * s
 			var mirror_rot: float = SnapPointSystem.get_outward_rotation(mirror_angle) - rot_offset
 			draw_set_transform(dc + mpos, mirror_rot, Vector2(s * 0.8 * mut_scale, s * 0.8 * mut_scale))
 			_draw_mutation_icon(vis, Vector2.ZERO, 1.0)
@@ -190,7 +210,9 @@ func _draw_mutations_at_angles(dc: Vector2) -> void:
 
 func _draw_symmetry_line(dc: Vector2, s: float) -> void:
 	# Pulsing dashed horizontal line through center (front-to-back axis)
-	var line_len: float = _cell_radius * _elongation * 2.0 * s
+	var front_r: float = _get_handle_radius_at_angle(0.0)
+	var back_r: float = _get_handle_radius_at_angle(PI)
+	var line_len: float = (front_r + back_r) * s
 	var dash_len: float = 8.0
 	var gap_len: float = 6.0
 	var alpha: float = 0.2 + 0.1 * sin(_time * 2.5)
@@ -325,163 +347,138 @@ func _draw_face(dc: Vector2) -> void:
 	var s: float = preview_scale
 	var custom: Dictionary = GameManager.creature_customization
 	var iris_color: Color = custom.get("iris_color", Color(0.2, 0.5, 0.9))
-	var eye_style: String = custom.get("eye_style", "anime")
-	var eye_size_val: float = custom.get("eye_size", 3.5)
-	var left_x: float = custom.get("eye_left_x", -0.15)
-	var left_y: float = custom.get("eye_left_y", -0.25)
-	var right_x: float = custom.get("eye_right_x", -0.15)
-	var right_y: float = custom.get("eye_right_y", 0.25)
+	var eyes: Array = GameManager.get_eyes()
 
-	# Eye position from normalized x/y coordinates
-	var left_eye: Vector2 = dc + Vector2(left_x, left_y) * _cell_radius * s
-	var right_eye: Vector2 = dc + Vector2(right_x, right_y) * _cell_radius * s
-	var eye_r: float = eye_size_val * s * 0.3  # Scale by eye_size from customization
-	var iris_r: float = eye_r * 0.65
-	var pupil_r: float = eye_r * 0.32
+	for eye_data in eyes:
+		var ex: float = eye_data.get("x", 0.0)
+		var ey: float = eye_data.get("y", 0.0)
+		var eye_size_val: float = eye_data.get("size", 3.5)
+		var eye_style: String = eye_data.get("style", "anime")
+		var ep: Vector2 = dc + Vector2(ex, ey) * _cell_radius * s
+		var eye_r: float = eye_size_val * s * 0.3
+		var iris_r: float = eye_r * 0.65
+		var pupil_r: float = eye_r * 0.32
+		_draw_single_eye(eye_style, ep, eye_r, iris_r, pupil_r, iris_color)
 
+func _draw_single_eye(eye_style: String, ep: Vector2, eye_r: float, iris_r: float, pupil_r: float, iris_color: Color) -> void:
+	var s: float = preview_scale
 	match eye_style:
 		"anime":
-			for ep: Vector2 in [left_eye, right_eye]:
-				draw_circle(ep, eye_r, Color(1, 1, 1, 0.95))
-				draw_circle(ep, iris_r, iris_color)
-				draw_circle(ep, pupil_r, Color(0.02, 0.02, 0.08, 1.0))
-				draw_circle(ep + Vector2(-1, -1) * s * 0.3, 1.0 * s * 0.3, Color(1, 1, 1, 0.7))
-				draw_circle(ep + Vector2(0.8, 0.5) * s * 0.3, 0.5 * s * 0.3, Color(1, 1, 1, 0.4))
+			draw_circle(ep, eye_r, Color(1, 1, 1, 0.95))
+			draw_circle(ep, iris_r, iris_color)
+			draw_circle(ep, pupil_r, Color(0.02, 0.02, 0.08, 1.0))
+			draw_circle(ep + Vector2(-1, -1) * s * 0.3, 1.0 * s * 0.3, Color(1, 1, 1, 0.7))
+			draw_circle(ep + Vector2(0.8, 0.5) * s * 0.3, 0.5 * s * 0.3, Color(1, 1, 1, 0.4))
 		"round":
-			for ep: Vector2 in [left_eye, right_eye]:
-				draw_circle(ep, eye_r * 0.8, Color(1, 1, 1, 0.95))
-				draw_circle(ep, pupil_r * 1.2, Color(0.02, 0.02, 0.08, 1.0))
+			draw_circle(ep, eye_r * 0.8, Color(1, 1, 1, 0.95))
+			draw_circle(ep, pupil_r * 1.2, Color(0.02, 0.02, 0.08, 1.0))
 		"compound":
-			for ep: Vector2 in [left_eye, right_eye]:
-				for row in range(2):
-					for col in range(2):
-						var sub: Vector2 = ep + Vector2((col - 0.5) * eye_r * 0.5, (row - 0.5) * eye_r * 0.5)
-						draw_circle(sub, eye_r * 0.3, Color(iris_color.r, iris_color.g, iris_color.b, 0.7))
-						draw_circle(sub, pupil_r * 0.5, Color(0.02, 0.02, 0.08, 0.9))
+			for row in range(2):
+				for col in range(2):
+					var sub: Vector2 = ep + Vector2((col - 0.5) * eye_r * 0.5, (row - 0.5) * eye_r * 0.5)
+					draw_circle(sub, eye_r * 0.3, Color(iris_color.r, iris_color.g, iris_color.b, 0.7))
+					draw_circle(sub, pupil_r * 0.5, Color(0.02, 0.02, 0.08, 0.9))
 		"googly":
-			for ep: Vector2 in [left_eye, right_eye]:
-				draw_circle(ep, eye_r * 1.1, Color(1, 1, 1, 0.95))
-				var wobble: Vector2 = Vector2(sin(_time * 5.0 + ep.y), cos(_time * 4.0 + ep.x)) * eye_r * 0.3
-				draw_circle(ep + wobble, pupil_r * 1.5, Color(0.02, 0.02, 0.08, 1.0))
+			draw_circle(ep, eye_r * 1.1, Color(1, 1, 1, 0.95))
+			var wobble: Vector2 = Vector2(sin(_time * 5.0 + ep.y), cos(_time * 4.0 + ep.x)) * eye_r * 0.3
+			draw_circle(ep + wobble, pupil_r * 1.5, Color(0.02, 0.02, 0.08, 1.0))
 		"slit":
-			for ep: Vector2 in [left_eye, right_eye]:
-				draw_circle(ep, eye_r * 0.9, Color(iris_color.r, iris_color.g, iris_color.b, 0.8))
-				draw_line(ep + Vector2(0, -pupil_r * 1.5), ep + Vector2(0, pupil_r * 1.5), Color(0.02, 0.02, 0.08, 1.0), pupil_r * 0.6, true)
+			draw_circle(ep, eye_r * 0.9, Color(iris_color.r, iris_color.g, iris_color.b, 0.8))
+			draw_line(ep + Vector2(0, -pupil_r * 1.5), ep + Vector2(0, pupil_r * 1.5), Color(0.02, 0.02, 0.08, 1.0), pupil_r * 0.6, true)
 		"lashed":
-			for ep: Vector2 in [left_eye, right_eye]:
-				draw_circle(ep, eye_r, Color(1, 1, 1, 0.95))
-				draw_circle(ep, iris_r, Color(iris_color.r * 0.9, iris_color.g * 0.7, iris_color.b, 0.95))
-				draw_circle(ep, pupil_r, Color(0.02, 0.02, 0.08, 1.0))
-				draw_circle(ep + Vector2(-1, -1) * s * 0.3, 1.0 * s * 0.3, Color(1, 1, 1, 0.7))
-				# Eyelashes (3 on top)
-				for i in range(3):
-					var la: float = -PI * 0.6 + i * PI * 0.3
-					var lash_base: Vector2 = ep + Vector2(cos(la), sin(la)) * eye_r
-					var lash_tip: Vector2 = ep + Vector2(cos(la), sin(la)) * (eye_r + 3.0 * s * 0.3)
-					draw_line(lash_base, lash_tip, Color(0.1, 0.1, 0.15, 0.9), 1.2, true)
-				# Bottom lash line
-				draw_arc(ep, eye_r, PI * 0.15, PI * 0.85, 6, Color(0.1, 0.1, 0.15, 0.5), 0.8, true)
+			draw_circle(ep, eye_r, Color(1, 1, 1, 0.95))
+			draw_circle(ep, iris_r, Color(iris_color.r * 0.9, iris_color.g * 0.7, iris_color.b, 0.95))
+			draw_circle(ep, pupil_r, Color(0.02, 0.02, 0.08, 1.0))
+			draw_circle(ep + Vector2(-1, -1) * s * 0.3, 1.0 * s * 0.3, Color(1, 1, 1, 0.7))
+			for i in range(3):
+				var la: float = -PI * 0.6 + i * PI * 0.3
+				var lash_base: Vector2 = ep + Vector2(cos(la), sin(la)) * eye_r
+				var lash_tip: Vector2 = ep + Vector2(cos(la), sin(la)) * (eye_r + 3.0 * s * 0.3)
+				draw_line(lash_base, lash_tip, Color(0.1, 0.1, 0.15, 0.9), 1.2, true)
+			draw_arc(ep, eye_r, PI * 0.15, PI * 0.85, 6, Color(0.1, 0.1, 0.15, 0.5), 0.8, true)
 		"fierce":
-			for ep: Vector2 in [left_eye, right_eye]:
-				# Angular eye shape
-				var hw: float = eye_r * 1.1
-				var hh: float = eye_r * 0.6
-				var eye_pts: PackedVector2Array = PackedVector2Array([
-					ep + Vector2(-hw, 0),
-					ep + Vector2(-hw * 0.5, -hh),
-					ep + Vector2(hw * 0.7, -hh * 0.6),
-					ep + Vector2(hw, 0),
-					ep + Vector2(hw * 0.5, hh * 0.7),
-					ep + Vector2(-hw * 0.4, hh * 0.5),
-				])
-				draw_colored_polygon(eye_pts, Color(1, 1, 1, 0.9))
-				draw_circle(ep + Vector2(hw * 0.1, 0), iris_r * 0.8, Color(iris_color.r, iris_color.g * 0.7, iris_color.b * 0.5, 0.95))
-				draw_circle(ep + Vector2(hw * 0.1, 0), pupil_r, Color(0.02, 0.02, 0.08, 1.0))
-				# Heavy brow line
-				draw_line(ep + Vector2(-hw, -hh * 0.9), ep + Vector2(hw * 0.8, -hh * 1.1), Color(0.12, 0.12, 0.18, 0.85), 2.0, true)
+			var hw: float = eye_r * 1.1
+			var hh: float = eye_r * 0.6
+			var eye_pts: PackedVector2Array = PackedVector2Array([
+				ep + Vector2(-hw, 0),
+				ep + Vector2(-hw * 0.5, -hh),
+				ep + Vector2(hw * 0.7, -hh * 0.6),
+				ep + Vector2(hw, 0),
+				ep + Vector2(hw * 0.5, hh * 0.7),
+				ep + Vector2(-hw * 0.4, hh * 0.5),
+			])
+			draw_colored_polygon(eye_pts, Color(1, 1, 1, 0.9))
+			draw_circle(ep + Vector2(hw * 0.1, 0), iris_r * 0.8, Color(iris_color.r, iris_color.g * 0.7, iris_color.b * 0.5, 0.95))
+			draw_circle(ep + Vector2(hw * 0.1, 0), pupil_r, Color(0.02, 0.02, 0.08, 1.0))
+			draw_line(ep + Vector2(-hw, -hh * 0.9), ep + Vector2(hw * 0.8, -hh * 1.1), Color(0.12, 0.12, 0.18, 0.85), 2.0, true)
 		"dot":
-			for ep: Vector2 in [left_eye, right_eye]:
-				draw_circle(ep, eye_r * 0.5, Color(0.02, 0.02, 0.1, 0.95))
-				draw_circle(ep + Vector2(-0.5, -0.5) * s * 0.2, 0.8 * s * 0.3, Color(1, 1, 1, 0.4))
+			draw_circle(ep, eye_r * 0.5, Color(0.02, 0.02, 0.1, 0.95))
+			draw_circle(ep + Vector2(-0.5, -0.5) * s * 0.2, 0.8 * s * 0.3, Color(1, 1, 1, 0.4))
 		"star":
-			for ep: Vector2 in [left_eye, right_eye]:
-				draw_circle(ep, eye_r, Color(1, 1, 1, 0.9))
-				# Star pupil
-				var star_pts: PackedVector2Array = PackedVector2Array()
-				for i in range(10):
-					var a: float = -PI * 0.5 + TAU * i / 10.0
-					var r_v: float = iris_r if i % 2 == 0 else iris_r * 0.4
-					star_pts.append(ep + Vector2(cos(a) * r_v, sin(a) * r_v))
-				draw_colored_polygon(star_pts, Color(iris_color.r, iris_color.g * 0.8, iris_color.b * 0.3, 0.9))
-				draw_circle(ep, pupil_r * 0.8, Color(0.02, 0.02, 0.08, 0.95))
-				draw_circle(ep + Vector2(-1, -1) * s * 0.2, 0.7 * s * 0.2, Color(1, 1, 1, 0.6))
+			draw_circle(ep, eye_r, Color(1, 1, 1, 0.9))
+			var star_pts: PackedVector2Array = PackedVector2Array()
+			for i in range(10):
+				var a: float = -PI * 0.5 + TAU * i / 10.0
+				var r_v: float = iris_r if i % 2 == 0 else iris_r * 0.4
+				star_pts.append(ep + Vector2(cos(a) * r_v, sin(a) * r_v))
+			draw_colored_polygon(star_pts, Color(iris_color.r, iris_color.g * 0.8, iris_color.b * 0.3, 0.9))
+			draw_circle(ep, pupil_r * 0.8, Color(0.02, 0.02, 0.08, 0.95))
+			draw_circle(ep + Vector2(-1, -1) * s * 0.2, 0.7 * s * 0.2, Color(1, 1, 1, 0.6))
 		"hypnotize":
-			for ep: Vector2 in [left_eye, right_eye]:
-				draw_circle(ep, eye_r, Color(1, 1, 1, 0.9))
-				# Concentric rings alternating iris_color and dark, pulsing outward
-				var num_rings: int = 5
-				for ring_i in range(num_rings, 0, -1):
-					var ring_t: float = float(ring_i) / float(num_rings)
-					var ring_r: float = iris_r * ring_t
-					var phase: float = _time * 2.0 + ring_i * 0.5
-					var pulse: float = 0.8 + 0.2 * sin(phase)
-					var ring_col: Color
-					if ring_i % 2 == 0:
-						ring_col = Color(iris_color.r * pulse, iris_color.g * pulse, iris_color.b * pulse, 0.9)
-					else:
-						ring_col = Color(0.05, 0.02, 0.1, 0.85)
-					draw_circle(ep, ring_r, ring_col)
-				draw_circle(ep, pupil_r * 0.3, Color(1, 1, 1, 0.8))
+			draw_circle(ep, eye_r, Color(1, 1, 1, 0.9))
+			var num_rings: int = 5
+			for ring_i in range(num_rings, 0, -1):
+				var ring_t: float = float(ring_i) / float(num_rings)
+				var ring_r: float = iris_r * ring_t
+				var phase: float = _time * 2.0 + ring_i * 0.5
+				var pulse: float = 0.8 + 0.2 * sin(phase)
+				var ring_col: Color
+				if ring_i % 2 == 0:
+					ring_col = Color(iris_color.r * pulse, iris_color.g * pulse, iris_color.b * pulse, 0.9)
+				else:
+					ring_col = Color(0.05, 0.02, 0.1, 0.85)
+				draw_circle(ep, ring_r, ring_col)
+			draw_circle(ep, pupil_r * 0.3, Color(1, 1, 1, 0.8))
 		"x_eyes":
-			for ep: Vector2 in [left_eye, right_eye]:
-				draw_circle(ep, eye_r, Color(1, 1, 1, 0.85))
-				# Two diagonal lines crossing (cartoon dazed/dead)
-				var line_len: float = eye_r * 0.65
-				draw_line(ep + Vector2(-line_len, -line_len), ep + Vector2(line_len, line_len), Color(0.1, 0.1, 0.15, 0.95), eye_r * 0.2, true)
-				draw_line(ep + Vector2(line_len, -line_len), ep + Vector2(-line_len, line_len), Color(0.1, 0.1, 0.15, 0.95), eye_r * 0.2, true)
+			draw_circle(ep, eye_r, Color(1, 1, 1, 0.85))
+			var line_len: float = eye_r * 0.65
+			draw_line(ep + Vector2(-line_len, -line_len), ep + Vector2(line_len, line_len), Color(0.1, 0.1, 0.15, 0.95), eye_r * 0.2, true)
+			draw_line(ep + Vector2(line_len, -line_len), ep + Vector2(-line_len, line_len), Color(0.1, 0.1, 0.15, 0.95), eye_r * 0.2, true)
 		"heart":
-			for ep: Vector2 in [left_eye, right_eye]:
-				draw_circle(ep, eye_r, Color(1, 1, 1, 0.9))
-				# Heart-shaped iris
-				var heart_pts: PackedVector2Array = PackedVector2Array()
-				var heart_scale: float = iris_r * 0.18
-				for i in range(24):
-					var t: float = float(i) / 24.0 * TAU
-					var hx: float = heart_scale * (sin(t) * sin(t) * sin(t)) * 16.0
-					var hy: float = -heart_scale * (13.0 * cos(t) - 5.0 * cos(2.0 * t) - 2.0 * cos(3.0 * t) - cos(4.0 * t))
-					heart_pts.append(ep + Vector2(hx, hy * 0.5 - iris_r * 0.1))
-				var heart_col: Color = Color(minf(iris_color.r + 0.3, 1.0), iris_color.g * 0.4, minf(iris_color.b * 0.5 + 0.2, 1.0), 0.9)
-				draw_colored_polygon(heart_pts, heart_col)
-				# Anime highlight
-				draw_circle(ep + Vector2(-1.5, -1.5) * s * 0.25, 1.0 * s * 0.25, Color(1, 1, 1, 0.65))
+			draw_circle(ep, eye_r, Color(1, 1, 1, 0.9))
+			var heart_pts: PackedVector2Array = PackedVector2Array()
+			var heart_scale: float = iris_r * 0.18
+			for i in range(24):
+				var t: float = float(i) / 24.0 * TAU
+				var hx: float = heart_scale * (sin(t) * sin(t) * sin(t)) * 16.0
+				var hy: float = -heart_scale * (13.0 * cos(t) - 5.0 * cos(2.0 * t) - 2.0 * cos(3.0 * t) - cos(4.0 * t))
+				heart_pts.append(ep + Vector2(hx, hy * 0.5 - iris_r * 0.1))
+			var heart_col: Color = Color(minf(iris_color.r + 0.3, 1.0), iris_color.g * 0.4, minf(iris_color.b * 0.5 + 0.2, 1.0), 0.9)
+			draw_colored_polygon(heart_pts, heart_col)
+			draw_circle(ep + Vector2(-1.5, -1.5) * s * 0.25, 1.0 * s * 0.25, Color(1, 1, 1, 0.65))
 		"spiral":
-			for ep: Vector2 in [left_eye, right_eye]:
-				draw_circle(ep, eye_r, Color(iris_color.r * 0.3, iris_color.g * 0.3, iris_color.b * 0.5, 0.8))
-				# Rotating Archimedes spiral pupil
-				var prev_sp: Vector2 = ep
-				var spiral_segs: int = 28
-				for i in range(spiral_segs):
-					var t: float = float(i + 1) / float(spiral_segs)
-					var spiral_a: float = t * TAU * 2.5 + _time * 3.0
-					var spiral_r: float = t * iris_r * 0.85
-					var sp: Vector2 = ep + Vector2(cos(spiral_a) * spiral_r, sin(spiral_a) * spiral_r)
-					draw_line(prev_sp, sp, Color(iris_color.r, iris_color.g, iris_color.b, 0.9), maxf(2.0 * s * 0.15 * (1.0 - t * 0.5), 0.8), true)
-					prev_sp = sp
-				draw_circle(ep, pupil_r * 0.25, Color(1, 1, 1, 0.7))
+			draw_circle(ep, eye_r, Color(iris_color.r * 0.3, iris_color.g * 0.3, iris_color.b * 0.5, 0.8))
+			var prev_sp: Vector2 = ep
+			var spiral_segs: int = 28
+			for i in range(spiral_segs):
+				var t: float = float(i + 1) / float(spiral_segs)
+				var spiral_a: float = t * TAU * 2.5 + _time * 3.0
+				var spiral_r: float = t * iris_r * 0.85
+				var sp: Vector2 = ep + Vector2(cos(spiral_a) * spiral_r, sin(spiral_a) * spiral_r)
+				draw_line(prev_sp, sp, Color(iris_color.r, iris_color.g, iris_color.b, 0.9), maxf(2.0 * s * 0.15 * (1.0 - t * 0.5), 0.8), true)
+				prev_sp = sp
+			draw_circle(ep, pupil_r * 0.25, Color(1, 1, 1, 0.7))
 		"alien":
-			for ep: Vector2 in [left_eye, right_eye]:
-				# Large almond/oval shape (tall, narrow)
-				var alien_pts: PackedVector2Array = PackedVector2Array()
-				for i in range(20):
-					var t: float = float(i) / 20.0 * TAU
-					var ax: float = cos(t) * eye_r * 0.55
-					var ay: float = sin(t) * eye_r * 1.2
-					alien_pts.append(ep + Vector2(ax, ay))
-				draw_colored_polygon(alien_pts, Color(0.03, 0.08, 0.06, 0.95))
-				# Subtle green-blue sheen
-				var sheen_a: float = 0.15 + 0.1 * sin(_time * 1.5 + ep.x * 0.1)
-				draw_arc(ep, eye_r * 0.7, -PI * 0.3, PI * 0.3, 8, Color(0.1, 0.8, 0.6, sheen_a), eye_r * 0.15, true)
-				draw_circle(ep + Vector2(0, -eye_r * 0.15), pupil_r * 0.3, Color(0.2, 0.9, 0.7, 0.4))
+			var alien_pts: PackedVector2Array = PackedVector2Array()
+			for i in range(20):
+				var t: float = float(i) / 20.0 * TAU
+				var ax: float = cos(t) * eye_r * 0.55
+				var ay: float = sin(t) * eye_r * 1.2
+				alien_pts.append(ep + Vector2(ax, ay))
+			draw_colored_polygon(alien_pts, Color(0.03, 0.08, 0.06, 0.95))
+			var sheen_a: float = 0.15 + 0.1 * sin(_time * 1.5 + ep.x * 0.1)
+			draw_arc(ep, eye_r * 0.7, -PI * 0.3, PI * 0.3, 8, Color(0.1, 0.8, 0.6, sheen_a), eye_r * 0.15, true)
+			draw_circle(ep + Vector2(0, -eye_r * 0.15), pupil_r * 0.3, Color(0.2, 0.9, 0.7, 0.4))
 
 func _draw_annotations(dc: Vector2, s: float) -> void:
 	var font := UIConstants.get_display_font()
@@ -489,14 +486,16 @@ func _draw_annotations(dc: Vector2, s: float) -> void:
 	var label_col: Color = Color(0.4, 0.7, 0.9, 0.5)
 
 	# MEMBRANE callout — from top of cell outward
-	var membrane_pt: Vector2 = dc + Vector2(0, -_cell_radius * s * 1.1)
-	var membrane_end: Vector2 = dc + Vector2(-_cell_radius * _elongation * s * 0.8, -_cell_radius * s * 1.8)
+	var top_r: float = _get_handle_radius_at_angle(-PI * 0.5)
+	var membrane_pt: Vector2 = dc + Vector2(0, -top_r * s * 1.1)
+	var membrane_end: Vector2 = dc + Vector2(-_cell_radius * s * 0.8, -top_r * s * 1.8)
 	draw_line(membrane_pt, membrane_end, ann_col, 1.0, true)
 	draw_circle(membrane_pt, 2.0, ann_col)
 	draw_string(font, membrane_end + Vector2(-30, -4), "MEMBRANE", HORIZONTAL_ALIGNMENT_LEFT, -1, 7, label_col)
 
 	# CORE callout — from center
-	var core_end: Vector2 = dc + Vector2(_cell_radius * _elongation * s * 0.7, _cell_radius * s * 1.5)
+	var front_r: float = _get_handle_radius_at_angle(0.0)
+	var core_end: Vector2 = dc + Vector2(front_r * s * 0.7, _cell_radius * s * 1.5)
 	draw_line(dc, core_end, ann_col, 1.0, true)
 	draw_circle(dc, 2.0, ann_col)
 	draw_string(font, core_end + Vector2(4, -2), "CORE", HORIZONTAL_ALIGNMENT_LEFT, -1, 7, label_col)
@@ -512,7 +511,8 @@ func _draw_annotations(dc: Vector2, s: float) -> void:
 		var placement: Dictionary = GameManager.mutation_placements.get(mid, {})
 		var angle: float = placement.get("angle", SnapPointSystem.get_default_angle_for_visual(vis))
 		var distance: float = placement.get("distance", SnapPointSystem.get_default_distance_for_visual(vis))
-		var pos: Vector2 = SnapPointSystem.angle_to_perimeter_position(angle, _cell_radius, _elongation, distance) * s
+		var eff_h: Array = _get_effective_handles()
+		var pos: Vector2 = SnapPointSystem.angle_to_perimeter_position_morphed(angle, _cell_radius, eff_h, distance) * s
 		# Stagger annotation endpoints
 		var offset_angle: float = PI * 0.3 + mut_idx * PI * 0.4
 		var end_pt: Vector2 = dc + pos + Vector2(cos(offset_angle), sin(offset_angle)) * 45.0
@@ -522,6 +522,30 @@ func _draw_annotations(dc: Vector2, s: float) -> void:
 		mut_idx += 1
 		if mut_idx >= 3:
 			break  # Max 3 mutation annotations to avoid clutter
+
+func draw_morph_handles_overlay(dc: Vector2) -> void:
+	## Draw 8 diamond-shaped morph handles on the membrane (called by evolution_ui in CUSTOMIZE mode)
+	if not show_morph_handles:
+		return
+	var s: float = preview_scale
+	var eff_handles: Array = _get_effective_handles()
+	for i in range(8):
+		var angle: float = TAU * i / 8.0
+		var r: float = SnapPointSystem.get_radius_at_angle(angle, _cell_radius, eff_handles)
+		var pos: Vector2 = dc + Vector2(cos(angle), sin(angle)) * r * s
+		var handle_size: float = 5.0
+		var col: Color = Color(0.3, 0.9, 1.0, 0.6)
+		if dragging_morph_handle == i:
+			col = Color(0.5, 1.0, 1.0, 0.9)
+			handle_size = 7.0
+		var pts: PackedVector2Array = PackedVector2Array([
+			pos + Vector2(0, -handle_size),
+			pos + Vector2(handle_size, 0),
+			pos + Vector2(0, handle_size),
+			pos + Vector2(-handle_size, 0),
+		])
+		draw_polygon(pts, [col])
+		draw_polyline(pts, Color(col.r, col.g, col.b, col.a * 0.6), 1.0, true)
 
 func _draw_ellipse_at(center: Vector2, rx: float, ry: float, color: Color, segments: int = 24) -> void:
 	if absf(rx - ry) < 0.5:

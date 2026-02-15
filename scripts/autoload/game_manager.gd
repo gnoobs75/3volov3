@@ -42,13 +42,20 @@ var creature_customization: Dictionary = {
 	"cilia_color": Color(0.4, 0.7, 1.0),
 	"organelle_tint": Color(0.3, 0.8, 0.5),
 	"eye_style": "anime",   # round, anime, compound, googly, slit, lashed, fierce, dot, star
-	"eye_left_x": -0.15,    # Normalized X (-1 to 1) relative to cell radius
-	"eye_left_y": -0.25,    # Normalized Y (-1 to 1)
-	"eye_right_x": -0.15,   # Mirrors left_x (same x when symmetry on)
-	"eye_right_y": 0.25,    # Mirrors left_y (negated y when symmetry on)
-	"eye_size": 3.5,        # Eye radius scale (2.0 to 6.0)
-	"body_elongation_offset": 0.0,  # User offset added to evolution-driven elongation (-0.5 to +0.5)
-	"body_bulge": 1.0,              # Mid-body width multiplier (0.5 to 2.0, 1.0 = normal)
+	"eye_left_x": -0.15,    # LEGACY — migrated to eyes[]
+	"eye_left_y": -0.25,    # LEGACY
+	"eye_right_x": -0.15,   # LEGACY
+	"eye_right_y": 0.25,    # LEGACY
+	"eye_size": 3.5,        # LEGACY — migrated to eyes[]
+	"body_elongation_offset": 0.0,  # LEGACY — migrated to body_handles
+	"body_bulge": 1.0,              # LEGACY — migrated to body_handles
+	# New: 8 morph handles at 45-degree intervals (radius multipliers, 0.5-2.0, default 1.0)
+	"body_handles": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+	# New: multi-eye array (max 6 eyes)
+	"eyes": [
+		{"x": -0.15, "y": -0.25, "size": 3.5, "style": "anime"},
+		{"x": -0.15, "y": 0.25, "size": 3.5, "style": "anime"},
+	],
 }
 
 # Mutation placement map: mutation_id -> {angle: float, distance: float, mirrored: bool, scale: float, rotation_offset: float}
@@ -111,6 +118,8 @@ const CATEGORY_LABELS: Dictionary = {
 
 func _ready() -> void:
 	_migrate_placements_if_needed()
+	_migrate_body_shape()
+	_migrate_eyes()
 
 func go_to_intro() -> void:
 	current_stage = Stage.INTRO
@@ -328,6 +337,90 @@ func update_body_elongation_offset(offset: float) -> void:
 
 func update_body_bulge(bulge: float) -> void:
 	creature_customization["body_bulge"] = clampf(bulge, 0.5, 2.0)
+
+# --- Body Morph Handles ---
+
+func get_body_handles() -> Array:
+	return creature_customization.get("body_handles", [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+
+func update_body_handle(index: int, value: float) -> void:
+	var handles: Array = get_body_handles()
+	if index >= 0 and index < handles.size():
+		handles[index] = clampf(value, 0.5, 2.0)
+		creature_customization["body_handles"] = handles
+
+func _migrate_body_shape() -> void:
+	## Convert old elongation_offset + bulge to 8 morph handles (if not already migrated)
+	var handles: Array = creature_customization.get("body_handles", [])
+	if handles.size() == 8:
+		# Check if all defaults — if old values differ, reconvert
+		var all_default: bool = true
+		for h in handles:
+			if absf(h - 1.0) > 0.01:
+				all_default = false
+				break
+		if not all_default:
+			return  # Already has custom handles
+	var elong: float = creature_customization.get("body_elongation_offset", 0.0)
+	var bulge: float = creature_customization.get("body_bulge", 1.0)
+	if absf(elong) < 0.01 and absf(bulge - 1.0) < 0.01:
+		return  # No old customization to migrate
+	var base_elong: float = 1.0 + elong
+	var new_handles: Array = []
+	for i in range(8):
+		var angle: float = TAU * i / 8.0
+		var bulge_factor: float = 1.0 + (absf(sin(angle)) * (bulge - 1.0))
+		var x_weight: float = absf(cos(angle))
+		var y_weight: float = absf(sin(angle))
+		new_handles.append(clampf(base_elong * x_weight + bulge_factor * y_weight, 0.5, 2.0))
+	creature_customization["body_handles"] = new_handles
+
+# --- Multi-Eye System ---
+
+func get_eyes() -> Array:
+	return creature_customization.get("eyes", [
+		{"x": -0.15, "y": -0.25, "size": 3.5, "style": "anime"},
+		{"x": -0.15, "y": 0.25, "size": 3.5, "style": "anime"},
+	])
+
+func add_eye(x: float, y: float) -> void:
+	var eyes: Array = get_eyes()
+	if eyes.size() >= 6:
+		return
+	var style: String = creature_customization.get("eye_style", "anime")
+	eyes.append({"x": x, "y": y, "size": 3.5, "style": style})
+	creature_customization["eyes"] = eyes
+
+func remove_eye(index: int) -> void:
+	var eyes: Array = get_eyes()
+	if index >= 0 and index < eyes.size() and eyes.size() > 1:
+		eyes.remove_at(index)
+		creature_customization["eyes"] = eyes
+
+func update_eye(index: int, data: Dictionary) -> void:
+	var eyes: Array = get_eyes()
+	if index >= 0 and index < eyes.size():
+		eyes[index].merge(data, true)
+		creature_customization["eyes"] = eyes
+
+func _migrate_eyes() -> void:
+	## Convert old eye_left_x/y + eye_right_x/y to eyes[] array
+	var eyes: Array = creature_customization.get("eyes", [])
+	if eyes.size() > 0:
+		# Check if eyes have actual custom placement or are just defaults
+		var first: Dictionary = eyes[0] if eyes.size() > 0 else {}
+		if first.has("x") and first.has("y"):
+			return  # Already migrated
+	var style: String = creature_customization.get("eye_style", "anime")
+	var sz: float = creature_customization.get("eye_size", 3.5)
+	creature_customization["eyes"] = [
+		{"x": creature_customization.get("eye_left_x", -0.15),
+		 "y": creature_customization.get("eye_left_y", -0.25),
+		 "size": sz, "style": style},
+		{"x": creature_customization.get("eye_right_x", -0.15),
+		 "y": creature_customization.get("eye_right_y", 0.25),
+		 "size": sz, "style": style},
+	]
 
 func get_sensory_tier() -> Dictionary:
 	return SENSORY_TIERS[sensory_level]

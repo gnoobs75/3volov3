@@ -14,14 +14,12 @@ var _wander_timer: float = 0.0
 var _colors: Dictionary = {}  # membrane_color, iris_color, glow_color, interior_color, cilia_color, organelle_tint
 var _mutations: Array = []  # Copy of GameManager.active_mutations
 var _placements: Dictionary = {}  # Copy of GameManager.mutation_placements
-var _elongation: float = 1.0
+var _handles: Array = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+var _evo_scale: float = 1.0
 var _cell_radius: float = 18.0
 
 # Randomized eyes (unique per NPC)
-var _eye_style: String = "anime"
-var _eye_angle: float = 0.0
-var _eye_spacing: float = 5.5
-var _eye_size: float = 3.5
+var _eyes: Array = []  # Array of {x, y, size, style}
 var _iris_color: Color = Color(0.2, 0.5, 0.9)
 
 # Procedural drawing state
@@ -82,37 +80,61 @@ func _copy_player_appearance() -> void:
 	}
 	_mutations = GameManager.active_mutations.duplicate(true)
 	_placements = GameManager.mutation_placements.duplicate(true)
-	_elongation = 1.0 + GameManager.evolution_level * 0.15
+	_handles = GameManager.get_body_handles().duplicate()
+	_evo_scale = 1.0 + GameManager.evolution_level * 0.08
 	# Check for larger_membrane mutation
 	for m in _mutations:
 		if m.get("visual", "") == "larger_membrane":
 			_cell_radius = 24.0
 
 func _randomize_eyes() -> void:
+	# Build eyes array based on player eye count but with randomized style/positions
+	var player_eyes: Array = GameManager.get_eyes()
+	var eye_count: int = clampi(player_eyes.size(), 1, 6)
 	# Pick a random style different from player if possible
 	var player_style: String = GameManager.creature_customization.get("eye_style", "anime")
 	var available: Array = EYE_STYLES.duplicate()
 	available.erase(player_style)
+	var chosen_style: String
 	if available.size() > 0:
-		_eye_style = available[randi() % available.size()]
+		chosen_style = available[randi() % available.size()]
 	else:
-		_eye_style = EYE_STYLES[randi() % EYE_STYLES.size()]
-	_eye_angle = randf_range(-0.4, 0.4)  # Roughly horizontal eyes
-	_eye_spacing = randf_range(3.5, 8.0)
-	_eye_size = randf_range(2.5, 5.5)
+		chosen_style = EYE_STYLES[randi() % EYE_STYLES.size()]
+	_eyes.clear()
+	for i in range(eye_count):
+		# Use player positions as base but add randomization
+		var base_eye: Dictionary = player_eyes[i] if i < player_eyes.size() else {"x": -0.15, "y": 0.0}
+		var rx: float = base_eye.get("x", -0.15) + randf_range(-0.05, 0.05)
+		var ry: float = base_eye.get("y", 0.0) + randf_range(-0.05, 0.05)
+		_eyes.append({
+			"x": rx,
+			"y": ry,
+			"size": randf_range(2.5, 5.5),
+			"style": chosen_style,
+		})
 	_iris_color = Color.from_hsv(randf(), randf_range(0.4, 0.9), randf_range(0.5, 1.0))
 
+func _get_effective_handles() -> Array:
+	var effective: Array = []
+	for h in _handles:
+		effective.append(h * _evo_scale)
+	return effective
+
+func _get_front_radius() -> float:
+	return _handles[0] * _evo_scale * _cell_radius if _handles.size() > 0 else _cell_radius
+
 func _init_procedural_shape() -> void:
+	var effective: Array = _get_effective_handles()
 	_membrane_points.clear()
 	for i in range(NUM_MEMBRANE_PTS):
 		var a: float = TAU * i / NUM_MEMBRANE_PTS
-		var r: float = _cell_radius + randf_range(-1.0, 1.0)
-		_membrane_points.append(Vector2(cos(a) * r * _elongation, sin(a) * r))
+		var r: float = SnapPointSystem.get_radius_at_angle(a, _cell_radius, effective) + randf_range(-1.0, 1.0)
+		_membrane_points.append(Vector2(cos(a) * r, sin(a) * r))
 	_organelle_positions.clear()
 	for i in range(NUM_ORGANELLES):
 		var a: float = TAU * i / NUM_ORGANELLES + randf_range(-0.3, 0.3)
 		var r: float = randf_range(3.0, _cell_radius * 0.6)
-		_organelle_positions.append(Vector2(cos(a) * r * _elongation, sin(a) * r))
+		_organelle_positions.append(Vector2(cos(a) * r, sin(a) * r))
 	_cilia_angles.clear()
 	for i in range(NUM_CILIA):
 		_cilia_angles.append(TAU * i / NUM_CILIA + randf_range(-0.15, 0.15))
@@ -263,10 +285,15 @@ func _get_player() -> Node2D:
 # ======================== DRAWING ========================
 
 func _draw() -> void:
+	var effective: Array = _get_effective_handles()
+
 	# Outer glow
 	var glow_col: Color = _colors.get("glow_color", Color(0.3, 0.7, 1.0))
 	var glow_alpha: float = 0.06 + 0.04 * sin(_time * 2.0)
-	_draw_ellipse(Vector2.ZERO, _cell_radius * _elongation * 2.0, _cell_radius * 2.0, Color(glow_col.r, glow_col.g, glow_col.b, glow_alpha))
+	var max_r: float = _cell_radius
+	for h in effective:
+		max_r = maxf(max_r, h * _cell_radius)
+	_draw_ellipse(Vector2.ZERO, max_r * 2.0, max_r * 2.0, Color(glow_col.r, glow_col.g, glow_col.b, glow_alpha))
 
 	# Cilia
 	var cilia_col: Color = _colors.get("cilia_color", Color(0.4, 0.7, 1.0))
@@ -274,7 +301,8 @@ func _draw() -> void:
 		var base_angle: float = _cilia_angles[i]
 		var wave: float = sin(_time * 6.0 + i * 1.3) * 0.2
 		var angle: float = base_angle + wave
-		var base_pt := Vector2(cos(base_angle) * _cell_radius * _elongation, sin(base_angle) * _cell_radius)
+		var cr: float = SnapPointSystem.get_radius_at_angle(base_angle, _cell_radius, effective)
+		var base_pt := Vector2(cos(base_angle) * cr, sin(base_angle) * cr)
 		var tip_len: float = 7.0 + 2.0 * sin(_time * 4.0 + i)
 		var tip_pt := base_pt + Vector2(cos(angle) * tip_len, sin(angle) * tip_len)
 		draw_line(base_pt, tip_pt, Color(cilia_col.r * 1.1, cilia_col.g, cilia_col.b, 0.6), 1.0, true)
@@ -339,13 +367,14 @@ func _draw_mutations() -> void:
 			var mirrored: bool = placement.get("mirrored", false)
 			var mut_scale: float = placement.get("scale", 1.0)
 			var rot_offset: float = placement.get("rotation_offset", 0.0)
-			var pos: Vector2 = SnapPointSystem.angle_to_perimeter_position(angle, _cell_radius, _elongation, distance)
+			var eff: Array = _get_effective_handles()
+			var pos: Vector2 = SnapPointSystem.angle_to_perimeter_position_morphed(angle, _cell_radius, eff, distance)
 			var outward_rot: float = SnapPointSystem.get_outward_rotation(angle) + rot_offset
 			draw_set_transform(pos, outward_rot, Vector2(mut_scale, mut_scale))
 			_draw_mutation_visual(vis)
 			if mirrored:
 				var mirror_angle: float = SnapPointSystem.get_mirror_angle(angle)
-				var mirror_pos: Vector2 = SnapPointSystem.angle_to_perimeter_position(mirror_angle, _cell_radius, _elongation, distance)
+				var mirror_pos: Vector2 = SnapPointSystem.angle_to_perimeter_position_morphed(mirror_angle, _cell_radius, eff, distance)
 				var mirror_rot: float = SnapPointSystem.get_outward_rotation(mirror_angle) - rot_offset
 				draw_set_transform(mirror_pos, mirror_rot, Vector2(mut_scale, mut_scale))
 				_draw_mutation_visual(vis)
@@ -408,7 +437,7 @@ func _draw_mut_bioluminescence() -> void:
 	draw_circle(Vector2.ZERO, _cell_radius * 1.6, Color(0.2, 0.8, 1.0, pulse * 0.08))
 
 func _draw_mut_flagellum() -> void:
-	var base := Vector2(-_cell_radius * _elongation - 2.0, 0)
+	var base := Vector2(-_get_front_radius() - 2.0, 0)
 	for i in range(12):
 		var t: float = float(i) / 11.0
 		var px: float = base.x - t * 24.0
@@ -484,19 +513,19 @@ func _draw_mut_absorption_villi() -> void:
 		draw_circle(tip, 1.0, Color(0.9, 0.7, 0.4, 0.5))
 
 func _draw_mut_front_spike() -> void:
-	var base := Vector2(_cell_radius * _elongation, 0)
+	var base := Vector2(_get_front_radius(), 0)
 	var tip := base + Vector2(10.0 + sin(_time * 3.0) * 1.5, 0)
 	draw_line(base, tip, Color(0.9, 0.2, 0.1, 0.7), 2.0, true)
 
 func _draw_mut_mandibles() -> void:
 	for side in [-1.0, 1.0]:
-		var base := Vector2(_cell_radius * _elongation * 0.8, side * 4.0)
+		var base := Vector2(_get_front_radius() * 0.8, side * 4.0)
 		var open: float = 0.3 + sin(_time * 2.0) * 0.15
 		var tip := base + Vector2(8.0, side * 6.0 * open)
 		draw_line(base, tip, Color(0.7, 0.5, 0.3, 0.7), 1.5, true)
 
 func _draw_mut_rear_stinger() -> void:
-	var base := Vector2(-_cell_radius * _elongation, 0)
+	var base := Vector2(-_get_front_radius(), 0)
 	var tip := base + Vector2(-10.0, sin(_time * 4.0) * 2.0)
 	draw_line(base, tip, Color(0.8, 0.2, 0.5, 0.7), 2.0, true)
 	draw_circle(tip, 2.0, Color(0.9, 0.3, 0.6, 0.5))
@@ -509,13 +538,13 @@ func _draw_mut_side_barbs() -> void:
 		draw_line(base, tip, Color(0.8, 0.4, 0.2, 0.6), 1.2, true)
 
 func _draw_mut_tail_club() -> void:
-	var base := Vector2(-_cell_radius * _elongation - 4.0, 0)
+	var base := Vector2(-_get_front_radius() - 4.0, 0)
 	var swing: float = sin(_time * 3.0) * 3.0
 	draw_circle(base + Vector2(-6.0, swing), 4.0, Color(0.5, 0.4, 0.3, 0.5))
 
 func _draw_mut_antenna() -> void:
 	for side in [-1.0, 1.0]:
-		var base := Vector2(_cell_radius * _elongation * 0.7, side * 3.0)
+		var base := Vector2(_get_front_radius() * 0.7, side * 3.0)
 		var tip := base + Vector2(12.0 + sin(_time * 2.0) * 1.0, side * 8.0 + sin(_time * 1.5 + side) * 2.0)
 		draw_line(base, tip, Color(0.5, 0.7, 0.4, 0.6), 1.0, true)
 		draw_circle(tip, 1.5, Color(0.6, 0.8, 0.5, 0.7))
@@ -527,14 +556,24 @@ func _draw_mut_generic(_vis: String) -> void:
 # ======================== FACE ========================
 
 func _draw_face() -> void:
-	var base_spacing: float = _eye_spacing * 1.1
-	var face_fwd: float = _cell_radius * (_elongation - 1.0) * 0.3
+	var face_fwd: float = _cell_radius * (_evo_scale - 1.0) * 0.3
 	var face_center := Vector2(_cell_radius * 0.2 + face_fwd, 0)
-	var perp := Vector2(-sin(_eye_angle), cos(_eye_angle))
-	var left_eye := face_center + perp * (-base_spacing * 0.4)
-	var right_eye := face_center + perp * (base_spacing * 0.4)
 
-	var eye_r: float = _eye_size * 1.3
+	# Build eye positions from _eyes array
+	var eye_positions: Array = []
+	var first_style: String = "anime"
+	if _eyes.size() > 0:
+		first_style = _eyes[0].get("style", "anime")
+		for eye_data in _eyes:
+			var ep := face_center + Vector2(eye_data.get("x", 0.0), eye_data.get("y", 0.0)) * _cell_radius
+			eye_positions.append(ep)
+	else:
+		# Fallback: two default eyes
+		eye_positions.append(face_center + Vector2(-0.15, -0.25) * _cell_radius)
+		eye_positions.append(face_center + Vector2(-0.15, 0.25) * _cell_radius)
+
+	var base_eye_size: float = _eyes[0].get("size", 3.5) if _eyes.size() > 0 else 3.5
+	var eye_r: float = base_eye_size * 1.3
 	var pupil_r: float = eye_r * 0.35
 	var iris_r: float = eye_r * 0.65
 	var eye_squash_y: float = 1.0
@@ -558,14 +597,13 @@ func _draw_face() -> void:
 		Mood.SILLY:
 			eye_r *= 1.2
 			pupil_r *= 1.4
-			# Cross-eyed
-			pupil_offset = Vector2(0, 0)  # Handled per-eye below
+			pupil_offset = Vector2(0, 0)
 		Mood.SURPRISED:
 			eye_r *= 1.4
 			pupil_r *= 0.5
 
 	# Eye style modifications
-	match _eye_style:
+	match first_style:
 		"round": iris_r = eye_r * 0.55; pupil_r *= 1.2
 		"compound": eye_r *= 0.7
 		"googly": eye_r *= 1.3; pupil_r *= 0.8; iris_r = eye_r * 0.5
@@ -586,19 +624,35 @@ func _draw_face() -> void:
 		look_dir = velocity.rotated(-rotation).normalized() * eye_r * 0.15
 
 	# Draw each eye
-	for idx in range(2):
-		var eye_pos: Vector2 = left_eye if idx == 0 else right_eye
-		var ew: float = eye_r
-		var eh: float = eye_r * eye_squash_y
+	for idx in range(eye_positions.size()):
+		var eye_pos: Vector2 = eye_positions[idx]
+		# Per-eye size if available
+		var per_eye_size: float = _eyes[idx].get("size", base_eye_size) if idx < _eyes.size() else base_eye_size
+		var per_eye_style: String = _eyes[idx].get("style", first_style) if idx < _eyes.size() else first_style
+		var cur_eye_r: float = per_eye_size * 1.3
+		# Apply mood scaling
+		if _mood == Mood.WAVE: cur_eye_r *= 1.15
+		elif _mood == Mood.SILLY: cur_eye_r *= 1.2
+		elif _mood == Mood.SURPRISED: cur_eye_r *= 1.4
+		# Apply style scaling
+		match per_eye_style:
+			"compound": cur_eye_r *= 0.7
+			"googly": cur_eye_r *= 1.3
+			"lashed": cur_eye_r *= 1.05
+			"fierce": cur_eye_r *= 1.1
+			"dot": cur_eye_r *= 0.5
+
+		var ew: float = cur_eye_r
+		var eh: float = cur_eye_r * eye_squash_y
 
 		# Silly cross-eyed offset
 		var local_pupil_offset := pupil_offset
 		if _mood == Mood.SILLY:
-			local_pupil_offset = Vector2(0, (1.0 if idx == 0 else -1.0) * eye_r * 0.3)
+			var side_sign: float = 1.0 if eye_pos.y > face_center.y else -1.0
+			local_pupil_offset = Vector2(0, side_sign * cur_eye_r * 0.3)
 
-		if _eye_style == "compound" and not _is_blinking:
-			# Compound: cluster of facets
-			var facet_r: float = eye_r * 0.35
+		if per_eye_style == "compound" and not _is_blinking:
+			var facet_r: float = cur_eye_r * 0.35
 			for row in range(3):
 				for col in range(3):
 					if (row == 0 or row == 2) and (col == 0 or col == 2):
@@ -607,46 +661,51 @@ func _draw_face() -> void:
 					var fp := eye_pos + c_offset
 					draw_circle(fp, facet_r, Color(_iris_color.r * 0.8, _iris_color.g * 0.8, _iris_color.b, 0.7))
 					draw_circle(fp, facet_r * 0.5, Color(0.05, 0.05, 0.1, 0.9))
-		elif _eye_style == "dot" and not _is_blinking:
-			draw_circle(eye_pos, eye_r, Color(0.02, 0.02, 0.08))
-			draw_circle(eye_pos + Vector2(-eye_r * 0.2, -eye_r * 0.25), eye_r * 0.3, Color(1, 1, 1, 0.35))
+		elif per_eye_style == "dot" and not _is_blinking:
+			draw_circle(eye_pos, cur_eye_r, Color(0.02, 0.02, 0.08))
+			draw_circle(eye_pos + Vector2(-cur_eye_r * 0.2, -cur_eye_r * 0.25), cur_eye_r * 0.3, Color(1, 1, 1, 0.35))
 		else:
-			# Standard eye
 			var eye_pts: PackedVector2Array = PackedVector2Array()
 			for i in range(16):
 				var a: float = TAU * i / 16.0
 				eye_pts.append(eye_pos + Vector2(cos(a) * ew, sin(a) * eh))
 			draw_colored_polygon(eye_pts, Color(1.0, 1.0, 1.0, 1.0))
 			if eye_squash_y > 0.15:
+				var cur_iris_r: float = cur_eye_r * 0.65
+				var cur_pupil_r: float = cur_eye_r * 0.35
+				match per_eye_style:
+					"round": cur_iris_r = cur_eye_r * 0.55; cur_pupil_r *= 1.2
+					"googly": cur_iris_r = cur_eye_r * 0.5; cur_pupil_r *= 0.8
+					"slit": cur_pupil_r *= 0.6
+					"lashed": cur_iris_r = cur_eye_r * 0.6
+					"fierce": cur_iris_r = cur_eye_r * 0.55
+					"star": cur_iris_r = cur_eye_r * 0.7
+				if _mood == Mood.SILLY: cur_pupil_r *= 1.4
+				elif _mood == Mood.SURPRISED: cur_pupil_r *= 0.5
 				var p_pos := eye_pos + look_dir + local_pupil_offset
-				# Iris
 				var iris_pts: PackedVector2Array = PackedVector2Array()
 				for i in range(16):
 					var a: float = TAU * i / 16.0
-					iris_pts.append(p_pos + Vector2(cos(a) * iris_r, sin(a) * iris_r * eye_squash_y))
+					iris_pts.append(p_pos + Vector2(cos(a) * cur_iris_r, sin(a) * cur_iris_r * eye_squash_y))
 				draw_colored_polygon(iris_pts, _iris_color)
-				# Slit pupil variant
-				if _eye_style == "slit":
-					var slit_h: float = pupil_r * eye_squash_y * 1.8
-					var slit_w: float = pupil_r * 0.35
+				if per_eye_style == "slit":
+					var slit_h: float = cur_pupil_r * eye_squash_y * 1.8
+					var slit_w: float = cur_pupil_r * 0.35
 					draw_colored_polygon(PackedVector2Array([
 						p_pos + Vector2(-slit_w, 0), p_pos + Vector2(0, -slit_h),
 						p_pos + Vector2(slit_w, 0), p_pos + Vector2(0, slit_h),
 					]), Color(0.02, 0.02, 0.08))
 				else:
-					draw_circle(p_pos, pupil_r, Color(0.02, 0.02, 0.08))
-				# Sparkle highlights
+					draw_circle(p_pos, cur_pupil_r, Color(0.02, 0.02, 0.08))
 				if show_sparkles or _mood == Mood.IDLE:
-					var sp := p_pos + Vector2(-iris_r * 0.3, -iris_r * 0.3)
+					var sp := p_pos + Vector2(-cur_iris_r * 0.3, -cur_iris_r * 0.3)
 					var pulse: float = 0.7 + 0.3 * sin(_eye_sparkle_timer * 3.0 + idx)
-					draw_circle(sp, pupil_r * 0.5 * pulse, Color(1, 1, 1, 0.9))
+					draw_circle(sp, cur_pupil_r * 0.5 * pulse, Color(1, 1, 1, 0.9))
 				else:
-					draw_circle(p_pos + Vector2(-pupil_r * 0.4, -pupil_r * 0.4), pupil_r * 0.3, Color(1, 1, 1, 0.7))
-			# Eye outline
+					draw_circle(p_pos + Vector2(-cur_pupil_r * 0.4, -cur_pupil_r * 0.4), cur_pupil_r * 0.3, Color(1, 1, 1, 0.7))
 			for i in range(eye_pts.size()):
 				draw_line(eye_pts[i], eye_pts[(i + 1) % eye_pts.size()], Color(0.1, 0.15, 0.25, 0.5), 0.7, true)
-			# Lashes
-			if _eye_style == "lashed" and not _is_blinking:
+			if per_eye_style == "lashed" and not _is_blinking:
 				for li in range(3):
 					var la: float = -PI * 0.6 + li * PI * 0.3
 					var lash_base := eye_pos + Vector2(cos(la) * ew, sin(la) * eh)

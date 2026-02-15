@@ -1010,6 +1010,8 @@ func _do_pulse_wave() -> void:
 	var knockback: float = 15.0 * mult
 	for group in ["white_blood_cell", "phagocyte", "killer_t_cell", "mast_cell", "flyer", "boss"]:
 		for enemy in get_tree().get_nodes_in_group(group):
+			if not is_instance_valid(enemy):
+				continue
 			var dist: float = global_position.distance_to(enemy.global_position)
 			if dist < radius:
 				var falloff: float = 1.0 - dist / radius
@@ -1277,6 +1279,8 @@ func _update_tail_whip_sweep(delta: float) -> void:
 	# Check for enemy hits along tail sweep arc (excludes prey - tail whip is defensive)
 	for group_name in ["white_blood_cell", "flyer", "phagocyte", "killer_t_cell", "mast_cell", "boss"]:
 		for creature in get_tree().get_nodes_in_group(group_name):
+			if not is_instance_valid(creature):
+				continue
 			if creature in _tail_whip_hit_targets:
 				continue
 			for tail_pos in tail_positions:

@@ -732,6 +732,8 @@ func _update_boss_hud() -> void:
 			closest_idx = 6
 	# Check mirror parasite
 	for node in _creatures_container.get_children():
+		if not is_instance_valid(node) or not node.is_inside_tree():
+			continue
 		if node.has_meta("is_mirror_parasite"):
 			var mdist: float = _player.global_position.distance_to(node.global_position)
 			if mdist < closest_dist:
@@ -739,6 +741,8 @@ func _update_boss_hud() -> void:
 				closest_boss = node
 				closest_idx = -1
 
+	if closest_boss and not is_instance_valid(closest_boss):
+		closest_boss = null
 	_active_boss = closest_boss
 	if closest_boss and closest_boss.get("health") != null:
 		var hp: float = closest_boss.health
@@ -1416,6 +1420,8 @@ func _on_player_stun_burst() -> void:
 
 	# Stun all WBCs in radius
 	for wbc in get_tree().get_nodes_in_group("white_blood_cell"):
+		if not is_instance_valid(wbc):
+			continue
 		if wbc.global_position.distance_to(_player.global_position) < 8.0:
 			if wbc.has_method("stun"):
 				wbc.stun()
@@ -2056,6 +2062,8 @@ func _refresh_enemy_cache() -> void:
 	var ppos: Vector3 = _player.global_position
 	for group_name in ENEMY_GROUPS:
 		for creature in get_tree().get_nodes_in_group(group_name):
+			if not is_instance_valid(creature):
+				continue
 			var dist: float = ppos.distance_to(creature.global_position)
 			_cached_enemies.append({"node": creature, "dist": dist})
 
@@ -2068,6 +2076,8 @@ func _scan_nearest_threat() -> void:
 	var best_dist: float = INF
 	var best_dir: Vector3 = Vector3.ZERO
 	for entry in _cached_enemies:
+		if not is_instance_valid(entry.node):
+			continue
 		var dist: float = entry.dist
 		if dist < THREAT_DETECT_RANGE and dist < best_dist:
 			best_dist = dist
@@ -2086,6 +2096,8 @@ func _scan_nearest_threat() -> void:
 func _tick_venom_damage() -> void:
 	for group_name in ["white_blood_cell", "prey", "flyer", "phagocyte", "killer_t_cell", "mast_cell", "boss"]:
 		for creature in get_tree().get_nodes_in_group(group_name):
+			if not is_instance_valid(creature):
+				continue
 			if not creature.has_meta(META_VENOMED) or not creature.get_meta(META_VENOMED):
 				continue
 			var remaining: float = creature.get_meta(META_VENOM_REMAINING, 0.0)

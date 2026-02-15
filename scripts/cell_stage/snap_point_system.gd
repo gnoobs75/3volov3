@@ -149,3 +149,22 @@ static func snap_slot_to_distance(slot: int) -> float:
 ## Get the outward rotation angle at a given perimeter angle (for orienting mutations).
 static func get_outward_rotation(angle: float) -> float:
 	return angle
+
+# --- Morph Handle System (8 handles at 45-degree intervals) ---
+
+## Interpolate radius multiplier from 8 morph handles at a given angle.
+## Uses cosine interpolation for smooth curves between handles.
+static func get_radius_at_angle(angle: float, cell_radius: float, handles: Array) -> float:
+	if handles.size() != 8:
+		return cell_radius
+	var sector: float = fmod(angle + TAU, TAU) / TAU * 8.0
+	var i0: int = int(sector) % 8
+	var i1: int = (i0 + 1) % 8
+	var t: float = sector - floorf(sector)
+	var smooth_t: float = (1.0 - cos(t * PI)) * 0.5
+	return lerpf(handles[i0], handles[i1], smooth_t) * cell_radius
+
+## Get perimeter position using morph handles instead of elongation/bulge.
+static func angle_to_perimeter_position_morphed(angle: float, cell_radius: float, handles: Array, distance: float = 1.0) -> Vector2:
+	var r: float = get_radius_at_angle(angle, cell_radius, handles) * distance
+	return Vector2(cos(angle) * r, sin(angle) * r)
