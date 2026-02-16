@@ -62,7 +62,7 @@ func _reveal_around(world_pos: Vector2, radius: float) -> void:
 			if cell_world.distance_to(world_pos) <= radius:
 				_grid[cx][cy] = FogState.VISIBLE
 
-func is_visible(world_pos: Vector2) -> bool:
+func is_pos_visible(world_pos: Vector2) -> bool:
 	var gx: int = int(world_pos.x / CELL_SIZE) + _offset
 	var gy: int = int(world_pos.y / CELL_SIZE) + _offset
 	if gx < 0 or gx >= _grid_size or gy < 0 or gy >= _grid_size:
