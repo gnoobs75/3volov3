@@ -31,6 +31,7 @@ var evolution_level: int = 0
 var active_mutations: Array[Dictionary] = []
 var sensory_level: int = 0
 var tutorial_shown: bool = false
+var rts_tutorial_shown: bool = false
 var initial_customization_done: bool = false
 
 # Creature visual customization (persists across deaths)

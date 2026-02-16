@@ -21,6 +21,8 @@ var _overlay: Control = null
 var _intel_overlay: Control = null
 var _command_vfx: Node2D = null
 var _pause_menu: Control = null
+var _tutorial: Control = null
+var _contextual_tips: Control = null
 
 var _time: float = 0.0
 var _game_started: bool = false
@@ -123,6 +125,25 @@ func _ready() -> void:
 	_hud_layer.add_child(_pause_menu)
 	_pause_menu.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+	# Tutorial overlay (before command VFX so it renders above units)
+	if not GameManager.rts_tutorial_shown:
+		_tutorial = preload("res://scripts/rts_stage/rts_tutorial_overlay.gd").new()
+		_tutorial.name = "TutorialOverlay"
+		_tutorial.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_hud_layer.add_child(_tutorial)
+		_tutorial.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_tutorial.tutorial_completed.connect(_on_tutorial_completed)
+
+	# Contextual tips (always active, post-tutorial)
+	_contextual_tips = preload("res://scripts/rts_stage/rts_contextual_tips.gd").new()
+	_contextual_tips.name = "ContextualTips"
+	_hud_layer.add_child(_contextual_tips)
+	_contextual_tips.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_contextual_tips.setup(self)
+	# Hide tips during tutorial
+	if _tutorial:
+		_contextual_tips.visible = false
+
 	# Command VFX layer (world-space)
 	_command_vfx = preload("res://scripts/rts_stage/rts_command_vfx.gd").new()
 	_command_vfx.name = "CommandVFX"
@@ -164,7 +185,12 @@ func _ready() -> void:
 		add_child(ai)
 		_ai_directors.append(ai)
 
-	# 12. Focus camera on player spawn
+	# 12. Set AI grace period if tutorial is active
+	if _tutorial:
+		for ai in _ai_directors:
+			ai.set_grace_period(180.0)  # 3 minutes
+
+	# 13. Focus camera on player spawn
 	_camera.focus_position(_petri_dish.spawn_positions[0])
 
 	_game_started = true
@@ -243,6 +269,7 @@ func get_input_handler() -> Control:
 func toggle_intel_overlay() -> void:
 	if _intel_overlay and _intel_overlay.has_method("toggle"):
 		_intel_overlay.toggle()
+		_notify_tutorial("notify_intel_toggled")
 
 func set_ai_difficulty(diff: int) -> void:
 	ai_difficulty = diff
@@ -273,6 +300,7 @@ func place_building(building_type: int, pos: Vector2) -> void:
 		if nearest_worker.has_method("command_build"):
 			nearest_worker.command_build(building)
 	AudioManager.play_rts_build_place()
+	_notify_tutorial("notify_building_placed")
 
 func ai_place_building(faction_id: int, building_type: int) -> void:
 	## AI building placement — near base with offset
@@ -316,6 +344,7 @@ func _on_unit_produced(building: Node2D, unit_type: int) -> void:
 	# Track stats
 	if fid == 0:
 		_victory_manager.stats_units_produced += 1
+		_notify_tutorial("notify_unit_produced")
 	# If building has a rally point set, command the unit to move there
 	if "has_rally_point" in building and building.has_rally_point:
 		if is_instance_valid(unit) and unit.has_method("command_move"):
@@ -351,12 +380,15 @@ func _on_faction_eliminated_check(_fid: int) -> void:
 	_victory_manager.check_victory()
 
 func _on_command_issued(command: String, target_pos: Vector2) -> void:
-	if not _command_vfx:
-		return
+	if _command_vfx:
+		match command:
+			"move": _command_vfx.add_move_indicator(target_pos)
+			"attack_move": _command_vfx.add_attack_indicator(target_pos)
+			"gather": _command_vfx.add_gather_indicator(target_pos)
+	# Tutorial notifications
 	match command:
-		"move": _command_vfx.add_move_indicator(target_pos)
-		"attack_move": _command_vfx.add_attack_indicator(target_pos)
-		"gather": _command_vfx.add_gather_indicator(target_pos)
+		"attack": _notify_tutorial("notify_attack_issued")
+		"attack_move": _notify_tutorial("notify_attack_move")
 
 func _on_faction_eliminated(fid: int, fname: String) -> void:
 	if _overlay and _overlay.has_method("show_elimination"):
@@ -371,6 +403,17 @@ func _on_game_lost() -> void:
 	_game_over_shown = true
 	if _overlay and _overlay.has_method("show_defeat"):
 		_overlay.show_defeat(_victory_manager.get_game_time())
+
+func _on_tutorial_completed() -> void:
+	GameManager.rts_tutorial_shown = true
+	_tutorial = null
+	# Show contextual tips now
+	if _contextual_tips:
+		_contextual_tips.visible = true
+
+func _notify_tutorial(method: String) -> void:
+	if _tutorial and is_instance_valid(_tutorial) and _tutorial.has_method(method):
+		_tutorial.call(method)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:

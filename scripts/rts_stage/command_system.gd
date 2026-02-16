@@ -24,6 +24,8 @@ func issue_attack(units: Array, target: Node2D) -> void:
 		if is_instance_valid(unit) and unit.has_method("command_attack"):
 			unit.command_attack(target)
 	AudioManager.play_rts_command()
+	if is_instance_valid(target):
+		command_issued.emit("attack", target.global_position)
 
 func issue_attack_move(units: Array, target_pos: Vector2) -> void:
 	for unit in units:

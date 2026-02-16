@@ -21,6 +21,10 @@ var _has_nutrient_processor: bool = false
 var _attack_rally_point: Vector2 = Vector2.ZERO
 var _army_group: Array = []
 
+# Grace period — AI won't attack during this window
+var _grace_period: float = 0.0
+var _grace_active: bool = false
+
 # SWEATY micro state
 var _rally_in_progress: bool = false
 var _rally_target: Node2D = null
@@ -94,8 +98,18 @@ func setup(fid: int, stage: Node, diff: int = Difficulty.MEDIUM) -> void:
 func set_difficulty(diff: int) -> void:
 	difficulty = diff as Difficulty
 
+func set_grace_period(seconds: float) -> void:
+	_grace_period = seconds
+	_grace_active = seconds > 0
+
 func _process(delta: float) -> void:
 	_time += delta
+	# Grace period countdown
+	if _grace_active:
+		_grace_period -= delta
+		if _grace_period <= 0:
+			_grace_active = false
+			_grace_period = 0.0
 	_decision_timer += delta
 	var cfg: Dictionary = _get_cfg()
 	if _decision_timer >= cfg["decision_interval"]:
@@ -195,6 +209,9 @@ func _do_aggression() -> void:
 	# Keep producing
 	_produce_combat_units_by_personality()
 	_assign_idle_workers_to_gather()
+	# Don't attack during grace period
+	if _grace_active:
+		return
 	# Group army and attack weakest faction
 	var army: Array = _get_combat_units()
 	if army.size() >= cfg["aggression_threshold"]:
@@ -279,6 +296,8 @@ func _do_endgame() -> void:
 	var cfg: Dictionary = _get_cfg()
 	# All-in: send everything at remaining enemy
 	_produce_combat_units_by_personality()
+	if _grace_active:
+		return
 	var army: Array = _get_combat_units()
 	var target_fid: int = _threat_map.get_weakest_enemy(get_tree())
 	if target_fid >= 0 and army.size() >= mini(3, cfg["aggression_threshold"]):
