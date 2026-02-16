@@ -237,9 +237,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			if _command_sys.current_mode != _command_sys.CommandMode.NORMAL:
 				_command_sys.exit_special_mode()
 				_remove_build_ghost()
-			else:
+				get_viewport().set_input_as_handled()
+			elif not _selection_mgr.selected_units.is_empty():
 				_selection_mgr.deselect_all()
-			get_viewport().set_input_as_handled()
+				get_viewport().set_input_as_handled()
+			# else: let ESC fall through to stage manager for pause menu
+			return
 
 		# Period key (.) — find and select next idle worker
 		if event.keycode == KEY_PERIOD:
@@ -275,6 +278,28 @@ func _unhandled_input(event: InputEvent) -> void:
 				_stage.toggle_intel_overlay()
 			get_viewport().set_input_as_handled()
 			return
+
+		# HOME key — snap camera to player base
+		if event.keycode == KEY_HOME:
+			if _stage and _camera:
+				var base_pos: Vector2 = Vector2.ZERO
+				for building in get_tree().get_nodes_in_group("rts_buildings"):
+					if is_instance_valid(building) and "faction_id" in building and building.faction_id == 0:
+						if "is_main_base" in building and building.is_main_base:
+							base_pos = building.global_position
+							break
+				_camera.focus_position(base_pos)
+			get_viewport().set_input_as_handled()
+			return
+
+		# Building hotkeys (Q/W/E/R/T) — only when build menu is contextually valid
+		var build_keys: Array = [KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T]
+		for bi in range(build_keys.size()):
+			if event.keycode == build_keys[bi]:
+				var bt: int = [BuildingStats.BuildingType.SPAWNING_POOL, BuildingStats.BuildingType.EVOLUTION_CHAMBER, BuildingStats.BuildingType.MEMBRANE_TOWER, BuildingStats.BuildingType.BIO_WALL, BuildingStats.BuildingType.NUTRIENT_PROCESSOR][bi]
+				enter_build_mode(bt)
+				get_viewport().set_input_as_handled()
+				return
 
 		# Command hotkeys (only when not in build mode)
 		if _command_sys.current_mode != _command_sys.CommandMode.BUILD:

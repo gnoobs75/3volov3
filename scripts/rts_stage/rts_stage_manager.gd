@@ -20,6 +20,7 @@ var _input_handler: Control = null
 var _overlay: Control = null
 var _intel_overlay: Control = null
 var _command_vfx: Node2D = null
+var _pause_menu: Control = null
 
 var _time: float = 0.0
 var _game_started: bool = false
@@ -115,6 +116,12 @@ func _ready() -> void:
 	_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_hud_layer.add_child(_overlay)
 	_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	# Pause menu
+	_pause_menu = preload("res://scripts/rts_stage/rts_pause_menu.gd").new()
+	_pause_menu.name = "PauseMenu"
+	_hud_layer.add_child(_pause_menu)
+	_pause_menu.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	# Command VFX layer (world-space)
 	_command_vfx = preload("res://scripts/rts_stage/rts_command_vfx.gd").new()
@@ -369,7 +376,6 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		if _game_over_shown:
 			GameManager.go_to_menu()
-		else:
-			# Toggle pause menu (simplified - just go to menu)
-			GameManager.go_to_menu()
+		elif _pause_menu:
+			_pause_menu.toggle()
 		get_viewport().set_input_as_handled()

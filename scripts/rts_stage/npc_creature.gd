@@ -190,6 +190,11 @@ func _perform_attack() -> void:
 	if not is_instance_valid(_attack_target):
 		return
 	if creature_type == CreatureType.SPITTER:
+		# Spitter min_range: don't shoot if too close, chase instead
+		var dist: float = global_position.distance_to(_attack_target.global_position)
+		if dist < 50.0:
+			_ai_state = AIState.CHASE
+			return
 		_fire_projectile(_attack_target)
 	else:
 		var stage: Node = get_tree().get_first_node_in_group("rts_stage")

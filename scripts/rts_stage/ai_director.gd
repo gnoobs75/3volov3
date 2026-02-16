@@ -110,6 +110,17 @@ func _process(delta: float) -> void:
 
 func _make_decision() -> void:
 	var cfg: Dictionary = _get_cfg()
+	# Scan existing buildings to track what we have
+	_has_evolution_chamber = false
+	_has_nutrient_processor = false
+	for building in get_tree().get_nodes_in_group("faction_%d" % faction_id):
+		if not building.is_in_group("rts_buildings") or not is_instance_valid(building):
+			continue
+		if "building_type" in building:
+			if building.building_type == BuildingStats.BuildingType.EVOLUTION_CHAMBER:
+				_has_evolution_chamber = true
+			elif building.building_type == BuildingStats.BuildingType.NUTRIENT_PROCESSOR:
+				_has_nutrient_processor = true
 	# Give free resources for HARD/SWEATY
 	var bonus: int = cfg["resource_bonus_per_tick"]
 	if bonus > 0 and _stage and _stage.has_method("get_resource_manager"):

@@ -197,6 +197,8 @@ func _update_tower_attack() -> void:
 		var proj := preload("res://scripts/rts_stage/rts_projectile.gd").new()
 		proj.setup(global_position, nearest, attack_damage, faction_id)
 		get_parent().add_child(proj)
+		if faction_id == 0:
+			AudioManager.play_rts_attack()
 
 func _is_on_screen() -> bool:
 	var camera: Camera2D = get_viewport().get_camera_2d()

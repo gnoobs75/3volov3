@@ -376,6 +376,16 @@ func _perform_attack() -> void:
 		_charge_moved = false
 	# Ranged: fire projectile
 	if unit_type == UnitStats.UnitType.RANGED:
+		# Spitter min_range: flee if enemy is too close
+		var dist: float = global_position.distance_to(_attack_target.global_position)
+		if dist < 40.0:
+			# Kite away from target
+			var flee_dir: Vector2 = (global_position - _attack_target.global_position).normalized()
+			var flee_pos: Vector2 = global_position + flee_dir * 80.0
+			_nav_agent.target_position = flee_pos
+			var next_pos: Vector2 = _nav_agent.get_next_path_position()
+			_nav_agent.velocity = (next_pos - global_position).normalized() * speed
+			return
 		_fire_projectile(_attack_target)
 	else:
 		# Melee: direct damage
@@ -386,6 +396,7 @@ func _perform_attack() -> void:
 				cs.apply_building_damage(_attack_target, actual_damage, self)
 			elif _attack_target.has_method("take_damage"):
 				cs.apply_damage(_attack_target, actual_damage, self)
+	AudioManager.play_rts_attack()
 
 func _fire_projectile(target: Node2D) -> void:
 	var proj := preload("res://scripts/rts_stage/rts_projectile.gd").new()
@@ -412,16 +423,25 @@ func _check_auto_retaliate() -> void:
 		return
 	var nearest: Node2D = null
 	var nearest_dist: float = detection_range
+	# Check for defender taunt — prefer attacking defenders within 80 units
+	var taunting_defender: Node2D = null
+	var taunt_dist: float = 80.0
 	for unit in get_tree().get_nodes_in_group("rts_units"):
 		if unit == self or not is_instance_valid(unit):
 			continue
 		if "faction_id" in unit and unit.faction_id == faction_id:
 			continue
 		var dist: float = global_position.distance_to(unit.global_position)
+		# Defender taunt: prioritize defenders within taunt range
+		if "unit_type" in unit and unit.unit_type == UnitStats.UnitType.DEFENDER and dist < taunt_dist:
+			taunt_dist = dist
+			taunting_defender = unit
 		if dist < nearest_dist:
 			nearest_dist = dist
 			nearest = unit
-	if nearest:
+	if taunting_defender:
+		command_attack(taunting_defender)
+	elif nearest:
 		command_attack(nearest)
 
 func _navigate_to_nearest_depot() -> void:

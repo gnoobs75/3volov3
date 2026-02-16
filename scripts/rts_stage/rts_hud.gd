@@ -187,6 +187,8 @@ func _input(event: InputEvent) -> void:
 			# Difficulty button
 			if _get_difficulty_rect(vp).has_point(mouse):
 				_ai_difficulty = (_ai_difficulty + 1) % DIFFICULTY_NAMES.size()
+				if _stage and _stage.has_method("set_ai_difficulty"):
+					_stage.set_ai_difficulty(_ai_difficulty)
 				get_viewport().set_input_as_handled()
 				return
 			# Command buttons
