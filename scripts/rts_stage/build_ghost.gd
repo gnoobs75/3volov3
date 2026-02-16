@@ -64,3 +64,8 @@ func _draw() -> void:
 	var bname: String = BuildingStats.get_building_name(building_type)
 	var ls: Vector2 = font.get_string_size(bname, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_TINY)
 	draw_string(font, Vector2(-ls.x * 0.5, _size_radius + 18.0), bname, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, border_color)
+	# Cost preview
+	var cost: Dictionary = BuildingStats.get_cost(building_type)
+	var cost_str: String = "%dB / %dG" % [cost.get("biomass", 0), cost.get("genes", 0)]
+	var cs: Vector2 = font.get_string_size(cost_str, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_TINY)
+	draw_string(font, Vector2(-cs.x * 0.5, _size_radius + 30.0), cost_str, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(border_color.r, border_color.g, border_color.b, 0.7))

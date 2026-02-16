@@ -52,7 +52,17 @@ func _hit() -> void:
 			stage.get_combat_system().apply_damage(_target, _damage, self)
 		else:
 			_target.take_damage(_damage, self)
+	# Spawn impact effect
+	_spawn_impact()
 	queue_free()
+
+func _spawn_impact() -> void:
+	var impact := Node2D.new()
+	impact.global_position = global_position
+	impact.set_script(preload("res://scripts/rts_stage/rts_impact_effect.gd"))
+	var fc: Color = FactionData.get_faction_color(_faction_id)
+	impact.setup(fc)
+	get_parent().add_child(impact)
 
 func _on_body_entered(body: Node2D) -> void:
 	if body == _target:

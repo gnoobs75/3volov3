@@ -6,6 +6,11 @@ var _stage: Node = null
 var _camera: Camera2D = null
 var _time: float = 0.0
 
+# Attack alert pings
+var _alert_pings: Array = []  # [{pos, time}]
+const ALERT_PING_LIFE: float = 3.0
+var _alert_cooldown: float = 0.0
+
 const MINIMAP_RADIUS: float = 85.0
 const MINIMAP_CENTER: Vector2 = Vector2(95, 0)  # Offset from bottom-left
 const MAP_RADIUS: float = 8000.0
@@ -15,8 +20,21 @@ func setup(stage: Node, camera: Camera2D) -> void:
 	_camera = camera
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+func add_attack_ping(world_pos: Vector2) -> void:
+	_alert_pings.append({"pos": world_pos, "time": 0.0})
+	if _alert_pings.size() > 5:
+		_alert_pings.pop_front()
+
 func _process(delta: float) -> void:
 	_time += delta
+	_alert_cooldown = maxf(_alert_cooldown - delta, 0.0)
+	# Update pings
+	var i: int = _alert_pings.size() - 1
+	while i >= 0:
+		_alert_pings[i]["time"] += delta
+		if _alert_pings[i]["time"] >= ALERT_PING_LIFE:
+			_alert_pings.remove_at(i)
+		i -= 1
 	queue_redraw()
 
 func _get_minimap_center() -> Vector2:
@@ -88,7 +106,25 @@ func _draw() -> void:
 			continue
 		var fid: int = unit.faction_id if "faction_id" in unit else 0
 		var fc: Color = FactionData.get_faction_color(fid)
-		draw_circle(mp, 1.5, fc)
+		var is_sel: bool = "is_selected" in unit and unit.is_selected
+		if is_sel:
+			# Selected units get a brighter, larger dot
+			draw_circle(mp, 2.5, Color(1.0, 1.0, 1.0, 0.7))
+			draw_circle(mp, 2.0, fc.lightened(0.3))
+		else:
+			draw_circle(mp, 1.5, fc)
+
+	# Attack alert pings
+	for ping in _alert_pings:
+		var mp: Vector2 = _world_to_minimap(ping["pos"])
+		if mp.distance_to(center) > MINIMAP_RADIUS:
+			continue
+		var pt: float = ping["time"] / ALERT_PING_LIFE
+		var ping_alpha: float = 1.0 - pt
+		var ping_r: float = 3.0 + pt * 8.0
+		draw_arc(mp, ping_r, 0, TAU, 12, Color(1.0, 0.3, 0.2, ping_alpha * 0.7), 1.5)
+		if pt < 0.5:
+			draw_circle(mp, 2.0, Color(1.0, 0.3, 0.2, ping_alpha))
 
 	# Camera viewport indicator
 	if _camera:

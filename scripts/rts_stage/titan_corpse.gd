@@ -65,7 +65,20 @@ func _process(delta: float) -> void:
 	_time += delta
 	queue_redraw()
 
+func _is_on_screen() -> bool:
+	var camera: Camera2D = get_viewport().get_camera_2d()
+	if not camera:
+		return true
+	var cam_pos: Vector2 = camera.global_position
+	var vp_size: Vector2 = get_viewport_rect().size
+	var zoom: float = camera.zoom.x if camera.zoom.x > 0 else 1.0
+	var half_view: Vector2 = vp_size / (2.0 * zoom) + Vector2(120, 120)
+	var diff: Vector2 = (global_position - cam_pos).abs()
+	return diff.x < half_view.x and diff.y < half_view.y
+
 func _draw() -> void:
+	if not _is_on_screen():
+		return
 	var fill: float = float(biomass_remaining + genes_remaining) / float(max_biomass + max_genes)
 	if fill <= 0:
 		# Draw depleted husk

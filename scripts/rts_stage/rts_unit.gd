@@ -442,19 +442,54 @@ func _navigate_to_nearest_depot() -> void:
 
 # === DRAWING ===
 
+func _is_on_screen() -> bool:
+	var camera: Camera2D = get_viewport().get_camera_2d()
+	if not camera:
+		return true
+	var cam_pos: Vector2 = camera.global_position
+	var vp_size: Vector2 = get_viewport_rect().size
+	var zoom: float = camera.zoom.x if camera.zoom.x > 0 else 1.0
+	var margin: float = 50.0  # Extra margin to avoid pop-in
+	var half_view: Vector2 = vp_size / (2.0 * zoom) + Vector2(margin, margin)
+	var diff: Vector2 = (global_position - cam_pos).abs()
+	return diff.x < half_view.x and diff.y < half_view.y
+
 func _draw() -> void:
 	if not creature_template:
 		# Fallback simple draw
 		draw_circle(Vector2.ZERO, _cell_radius, FactionData.get_faction_color(faction_id))
 		return
 
+	# Skip detailed drawing if off-screen
+	if not _is_on_screen():
+		return
+
 	var mc: Color = creature_template.membrane_color
 	var ic: Color = creature_template.interior_color
 	var gc: Color = creature_template.glow_color
 
-	# 1. Selection ring
+	# 1. Selection ring (animated dashed arc)
 	if is_selected:
-		draw_arc(Vector2.ZERO, _cell_radius + 4.0, 0, TAU, 24, Color(0.2, 1.0, 0.3, 0.7), 2.0)
+		var sel_r: float = _cell_radius + 4.0
+		var sel_color: Color = Color(0.2, 1.0, 0.3, 0.8)
+		# Rotating dashed selection ring
+		var dash_count: int = 8
+		var dash_arc: float = TAU / float(dash_count) * 0.6
+		var gap_arc: float = TAU / float(dash_count) * 0.4
+		var ring_offset: float = _time * 1.5
+		for di in range(dash_count):
+			var start_a: float = ring_offset + float(di) * (dash_arc + gap_arc)
+			draw_arc(Vector2.ZERO, sel_r, start_a, start_a + dash_arc, 6, sel_color, 1.5)
+		# Inner glow ring
+		draw_arc(Vector2.ZERO, sel_r - 1.0, 0, TAU, 16, Color(0.2, 1.0, 0.3, 0.15), 3.0)
+		# Attack range indicator (subtle)
+		if unit_type != UnitStats.UnitType.WORKER:
+			draw_arc(Vector2.ZERO, attack_range, 0, TAU, 32, Color(1.0, 0.4, 0.3, 0.08), 1.0)
+		# Control group number
+		if control_group >= 0:
+			var cg_text: String = str(control_group)
+			var cg_font: Font = UIConstants.get_mono_font()
+			draw_string(cg_font, Vector2(-3, -_cell_radius - 8), cg_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(0.2, 1.0, 0.3, 0.9))
 
 	# 2. Glow
 	draw_circle(Vector2.ZERO, _cell_radius * 2.0, Color(gc.r, gc.g, gc.b, 0.06))

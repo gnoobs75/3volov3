@@ -10,6 +10,13 @@ var _game_over: bool = false
 var _game_time: float = 0.0
 var _eliminations: Array = []
 
+# Game stats tracking
+var stats_units_produced: int = 0
+var stats_units_lost: int = 0
+var stats_enemies_killed: int = 0
+var stats_buildings_built: int = 0
+var stats_resources_gathered: int = 0
+
 func setup(stage: Node) -> void:
 	_stage = stage
 

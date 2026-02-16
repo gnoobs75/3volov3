@@ -39,6 +39,8 @@ func issue_gather(units: Array, target: Node2D) -> void:
 		if is_instance_valid(unit) and unit.has_method("command_gather"):
 			unit.command_gather(target)
 	AudioManager.play_rts_gather()
+	if is_instance_valid(target):
+		command_issued.emit("gather", target.global_position)
 
 func issue_build(worker: Node2D, build_ghost: Node2D) -> void:
 	if is_instance_valid(worker) and worker.has_method("command_build"):

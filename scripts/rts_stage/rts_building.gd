@@ -44,6 +44,8 @@ var has_rally_point: bool = false
 # Visual
 var _time: float = 0.0
 var _collision_shape: CollisionShape2D = null
+var _tower_eye_dir: Vector2 = Vector2.ZERO  # Smoothed tower eye direction
+var _hurt_flash: float = 0.0
 
 func _ready() -> void:
 	add_to_group("rts_buildings")
@@ -101,6 +103,7 @@ func add_construction(amount: float) -> void:
 
 func take_damage(amount: float, _attacker: Node2D = null) -> void:
 	health -= amount
+	_hurt_flash = 1.0
 	if health <= 0:
 		_die()
 
@@ -153,6 +156,7 @@ func get_queue_size() -> int:
 
 func _process(delta: float) -> void:
 	_time += delta
+	_hurt_flash = maxf(_hurt_flash - delta * 3.0, 0.0)
 	# Production
 	if _is_constructed and not _production_queue.is_empty():
 		_production_timer += delta
@@ -160,10 +164,16 @@ func _process(delta: float) -> void:
 			var unit_type: int = _production_queue.pop_front()
 			unit_produced.emit(self, unit_type)
 			_start_production()  # Start next in queue
-	# Tower auto-attack
+	# Tower auto-attack + smooth eye
 	if _is_constructed and attack_range > 0:
 		_tower_attack_timer = maxf(_tower_attack_timer - delta, 0.0)
 		_update_tower_attack()
+		# Smooth eye tracking
+		if is_instance_valid(_tower_target):
+			var target_dir: Vector2 = (_tower_target.global_position - global_position).normalized() * 2.5
+			_tower_eye_dir = _tower_eye_dir.lerp(target_dir, delta * 6.0)
+		else:
+			_tower_eye_dir = _tower_eye_dir.lerp(Vector2.ZERO, delta * 3.0)
 	queue_redraw()
 
 func _update_tower_attack() -> void:
@@ -189,7 +199,23 @@ func _update_tower_attack() -> void:
 		proj.setup(global_position, nearest, attack_damage, faction_id)
 		get_parent().add_child(proj)
 
+func _is_on_screen() -> bool:
+	var camera: Camera2D = get_viewport().get_camera_2d()
+	if not camera:
+		return true
+	var cam_pos: Vector2 = camera.global_position
+	var vp_size: Vector2 = get_viewport_rect().size
+	var zoom: float = camera.zoom.x if camera.zoom.x > 0 else 1.0
+	var margin: float = size_radius + 20.0
+	var half_view: Vector2 = vp_size / (2.0 * zoom) + Vector2(margin, margin)
+	var diff: Vector2 = (global_position - cam_pos).abs()
+	return diff.x < half_view.x and diff.y < half_view.y
+
 func _draw() -> void:
+	# Skip if off-screen (except rally points which extend far)
+	if not _is_on_screen() and not has_rally_point:
+		return
+
 	var mc: Color = creature_template.membrane_color if creature_template else FactionData.get_faction_color(faction_id)
 	var gc: Color = creature_template.glow_color if creature_template else mc.lightened(0.3)
 
@@ -203,6 +229,10 @@ func _draw() -> void:
 			var angle: float = TAU * float(i) / 4.0
 			draw_line(Vector2.ZERO, Vector2(cos(angle), sin(angle)) * size_radius * 0.8, Color(0.5, 0.5, 0.4, 0.3 * pct), 1.0)
 		return
+
+	# Hurt flash
+	if _hurt_flash > 0:
+		draw_circle(Vector2.ZERO, size_radius * 1.2, Color(1.0, 0.2, 0.2, _hurt_flash * 0.25))
 
 	# Glow
 	draw_circle(Vector2.ZERO, size_radius * 1.5, Color(gc.r, gc.g, gc.b, 0.04))
@@ -265,17 +295,22 @@ func _draw_evolution_chamber(mc: Color, gc: Color) -> void:
 		draw_circle(Vector2(x2, y), 2.0, Color(gc.r, gc.g, gc.b, 0.4))
 
 func _draw_membrane_tower(mc: Color, gc: Color) -> void:
-	# Tall tower shape
+	# Tall tower shape with concentric rings
 	draw_circle(Vector2.ZERO, size_radius, Color(mc.r * 0.7, mc.g * 0.5, mc.b * 0.5, 0.8))
-	# Eye on top
+	draw_arc(Vector2.ZERO, size_radius * 0.7, 0, TAU, 16, Color(mc.r * 0.5, mc.g * 0.3, mc.b * 0.3, 0.4), 1.5)
+	# Eye on top (uses smoothed direction)
 	draw_circle(Vector2.ZERO, 6.0, Color.WHITE)
-	var look_dir: Vector2 = Vector2.ZERO
-	if is_instance_valid(_tower_target):
-		look_dir = (_tower_target.global_position - global_position).normalized() * 2.0
-	draw_circle(look_dir, 3.0, Color(0.9, 0.2, 0.2))
-	# Range indicator
+	draw_circle(Vector2.ZERO, 6.5, Color(gc.r, gc.g, gc.b, 0.3 + 0.1 * sin(_time * 2.0)))
+	draw_circle(_tower_eye_dir, 3.0, Color(0.9, 0.2, 0.2))
+	# Pupil highlight
+	draw_circle(_tower_eye_dir + Vector2(-0.5, -0.5), 1.0, Color(1.0, 0.5, 0.5, 0.6))
+	# Range indicator (dashed)
 	if attack_range > 0:
-		draw_arc(Vector2.ZERO, attack_range, 0, TAU, 48, Color(mc.r, mc.g, mc.b, 0.05), 1.0)
+		var dash_count: int = 16
+		var dash_arc: float = TAU / float(dash_count) * 0.5
+		for di in range(dash_count):
+			var a_start: float = float(di) * TAU / float(dash_count) + _time * 0.2
+			draw_arc(Vector2.ZERO, attack_range, a_start, a_start + dash_arc, 4, Color(mc.r, mc.g, mc.b, 0.06), 1.0)
 
 func _draw_bio_wall(mc: Color, _gc: Color) -> void:
 	# Thick wall segment

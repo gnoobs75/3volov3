@@ -83,6 +83,32 @@ func get_state(world_pos: Vector2) -> int:
 		return FogState.UNEXPLORED
 	return _grid[gx][gy]
 
+func _get_cell_alpha(gx: int, gy: int) -> float:
+	## Returns fog alpha for a cell, with gradient based on neighbor visibility
+	if gx < 0 or gx >= _grid_size or gy < 0 or gy >= _grid_size:
+		return 0.85
+	var state: int = _grid[gx][gy]
+	if state == FogState.VISIBLE:
+		return 0.0
+	var base_alpha: float = 0.85 if state == FogState.UNEXPLORED else 0.4
+	# Check if any adjacent cell is VISIBLE — if so, reduce alpha for gradient edge
+	var has_visible_neighbor: bool = false
+	for dx in [-1, 0, 1]:
+		for dy in [-1, 0, 1]:
+			if dx == 0 and dy == 0:
+				continue
+			var nx: int = gx + dx
+			var ny: int = gy + dy
+			if nx >= 0 and nx < _grid_size and ny >= 0 and ny < _grid_size:
+				if _grid[nx][ny] == FogState.VISIBLE:
+					has_visible_neighbor = true
+					break
+		if has_visible_neighbor:
+			break
+	if has_visible_neighbor:
+		return base_alpha * 0.5  # Softer edge
+	return base_alpha
+
 func _draw() -> void:
 	# Draw fog overlay — only draw non-visible cells near camera for performance
 	var camera: Camera2D = get_viewport().get_camera_2d()
@@ -110,5 +136,5 @@ func _draw() -> void:
 				continue
 			var world_x: float = (gx - _offset) * CELL_SIZE
 			var world_y: float = (gy - _offset) * CELL_SIZE
-			var alpha: float = 0.85 if state == FogState.UNEXPLORED else 0.4
+			var alpha: float = _get_cell_alpha(gx, gy)
 			draw_rect(Rect2(world_x, world_y, CELL_SIZE, CELL_SIZE), Color(0.0, 0.0, 0.0, alpha))

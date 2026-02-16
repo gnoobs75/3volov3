@@ -65,4 +65,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			_target_zoom = clampf(_target_zoom - ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
 
 func focus_position(pos: Vector2) -> void:
+	# Smooth focus uses position_smoothing_enabled (already on)
+	# Just set target — the built-in smoothing handles the transition
 	global_position = pos

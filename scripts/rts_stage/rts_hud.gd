@@ -31,6 +31,7 @@ var _last_genes: int = 0
 var _income_biomass: int = 0
 var _income_genes: int = 0
 var _income_timer: float = 0.0
+var _low_resource_pulse: float = 0.0  # For resource warning flash
 
 # --- Game timer (fallback) ---
 var _local_game_time: float = 0.0
@@ -147,6 +148,9 @@ func _process(delta: float) -> void:
 				if "unit_type" in unit and unit.unit_type == UnitStats.UnitType.WORKER:
 					if "state" in unit and unit.state == 0:  # IDLE
 						_idle_worker_count += 1
+
+	# --- Low resource warning ---
+	_low_resource_pulse += delta * 3.0
 
 	# --- Resource income ---
 	_income_timer += delta
@@ -322,20 +326,35 @@ func _draw() -> void:
 		var rm: Node = _stage.get_resource_manager()
 		var biomass: int = rm.get_biomass(0)
 		var genes: int = rm.get_genes(0)
+		var low_bio: bool = biomass < 50
+		var low_gen: bool = genes < 10 and genes >= 0
+		var warn_pulse: float = 0.5 + 0.5 * sin(_low_resource_pulse)
 		# Biomass
+		var bio_color: Color = UIConstants.STAT_GREEN
+		if low_bio:
+			bio_color = Color(1.0, 0.4, 0.3).lerp(UIConstants.STAT_GREEN, warn_pulse)
 		draw_circle(Vector2(30, 20), 6, Color(0.2, 0.8, 0.4, 0.8))
-		draw_string(font, Vector2(42, 27), "Biomass: %d" % biomass, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_BODY, UIConstants.STAT_GREEN)
+		if low_bio:
+			draw_arc(Vector2(30, 20), 8.0, 0, TAU, 12, Color(1.0, 0.3, 0.2, 0.5 * warn_pulse), 1.5)
+		draw_string(font, Vector2(42, 27), "Biomass: %d" % biomass, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_BODY, bio_color)
 		# Income rate (biomass)
 		var inc_bio_text: String = "+%d/s" % _income_biomass if _income_biomass >= 0 else "%d/s" % _income_biomass
 		var bio_w: float = font.get_string_size("Biomass: %d" % biomass, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_BODY).x
-		draw_string(mono, Vector2(42 + bio_w + 6, 27), inc_bio_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(0.25, 0.65, 0.4, 0.7))
+		var inc_bio_color: Color = Color(0.25, 0.65, 0.4, 0.7) if _income_biomass >= 0 else Color(0.9, 0.3, 0.3, 0.7)
+		draw_string(mono, Vector2(42 + bio_w + 6, 27), inc_bio_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, inc_bio_color)
 		# Gene Fragments
+		var gen_color: Color = Color(0.7, 0.4, 1.0)
+		if low_gen:
+			gen_color = Color(1.0, 0.4, 0.3).lerp(Color(0.7, 0.4, 1.0), warn_pulse)
 		draw_circle(Vector2(220, 20), 6, Color(0.7, 0.3, 1.0, 0.8))
-		draw_string(font, Vector2(232, 27), "Genes: %d" % genes, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_BODY, Color(0.7, 0.4, 1.0))
+		if low_gen:
+			draw_arc(Vector2(220, 20), 8.0, 0, TAU, 12, Color(1.0, 0.3, 0.2, 0.5 * warn_pulse), 1.5)
+		draw_string(font, Vector2(232, 27), "Genes: %d" % genes, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_BODY, gen_color)
 		# Income rate (genes)
 		var inc_gen_text: String = "+%d/s" % _income_genes if _income_genes >= 0 else "%d/s" % _income_genes
+		var inc_gen_color: Color = Color(0.55, 0.3, 0.75, 0.7) if _income_genes >= 0 else Color(0.9, 0.3, 0.3, 0.7)
 		var gen_w: float = font.get_string_size("Genes: %d" % genes, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_BODY).x
-		draw_string(mono, Vector2(232 + gen_w + 6, 27), inc_gen_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(0.55, 0.3, 0.75, 0.7))
+		draw_string(mono, Vector2(232 + gen_w + 6, 27), inc_gen_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, inc_gen_color)
 
 	# Population
 	if _stage and _stage.has_method("get_faction_manager"):
@@ -577,14 +596,33 @@ func _draw_production_panel(vp: Vector2, font: Font) -> void:
 		var cost_str: String = "%dB %dG" % [cost.get("biomass", 0), cost.get("genes", 0)]
 		draw_string(font, Vector2(rect.position.x + 4, rect.position.y + 28), cost_str, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM)
 
-	# Show production progress
+	# Show production progress with queue preview
 	if sel.has_method("get_production_progress") and sel.get_queue_size() > 0:
 		var pct: float = sel.get_production_progress()
-		var bar_y: float = vp.y - 115.0
+		var bar_y: float = vp.y - 118.0
 		var bar_x: float = vp.x * 0.5 - 100.0
-		draw_rect(Rect2(bar_x, bar_y, 200, 8), Color(0.1, 0.1, 0.1, 0.7))
-		draw_rect(Rect2(bar_x, bar_y, 200 * pct, 8), Color(0.3, 0.7, 1.0, 0.8))
-		draw_string(font, Vector2(bar_x + 205, bar_y + 8), "Q:%d" % sel.get_queue_size(), HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM)
+		# Currently building label
+		if "_production_queue" in sel and not sel._production_queue.is_empty():
+			var cur_unit: int = sel._production_queue[0]
+			var cur_name: String = UnitStats.get_unit_name(cur_unit)
+			var mono_f: Font = UIConstants.get_mono_font()
+			draw_string(mono_f, Vector2(bar_x, bar_y - 2), "Building: %s" % cur_name, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(0.3, 0.7, 1.0, 0.9))
+		# Progress bar
+		draw_rect(Rect2(bar_x, bar_y + 12, 200, 8), Color(0.1, 0.1, 0.1, 0.7))
+		draw_rect(Rect2(bar_x, bar_y + 12, 200 * pct, 8), Color(0.3, 0.7, 1.0, 0.8))
+		# Queue items preview (small icons for queued units)
+		var q_x: float = bar_x + 205
+		draw_string(font, Vector2(q_x, bar_y + 20), "Q:", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM)
+		q_x += 18
+		if "_production_queue" in sel:
+			var mono_f: Font = UIConstants.get_mono_font()
+			for qi in range(mini(sel._production_queue.size(), 6)):
+				var qut: int = sel._production_queue[qi]
+				var q_initial: String = UnitStats.get_unit_name(qut).substr(0, 1)
+				var q_col: Color = Color(0.3, 0.7, 1.0, 0.7) if qi == 0 else UIConstants.TEXT_DIM
+				draw_circle(Vector2(q_x + 6, bar_y + 16), 6, Color(q_col.r, q_col.g, q_col.b, 0.2))
+				draw_string(mono_f, Vector2(q_x + 2, bar_y + 20), q_initial, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, q_col)
+				q_x += 16
 
 # === SPEED SLIDER ===
 

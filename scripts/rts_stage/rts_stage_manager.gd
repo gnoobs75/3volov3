@@ -19,6 +19,7 @@ var _minimap: Control = null
 var _input_handler: Control = null
 var _overlay: Control = null
 var _intel_overlay: Control = null
+var _command_vfx: Node2D = null
 
 var _time: float = 0.0
 var _game_started: bool = false
@@ -115,6 +116,12 @@ func _ready() -> void:
 	_hud_layer.add_child(_overlay)
 	_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+	# Command VFX layer (world-space)
+	_command_vfx = preload("res://scripts/rts_stage/rts_command_vfx.gd").new()
+	_command_vfx.name = "CommandVFX"
+	_command_vfx.z_index = 5
+	add_child(_command_vfx)
+
 	# 7. Initialize systems
 	_faction_manager.setup_factions()
 	_resource_manager.setup(4)
@@ -129,6 +136,7 @@ func _ready() -> void:
 	_victory_manager.faction_eliminated_announcement.connect(_on_faction_eliminated)
 	_combat_system.unit_killed.connect(_on_unit_killed)
 	_faction_manager.faction_eliminated.connect(_on_faction_eliminated_check)
+	_command_system.command_issued.connect(_on_command_issued)
 
 	# 9. Spawn resources on map
 	_petri_dish.spawn_resources()
@@ -293,6 +301,9 @@ func _on_unit_produced(building: Node2D, unit_type: int) -> void:
 	var template: CreatureTemplate = _faction_manager.get_template(fid)
 	var offset: Vector2 = Vector2(randf_range(-30, 30), randf_range(30, 60))
 	var unit: Node2D = _spawn_unit(fid, unit_type, building.global_position + offset, template)
+	# Track stats
+	if fid == 0:
+		_victory_manager.stats_units_produced += 1
 	# If building has a rally point set, command the unit to move there
 	if "has_rally_point" in building and building.has_rally_point:
 		if is_instance_valid(unit) and unit.has_method("command_move"):
@@ -301,11 +312,20 @@ func _on_unit_produced(building: Node2D, unit_type: int) -> void:
 func _on_unit_died(unit: Node2D) -> void:
 	_selection_manager.remove_unit(unit)
 	var fid: int = unit.faction_id if "faction_id" in unit else 0
+	if fid == 0:
+		_victory_manager.stats_units_lost += 1
 	# Delayed elimination check
 	call_deferred("_check_faction_elimination", fid)
 
 func _on_unit_killed(unit: Node2D, _killer: Node2D) -> void:
 	AudioManager.play_rts_unit_death()
+	var fid: int = unit.faction_id if "faction_id" in unit else 0
+	# Track enemy kills by player
+	if _killer and is_instance_valid(_killer) and "faction_id" in _killer and _killer.faction_id == 0 and fid != 0:
+		_victory_manager.stats_enemies_killed += 1
+	# Minimap attack ping when player unit is killed
+	if fid == 0 and is_instance_valid(unit) and _minimap and _minimap.has_method("add_attack_ping"):
+		_minimap.add_attack_ping(unit.global_position)
 
 func _on_building_destroyed(building: Node2D) -> void:
 	var fid: int = building.faction_id if "faction_id" in building else 0
@@ -316,6 +336,14 @@ func _check_faction_elimination(fid: int) -> void:
 
 func _on_faction_eliminated_check(_fid: int) -> void:
 	_victory_manager.check_victory()
+
+func _on_command_issued(command: String, target_pos: Vector2) -> void:
+	if not _command_vfx:
+		return
+	match command:
+		"move": _command_vfx.add_move_indicator(target_pos)
+		"attack_move": _command_vfx.add_attack_indicator(target_pos)
+		"gather": _command_vfx.add_gather_indicator(target_pos)
 
 func _on_faction_eliminated(fid: int, fname: String) -> void:
 	if _overlay and _overlay.has_method("show_elimination"):

@@ -8,18 +8,34 @@ var _game_time: float = 0.0
 var _elimination_text: String = ""
 var _elimination_timer: float = 0.0
 var _appear_t: float = 0.0
+var _stats: Dictionary = {}  # Game stats for end screen
 
 func show_victory(game_time: float) -> void:
 	_show_victory = true
 	_game_time = game_time
 	_appear_t = 0.0
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	_collect_stats()
 
 func show_defeat(game_time: float) -> void:
 	_show_defeat = true
 	_game_time = game_time
 	_appear_t = 0.0
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	_collect_stats()
+
+func _collect_stats() -> void:
+	var stage: Node = get_tree().get_first_node_in_group("rts_stage")
+	if not stage:
+		return
+	for child in stage.get_children():
+		if child.has_method("get_game_time") and "stats_units_produced" in child:
+			_stats = {
+				"units_produced": child.stats_units_produced,
+				"units_lost": child.stats_units_lost,
+				"enemies_killed": child.stats_enemies_killed,
+			}
+			break
 
 func show_elimination(faction_name: String) -> void:
 	_elimination_text = "%s ELIMINATED" % faction_name.to_upper()
@@ -86,7 +102,29 @@ func _draw() -> void:
 	var seconds: int = int(_game_time) % 60
 	var time_text: String = "Time: %02d:%02d" % [minutes, seconds]
 	var tts: Vector2 = font.get_string_size(time_text, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_BODY)
-	draw_string(font, Vector2((vp.x - tts.x) * 0.5, vp.y * 0.55), time_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_BODY, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.7 * a))
+	draw_string(font, Vector2((vp.x - tts.x) * 0.5, vp.y * 0.52), time_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_BODY, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.7 * a))
+
+	# Stats summary
+	if not _stats.is_empty() and a > 0.3:
+		var mono: Font = UIConstants.get_mono_font()
+		var stat_a: float = clampf((a - 0.3) / 0.5, 0.0, 1.0)
+		var stat_y: float = vp.y * 0.57
+		var stat_x: float = vp.x * 0.5
+		var stat_lines: Array = [
+			["Units Produced", str(_stats.get("units_produced", 0))],
+			["Units Lost", str(_stats.get("units_lost", 0))],
+			["Enemies Killed", str(_stats.get("enemies_killed", 0))],
+		]
+		# Separator line
+		draw_line(Vector2(stat_x - 80, stat_y), Vector2(stat_x + 80, stat_y), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.3 * stat_a), 1.0)
+		stat_y += 8
+		for sl in stat_lines:
+			var label: String = sl[0]
+			var value: String = sl[1]
+			var label_w: float = mono.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION).x
+			draw_string(mono, Vector2(stat_x - label_w - 15, stat_y + 14), label, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, Color(UIConstants.TEXT_DIM.r, UIConstants.TEXT_DIM.g, UIConstants.TEXT_DIM.b, 0.7 * stat_a))
+			draw_string(mono, Vector2(stat_x + 15, stat_y + 14), value, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, Color(UIConstants.TEXT_BRIGHT.r, UIConstants.TEXT_BRIGHT.g, UIConstants.TEXT_BRIGHT.b, 0.9 * stat_a))
+			stat_y += 18
 
 	# Press any key
 	if a >= 0.8:

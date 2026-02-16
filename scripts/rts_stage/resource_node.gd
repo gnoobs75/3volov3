@@ -85,8 +85,21 @@ func _find_nearest_gathering_worker() -> Node2D:
 					nearest = unit
 	return nearest
 
+func _is_on_screen() -> bool:
+	var camera: Camera2D = get_viewport().get_camera_2d()
+	if not camera:
+		return true
+	var cam_pos: Vector2 = camera.global_position
+	var vp_size: Vector2 = get_viewport_rect().size
+	var zoom: float = camera.zoom.x if camera.zoom.x > 0 else 1.0
+	var half_view: Vector2 = vp_size / (2.0 * zoom) + Vector2(60, 60)
+	var diff: Vector2 = (global_position - cam_pos).abs()
+	return diff.x < half_view.x and diff.y < half_view.y
+
 func _draw() -> void:
 	if biomass_remaining <= 0:
+		return
+	if not _is_on_screen():
 		return
 	var fill: float = float(biomass_remaining) / float(max_biomass)
 	var pulse: float = 1.0 + 0.15 * sin(_time * 2.0 + _pulse_offset)
@@ -109,9 +122,14 @@ func _draw() -> void:
 		pts.append(Vector2(cos(angle) * r, sin(angle) * r))
 	draw_colored_polygon(pts, Color(0.15, 0.6, 0.3, 0.7 * fill + 0.3))
 
-	# Sparkle
-	var sparkle_pos: Vector2 = Vector2(cos(_time * 1.5) * 3.0, sin(_time * 1.5) * 3.0)
-	draw_circle(sparkle_pos, 1.5, Color(0.4, 1.0, 0.6, 0.5))
+	# Sparkle (desynced per node)
+	var sp_t: float = _time * 1.5 + _pulse_offset
+	var sparkle_pos: Vector2 = Vector2(cos(sp_t) * 3.0, sin(sp_t * 1.3) * 3.0)
+	var sparkle_alpha: float = 0.3 + 0.3 * sin(sp_t * 2.0)
+	draw_circle(sparkle_pos, 1.5, Color(0.4, 1.0, 0.6, sparkle_alpha))
+	# Second sparkle at offset angle
+	var sp2: Vector2 = Vector2(cos(sp_t + PI) * 5.0, sin(sp_t * 0.8 + PI) * 5.0)
+	draw_circle(sp2, 1.0, Color(0.5, 1.0, 0.7, sparkle_alpha * 0.5))
 
 	# Gather particle streams
 	for p in _gather_particles:
