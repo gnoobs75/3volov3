@@ -93,7 +93,7 @@ static func get_stats(building_type: int) -> Dictionary:
 		return BUILDING_DATA[building_type]
 	return BUILDING_DATA[BuildingType.BIO_WALL]
 
-static func get_name(building_type: int) -> String:
+static func get_building_name(building_type: int) -> String:
 	return get_stats(building_type).get("name", "Unknown")
 
 static func get_cost(building_type: int) -> Dictionary:

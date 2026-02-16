@@ -106,7 +106,7 @@ static func get_stats(unit_type: int) -> Dictionary:
 		return UNIT_DATA[unit_type]
 	return UNIT_DATA[UnitType.WORKER]
 
-static func get_name(unit_type: int) -> String:
+static func get_unit_name(unit_type: int) -> String:
 	return get_stats(unit_type).get("name", "Unknown")
 
 static func get_cost(unit_type: int) -> Dictionary:

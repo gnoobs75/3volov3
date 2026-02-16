@@ -225,9 +225,9 @@ func _draw_selection_info(vp: Vector2, font: Font, mono: Font) -> void:
 			return
 		var uname: String = ""
 		if unit.is_in_group("rts_units") and "unit_type" in unit:
-			uname = UnitStats.get_name(unit.unit_type)
+			uname = UnitStats.get_unit_name(unit.unit_type)
 		elif unit.is_in_group("rts_buildings") and "building_type" in unit:
-			uname = BuildingStats.get_name(unit.building_type)
+			uname = BuildingStats.get_building_name(unit.building_type)
 		draw_string(font, Vector2(panel_x, panel_y + 18), uname, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_SUBHEADER, UIConstants.TEXT_BRIGHT)
 		if "health" in unit and "max_health" in unit:
 			var hp_text: String = "HP: %d/%d" % [int(unit.health), int(unit.max_health)]
@@ -247,7 +247,7 @@ func _draw_selection_info(vp: Vector2, font: Font, mono: Font) -> void:
 				type_counts[ut] = type_counts.get(ut, 0) + 1
 		var ty: float = panel_y + 38
 		for ut in type_counts:
-			draw_string(mono, Vector2(panel_x, ty), "%s: %d" % [UnitStats.get_name(ut), type_counts[ut]], HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, UIConstants.TEXT_DIM)
+			draw_string(mono, Vector2(panel_x, ty), "%s: %d" % [UnitStats.get_unit_name(ut), type_counts[ut]], HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, UIConstants.TEXT_DIM)
 			ty += 16
 
 func _draw_command_buttons(vp: Vector2, font: Font) -> void:
@@ -275,7 +275,7 @@ func _draw_build_menu(vp: Vector2, font: Font, mono: Font) -> void:
 		var bg: Color = UIConstants.BTN_BG_HOVER if hovered else UIConstants.BTN_BG
 		draw_rect(rect, bg)
 		draw_rect(rect, UIConstants.BTN_BORDER if not hovered else UIConstants.BTN_BORDER_HOVER, false, 1.0)
-		var bname: String = BuildingStats.get_name(BUILD_BUTTONS[i].type)
+		var bname: String = BuildingStats.get_building_name(BUILD_BUTTONS[i].type)
 		var cost: Dictionary = BuildingStats.get_cost(BUILD_BUTTONS[i].type)
 		var label: String = "[%s] %s" % [BUILD_BUTTONS[i].key, bname]
 		var tc: Color = UIConstants.BTN_TEXT_HOVER if hovered else UIConstants.BTN_TEXT
@@ -302,7 +302,7 @@ func _draw_production_panel(vp: Vector2, font: Font) -> void:
 		draw_rect(rect, bg)
 		draw_rect(rect, UIConstants.BTN_BORDER if not hovered else UIConstants.BTN_BORDER_HOVER, false, 1.0)
 		var utype: int = sel.can_produce[i]
-		var uname: String = UnitStats.get_name(utype)
+		var uname: String = UnitStats.get_unit_name(utype)
 		var cost: Dictionary = UnitStats.get_cost(utype)
 		var tc: Color = UIConstants.BTN_TEXT_HOVER if hovered else UIConstants.BTN_TEXT
 		draw_string(font, Vector2(rect.position.x + 4, rect.position.y + 15), uname, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, tc)

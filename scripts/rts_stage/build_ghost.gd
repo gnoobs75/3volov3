@@ -61,6 +61,6 @@ func _draw() -> void:
 
 	# Building name
 	var font: Font = UIConstants.get_mono_font()
-	var bname: String = BuildingStats.get_name(building_type)
+	var bname: String = BuildingStats.get_building_name(building_type)
 	var ls: Vector2 = font.get_string_size(bname, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_TINY)
 	draw_string(font, Vector2(-ls.x * 0.5, _size_radius + 18.0), bname, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, border_color)
