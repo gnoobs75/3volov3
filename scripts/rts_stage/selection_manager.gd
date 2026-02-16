@@ -8,6 +8,7 @@ var _control_groups: Dictionary = {}  # int -> Array of units
 var _drag_start: Vector2 = Vector2.ZERO
 var _is_dragging: bool = false
 var _drag_rect: Rect2 = Rect2()
+var _idle_worker_index: int = 0
 
 const DRAG_THRESHOLD: float = 8.0
 
@@ -118,3 +119,90 @@ func has_selected_workers() -> bool:
 
 func get_selected_of_type(unit_type: int) -> Array:
 	return selected_units.filter(func(u): return is_instance_valid(u) and "unit_type" in u and u.unit_type == unit_type)
+
+# === SMART SELECTION ===
+
+func select_all_of_type(unit_type: int, camera: Camera2D = null) -> void:
+	## Selects all player units of given type currently visible on screen.
+	## If no camera provided, selects all of that type regardless of screen position.
+	var matching: Array = []
+	var canvas_xform: Transform2D = Transform2D.IDENTITY
+	var vp_rect: Rect2 = Rect2()
+	var use_screen_filter: bool = false
+	if camera:
+		canvas_xform = camera.get_canvas_transform()
+		var vp: Viewport = camera.get_viewport()
+		if vp:
+			vp_rect = Rect2(Vector2.ZERO, vp.get_visible_rect().size)
+			use_screen_filter = true
+
+	for unit in get_tree().get_nodes_in_group("rts_units"):
+		if not is_instance_valid(unit):
+			continue
+		if "faction_id" in unit and unit.faction_id != 0:
+			continue
+		if "unit_type" in unit and unit.unit_type != unit_type:
+			continue
+		if use_screen_filter:
+			var screen_pos: Vector2 = canvas_xform * unit.global_position
+			if not vp_rect.has_point(screen_pos):
+				continue
+		matching.append(unit)
+
+	if not matching.is_empty():
+		select_units(matching)
+
+func select_all_military() -> void:
+	## Selects all non-worker player units.
+	var military: Array = []
+	for unit in get_tree().get_nodes_in_group("rts_units"):
+		if not is_instance_valid(unit):
+			continue
+		if "faction_id" in unit and unit.faction_id != 0:
+			continue
+		if "unit_type" in unit and unit.unit_type == UnitStats.UnitType.WORKER:
+			continue
+		military.append(unit)
+	if not military.is_empty():
+		select_units(military)
+
+func find_next_idle_worker() -> Node2D:
+	## Returns the next idle worker (cycles through them), or null if none.
+	var idle_workers: Array = []
+	for unit in get_tree().get_nodes_in_group("rts_units"):
+		if not is_instance_valid(unit):
+			continue
+		if "faction_id" in unit and unit.faction_id != 0:
+			continue
+		if "unit_type" in unit and unit.unit_type != UnitStats.UnitType.WORKER:
+			continue
+		if "state" in unit and unit.state == 0:  # State.IDLE
+			idle_workers.append(unit)
+	if idle_workers.is_empty():
+		return null
+	# Wrap the index around
+	_idle_worker_index = _idle_worker_index % idle_workers.size()
+	var result: Node2D = idle_workers[_idle_worker_index]
+	_idle_worker_index = (_idle_worker_index + 1) % idle_workers.size()
+	return result
+
+func select_all_on_screen(camera: Camera2D) -> void:
+	## Selects all player units visible on screen.
+	if not camera:
+		return
+	var canvas_xform: Transform2D = camera.get_canvas_transform()
+	var vp: Viewport = camera.get_viewport()
+	if not vp:
+		return
+	var vp_rect: Rect2 = Rect2(Vector2.ZERO, vp.get_visible_rect().size)
+	var on_screen: Array = []
+	for unit in get_tree().get_nodes_in_group("rts_units"):
+		if not is_instance_valid(unit):
+			continue
+		if "faction_id" in unit and unit.faction_id != 0:
+			continue
+		var screen_pos: Vector2 = canvas_xform * unit.global_position
+		if vp_rect.has_point(screen_pos):
+			on_screen.append(unit)
+	if not on_screen.is_empty():
+		select_units(on_screen)

@@ -25,6 +25,7 @@ var carry_capacity: int = 0
 var carried_biomass: int = 0
 var carried_genes: int = 0
 var build_speed: float = 0.0
+var _last_resource_group: String = ""  # Track the group of the last gathered resource
 
 # State
 var state: State = State.IDLE
@@ -180,12 +181,20 @@ func _process_attack(delta: float) -> void:
 
 func _process_gather(delta: float) -> void:
 	if not is_instance_valid(_gather_target) or _gather_target.is_depleted():
+		# Remember the resource group before clearing
+		if is_instance_valid(_gather_target):
+			_last_resource_group = _get_resource_group(_gather_target)
 		_gather_target = null
 		if carried_biomass > 0 or carried_genes > 0:
 			state = State.RETURN_RESOURCES
 			_navigate_to_nearest_depot()
 		else:
-			state = State.IDLE
+			# Try to find another resource of same type
+			var new_res: Node2D = _find_nearest_resource()
+			if new_res:
+				command_gather(new_res)
+			else:
+				state = State.IDLE
 		return
 	var dist: float = global_position.distance_to(_gather_target.global_position)
 	if dist > 30.0:
@@ -250,7 +259,15 @@ func _process_return_resources(_delta: float) -> void:
 		if is_instance_valid(_gather_target) and not _gather_target.is_depleted():
 			state = State.GATHER
 		else:
-			state = State.IDLE
+			# Gather target depleted — auto-find nearest non-depleted resource of same group
+			if is_instance_valid(_gather_target):
+				_last_resource_group = _get_resource_group(_gather_target)
+			_gather_target = null
+			var new_res: Node2D = _find_nearest_resource()
+			if new_res:
+				command_gather(new_res)
+			else:
+				state = State.IDLE
 		return
 	var next_pos: Vector2 = _nav_agent.get_next_path_position()
 	var dir: Vector2 = (next_pos - global_position).normalized()
@@ -263,6 +280,44 @@ func _process_hold(_delta: float) -> void:
 func _on_velocity_computed(safe_velocity: Vector2) -> void:
 	velocity = safe_velocity
 	move_and_slide()
+
+# === RESOURCE HELPERS ===
+
+func _get_resource_group(res: Node2D) -> String:
+	## Returns a string identifying the resource type/group.
+	if res.has_method("get_resource_type"):
+		return str(res.get_resource_type())
+	# Fallback: use the node's groups (look for rts_resource subtypes)
+	for g in res.get_groups():
+		if g != "rts_resources":
+			return g
+	return "rts_resources"
+
+func _find_nearest_resource() -> Node2D:
+	## Searches "rts_resources" group for nearest non-depleted resource.
+	## Prefers resources of same group as _last_resource_group if set.
+	var nearest: Node2D = null
+	var nearest_dist: float = INF
+	var nearest_same_type: Node2D = null
+	var nearest_same_dist: float = INF
+	for res in get_tree().get_nodes_in_group("rts_resources"):
+		if not is_instance_valid(res):
+			continue
+		if res.has_method("is_depleted") and res.is_depleted():
+			continue
+		var dist: float = global_position.distance_to(res.global_position)
+		if dist < nearest_dist:
+			nearest_dist = dist
+			nearest = res
+		# Check if same type as last gathered
+		if _last_resource_group != "" and _get_resource_group(res) == _last_resource_group:
+			if dist < nearest_same_dist:
+				nearest_same_dist = dist
+				nearest_same_type = res
+	# Prefer same type if found
+	if nearest_same_type:
+		return nearest_same_type
+	return nearest
 
 # === COMMANDS ===
 
@@ -283,6 +338,7 @@ func command_gather(target: Node2D) -> void:
 	state = State.GATHER
 	_gather_target = target
 	_gather_timer = 0.0
+	_last_resource_group = _get_resource_group(target)
 	if target.has_method("add_worker"):
 		target.add_worker()
 

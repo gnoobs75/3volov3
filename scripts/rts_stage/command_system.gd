@@ -34,7 +34,8 @@ func issue_attack_move(units: Array, target_pos: Vector2) -> void:
 	command_issued.emit("attack_move", target_pos)
 
 func issue_gather(units: Array, target: Node2D) -> void:
-	for unit in units:
+	for i in range(units.size()):
+		var unit: Node2D = units[i]
 		if is_instance_valid(unit) and unit.has_method("command_gather"):
 			unit.command_gather(target)
 	AudioManager.play_rts_gather()
@@ -60,6 +61,11 @@ func issue_stop(units: Array) -> void:
 	for unit in units:
 		if is_instance_valid(unit) and unit.has_method("command_stop"):
 			unit.command_stop()
+
+func issue_set_rally_point(building: Node2D, pos: Vector2) -> void:
+	if is_instance_valid(building) and building.has_method("set_rally_point"):
+		building.set_rally_point(pos)
+	AudioManager.play_rts_command()
 
 # === COMMAND MODE MANAGEMENT ===
 

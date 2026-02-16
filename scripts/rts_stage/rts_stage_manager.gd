@@ -18,12 +18,16 @@ var _hud: Control = null
 var _minimap: Control = null
 var _input_handler: Control = null
 var _overlay: Control = null
+var _intel_overlay: Control = null
 
 var _time: float = 0.0
 var _game_started: bool = false
 var _paused: bool = false
 var _game_over_shown: bool = false
 var _game_over_type: String = ""  # "win" or "lose"
+
+# AI difficulty (0=NOOB, 1=EASY, 2=MEDIUM, 3=HARD, 4=SWEATY)
+var ai_difficulty: int = 2
 
 # Navigation
 var _nav_region: NavigationRegion2D = null
@@ -97,6 +101,13 @@ func _ready() -> void:
 	_hud_layer.add_child(_minimap)
 	_minimap.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+	# Intel overlay (TAB toggle)
+	_intel_overlay = preload("res://scripts/rts_stage/rts_intel_overlay.gd").new()
+	_intel_overlay.name = "IntelOverlay"
+	_hud_layer.add_child(_intel_overlay)
+	_intel_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_intel_overlay.setup(self)
+
 	# Game over overlay
 	_overlay = preload("res://scripts/rts_stage/rts_overlay.gd").new()
 	_overlay.name = "Overlay"
@@ -129,7 +140,7 @@ func _ready() -> void:
 	for fid in [1, 2, 3]:
 		var ai := preload("res://scripts/rts_stage/ai_director.gd").new()
 		ai.name = "AIDirector_%d" % fid
-		ai.setup(fid, self)
+		ai.setup(fid, self, ai_difficulty)
 		add_child(ai)
 		_ai_directors.append(ai)
 
@@ -209,6 +220,16 @@ func get_combat_system() -> Node:
 func get_input_handler() -> Control:
 	return _input_handler
 
+func toggle_intel_overlay() -> void:
+	if _intel_overlay and _intel_overlay.has_method("toggle"):
+		_intel_overlay.toggle()
+
+func set_ai_difficulty(diff: int) -> void:
+	ai_difficulty = diff
+	for ai in _ai_directors:
+		if is_instance_valid(ai) and ai.has_method("set_difficulty"):
+			ai.set_difficulty(diff)
+
 # === BUILDING PLACEMENT ===
 
 func place_building(building_type: int, pos: Vector2) -> void:
@@ -271,7 +292,11 @@ func _on_unit_produced(building: Node2D, unit_type: int) -> void:
 		return
 	var template: CreatureTemplate = _faction_manager.get_template(fid)
 	var offset: Vector2 = Vector2(randf_range(-30, 30), randf_range(30, 60))
-	_spawn_unit(fid, unit_type, building.global_position + offset, template)
+	var unit: Node2D = _spawn_unit(fid, unit_type, building.global_position + offset, template)
+	# If building has a rally point set, command the unit to move there
+	if "has_rally_point" in building and building.has_rally_point:
+		if is_instance_valid(unit) and unit.has_method("command_move"):
+			unit.command_move(building.rally_point)
 
 func _on_unit_died(unit: Node2D) -> void:
 	_selection_manager.remove_unit(unit)

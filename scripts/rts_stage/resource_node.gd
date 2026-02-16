@@ -9,6 +9,11 @@ var max_biomass: int = 200
 var _time: float = 0.0
 var _pulse_offset: float = 0.0
 
+# Particle streams toward gathering workers
+var _gather_particles: Array = []  # [{pos, target_pos, progress, speed}]
+var _particle_spawn_timer: float = 0.0
+const PARTICLE_SPAWN_INTERVAL: float = 0.15
+
 func _ready() -> void:
 	_pulse_offset = randf() * TAU
 	# Add collision area for detection
@@ -37,7 +42,48 @@ func is_depleted() -> bool:
 
 func _process(delta: float) -> void:
 	_time += delta
+	_update_gather_particles(delta)
 	queue_redraw()
+
+func _update_gather_particles(delta: float) -> void:
+	# Find nearest gathering worker
+	var nearest_worker: Node2D = _find_nearest_gathering_worker()
+	# Spawn new particles if workers are gathering
+	if nearest_worker and biomass_remaining > 0:
+		_particle_spawn_timer += delta
+		if _particle_spawn_timer >= PARTICLE_SPAWN_INTERVAL:
+			_particle_spawn_timer = 0.0
+			var offset: Vector2 = Vector2(randf_range(-6, 6), randf_range(-6, 6))
+			_gather_particles.append({
+				"pos": offset,
+				"target_pos": nearest_worker.global_position - global_position,
+				"progress": 0.0,
+				"speed": randf_range(1.5, 3.0),
+			})
+	# Update existing particles
+	var i: int = _gather_particles.size() - 1
+	while i >= 0:
+		var p: Dictionary = _gather_particles[i]
+		p["progress"] += delta * p["speed"]
+		if nearest_worker and is_instance_valid(nearest_worker):
+			p["target_pos"] = nearest_worker.global_position - global_position
+		if p["progress"] >= 1.0:
+			_gather_particles.remove_at(i)
+		i -= 1
+
+func _find_nearest_gathering_worker() -> Node2D:
+	var nearest: Node2D = null
+	var nearest_dist: float = 80.0  # Only show particles for workers within range
+	for unit in get_tree().get_nodes_in_group("rts_units"):
+		if not is_instance_valid(unit):
+			continue
+		if "unit_type" in unit and unit.unit_type == UnitStats.UnitType.WORKER:
+			if "state" in unit and unit.state == 2:  # GATHERING (typical enum value)
+				var dist: float = global_position.distance_to(unit.global_position)
+				if dist < nearest_dist:
+					nearest_dist = dist
+					nearest = unit
+	return nearest
 
 func _draw() -> void:
 	if biomass_remaining <= 0:
@@ -46,7 +92,13 @@ func _draw() -> void:
 	var pulse: float = 1.0 + 0.15 * sin(_time * 2.0 + _pulse_offset)
 	var radius: float = 8.0 + 6.0 * fill
 
-	# Glow
+	# Outer pulsing glow ring (oscillating alpha 0.05-0.15)
+	var glow_alpha: float = 0.05 + 0.10 * (0.5 + 0.5 * sin(_time * 1.5 + _pulse_offset))
+	var glow_radius: float = radius * 3.0 * pulse
+	draw_arc(Vector2.ZERO, glow_radius, 0, TAU, 32, Color(0.2, 0.8, 0.4, glow_alpha), 2.0)
+	draw_arc(Vector2.ZERO, glow_radius * 0.85, 0, TAU, 32, Color(0.15, 0.7, 0.35, glow_alpha * 0.5), 1.0)
+
+	# Inner soft glow
 	draw_circle(Vector2.ZERO, radius * 2.5 * pulse, Color(0.2, 0.8, 0.4, 0.06))
 
 	# Main blob
@@ -60,3 +112,18 @@ func _draw() -> void:
 	# Sparkle
 	var sparkle_pos: Vector2 = Vector2(cos(_time * 1.5) * 3.0, sin(_time * 1.5) * 3.0)
 	draw_circle(sparkle_pos, 1.5, Color(0.4, 1.0, 0.6, 0.5))
+
+	# Gather particle streams
+	for p in _gather_particles:
+		var t: float = p["progress"]
+		var start: Vector2 = p["pos"]
+		var target: Vector2 = p["target_pos"]
+		# Cubic ease-in for acceleration effect
+		var eased_t: float = t * t
+		var draw_pos: Vector2 = start.lerp(target, eased_t)
+		# Add slight sine curve to path
+		var perp: Vector2 = (target - start).normalized().rotated(PI * 0.5)
+		draw_pos += perp * sin(t * PI * 2.0) * 4.0
+		var p_alpha: float = (1.0 - t) * 0.5
+		var p_size: float = 1.5 * (1.0 - t * 0.5)
+		draw_circle(draw_pos, p_size, Color(0.3, 0.9, 0.5, p_alpha))

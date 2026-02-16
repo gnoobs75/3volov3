@@ -37,6 +37,10 @@ var attack_cooldown: float = 1.5
 var _tower_attack_timer: float = 0.0
 var _tower_target: Node2D = null
 
+# Rally point
+var rally_point: Vector2 = Vector2.ZERO
+var has_rally_point: bool = false
+
 # Visual
 var _time: float = 0.0
 var _collision_shape: CollisionShape2D = null
@@ -103,6 +107,13 @@ func take_damage(amount: float, _attacker: Node2D = null) -> void:
 func _die() -> void:
 	destroyed.emit(self)
 	queue_free()
+
+# === RALLY POINT ===
+
+func set_rally_point(pos: Vector2) -> void:
+	rally_point = pos
+	has_rally_point = true
+	queue_redraw()
 
 # === PRODUCTION ===
 
@@ -215,6 +226,10 @@ func _draw() -> void:
 	if not _production_queue.is_empty():
 		_draw_production_bar()
 
+	# Rally point
+	if has_rally_point and faction_id == 0:
+		_draw_rally_point()
+
 func _draw_spawning_pool(mc: Color, gc: Color) -> void:
 	# Large pulsing pool
 	var pulse: float = 1.0 + 0.05 * sin(_time * 1.5)
@@ -304,3 +319,35 @@ func _draw_production_bar() -> void:
 	var pct: float = get_production_progress()
 	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w, bar_h), Color(0.1, 0.1, 0.1, 0.5))
 	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w * pct, bar_h), Color(0.3, 0.6, 1.0, 0.7))
+
+func _draw_rally_point() -> void:
+	## Draws a rally point flag with dotted line from building
+	var rp_local: Vector2 = rally_point - global_position
+	var flag_color: Color = Color(0.2, 1.0, 0.4, 0.7)
+
+	# Dotted line from building center to rally point
+	var line_len: float = rp_local.length()
+	var dir: Vector2 = rp_local.normalized() if line_len > 0 else Vector2.RIGHT
+	var dash_len: float = 6.0
+	var gap_len: float = 4.0
+	var d: float = 0.0
+	while d < line_len:
+		var seg_start: Vector2 = dir * d
+		var seg_end: Vector2 = dir * minf(d + dash_len, line_len)
+		draw_line(seg_start, seg_end, Color(flag_color.r, flag_color.g, flag_color.b, 0.4), 1.0)
+		d += dash_len + gap_len
+
+	# Flag pole (vertical line)
+	var pole_base: Vector2 = rp_local
+	var pole_top: Vector2 = rp_local + Vector2(0, -14.0)
+	draw_line(pole_base, pole_top, flag_color, 1.5)
+
+	# Flag triangle
+	var flag_pts := PackedVector2Array()
+	flag_pts.append(pole_top)
+	flag_pts.append(pole_top + Vector2(8.0, 3.0))
+	flag_pts.append(pole_top + Vector2(0, 6.0))
+	draw_colored_polygon(flag_pts, flag_color)
+
+	# Small base circle
+	draw_circle(pole_base, 2.0, flag_color)

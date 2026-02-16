@@ -13,10 +13,17 @@ var current_workers: int = 0
 var _time: float = 0.0
 var _bone_angles: Array[float] = []
 
+# Tendril state
+var _tendril_phases: Array[float] = []
+const NUM_TENDRILS: int = 4
+
 func _ready() -> void:
 	# Generate bone/rib decoration angles
 	for i in range(6):
 		_bone_angles.append(TAU * float(i) / 6.0 + randf_range(-0.2, 0.2))
+	# Generate tendril start phases
+	for i in range(NUM_TENDRILS):
+		_tendril_phases.append(randf() * TAU)
 	# Add collision area for detection
 	var area := Area2D.new()
 	area.name = "TitanArea"
@@ -65,7 +72,40 @@ func _draw() -> void:
 		draw_circle(Vector2.ZERO, 30.0, Color(0.1, 0.08, 0.06, 0.3))
 		return
 
-	# Outer glow
+	# Resource aura ring — shrinks as resources deplete
+	var aura_radius: float = 90.0 * fill + 20.0
+	var aura_pulse: float = 0.5 + 0.5 * sin(_time * 0.8)
+	var aura_alpha: float = (0.04 + 0.04 * aura_pulse) * fill
+	draw_arc(Vector2.ZERO, aura_radius, 0, TAU, 48, Color(0.6, 0.35, 0.1, aura_alpha), 2.5)
+	draw_arc(Vector2.ZERO, aura_radius + 4.0, 0, TAU, 48, Color(0.5, 0.3, 0.1, aura_alpha * 0.4), 1.0)
+
+	# Large dramatic pulsing glow
+	var glow_pulse: float = 1.0 + 0.1 * sin(_time * 1.2)
+	var glow_alpha: float = 0.06 + 0.06 * sin(_time * 0.9)
+	draw_circle(Vector2.ZERO, 80.0 * glow_pulse, Color(0.6, 0.35, 0.15, glow_alpha * fill))
+	draw_circle(Vector2.ZERO, 55.0 * glow_pulse, Color(0.5, 0.3, 0.1, glow_alpha * 0.7 * fill))
+
+	# Slowly rotating organic tendrils (4 tendrils, sine-driven)
+	for ti in range(NUM_TENDRILS):
+		var base_angle: float = TAU * float(ti) / float(NUM_TENDRILS) + _time * 0.15
+		var phase: float = _tendril_phases[ti]
+		# Draw tendril as chain of 6 segments with sine displacement
+		var prev_pt: Vector2 = Vector2(cos(base_angle), sin(base_angle)) * 30.0 * (0.5 + fill * 0.5)
+		for si in range(6):
+			var seg_t: float = float(si + 1) / 6.0
+			var seg_dist: float = (30.0 + seg_t * 35.0) * (0.5 + fill * 0.5)
+			var wave: float = sin(_time * 1.5 + phase + seg_t * PI * 2.0) * 8.0 * seg_t
+			var seg_angle: float = base_angle + wave * 0.02
+			var seg_pt: Vector2 = Vector2(cos(seg_angle), sin(seg_angle)) * seg_dist
+			# Perpendicular displacement for organic wave
+			var perp: Vector2 = Vector2(-sin(seg_angle), cos(seg_angle))
+			seg_pt += perp * wave
+			var seg_alpha: float = (0.3 - seg_t * 0.2) * fill
+			var seg_width: float = (2.5 - seg_t * 1.5) * (0.5 + fill * 0.5)
+			draw_line(prev_pt, seg_pt, Color(0.45, 0.25, 0.12, seg_alpha), maxf(seg_width, 0.5))
+			prev_pt = seg_pt
+
+	# Outer glow (original)
 	draw_circle(Vector2.ZERO, 70.0, Color(0.5, 0.3, 0.1, 0.04))
 
 	# Main body (irregular blob)

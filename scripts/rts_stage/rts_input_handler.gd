@@ -11,6 +11,12 @@ var _build_ghost: Node2D = null
 var _drag_rect_visible: bool = false
 var _drag_rect: Rect2 = Rect2()
 
+# Double-click tracking
+var _last_click_time: float = 0.0
+var _last_click_pos: Vector2 = Vector2.ZERO
+const DOUBLE_CLICK_TIME: float = 0.35
+const DOUBLE_CLICK_DIST: float = 20.0
+
 func setup(sel: Node, cmd: Node, cam: Camera2D, stage: Node) -> void:
 	_selection_mgr = sel
 	_command_sys = cmd
@@ -38,7 +44,17 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 				var world_pos: Vector2 = _get_world_mouse_pos()
 				_command_sys.handle_patrol_click(world_pos, _selection_mgr.selected_units)
 			else:
-				_selection_mgr.start_drag(event.position)
+				# Check for double-click before starting drag
+				var now: float = Time.get_ticks_msec() / 1000.0
+				var dt: float = now - _last_click_time
+				if dt < DOUBLE_CLICK_TIME and event.position.distance_to(_last_click_pos) < DOUBLE_CLICK_DIST:
+					# Double-click: select all units of same type on screen
+					_handle_double_click()
+					_last_click_time = 0.0  # Reset to prevent triple-click
+				else:
+					_last_click_time = now
+					_last_click_pos = event.position
+					_selection_mgr.start_drag(event.position)
 		else:
 			# Release
 			if _selection_mgr.is_dragging():
@@ -56,6 +72,26 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 				_remove_build_ghost()
 			else:
 				_handle_right_click()
+
+func _handle_double_click() -> void:
+	## Select all player units of the same type as the unit under cursor (on screen)
+	if not _selection_mgr or not _camera:
+		return
+	# Find unit under cursor
+	var world_pos: Vector2 = _get_world_mouse_pos()
+	var best_unit: Node2D = null
+	var best_dist: float = 25.0
+	for unit in get_tree().get_nodes_in_group("rts_units"):
+		if not is_instance_valid(unit):
+			continue
+		if "faction_id" in unit and unit.faction_id != 0:
+			continue
+		var dist: float = world_pos.distance_to(unit.global_position)
+		if dist < best_dist:
+			best_dist = dist
+			best_unit = unit
+	if best_unit and "unit_type" in best_unit:
+		_selection_mgr.select_all_of_type(best_unit.unit_type, _camera)
 
 func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and _command_sys.current_mode == _command_sys.CommandMode.NORMAL:
@@ -116,6 +152,37 @@ func _handle_right_click() -> void:
 			_command_sys.issue_attack(_selection_mgr.selected_units, building)
 			return
 
+	# Check if clicking on own building (select production / deposit at depot)
+	for building in get_tree().get_nodes_in_group("rts_buildings"):
+		if not is_instance_valid(building):
+			continue
+		if not ("faction_id" in building and building.faction_id == 0):
+			continue
+		if world_pos.distance_to(building.global_position) < 40.0:
+			# Own building clicked
+			if "is_depot" in building and building.is_depot and _selection_mgr.has_selected_workers():
+				# Send selected workers to deposit at this depot
+				var workers: Array = _selection_mgr.get_selected_workers()
+				for i in range(workers.size()):
+					var worker: Node2D = workers[i]
+					if is_instance_valid(worker) and worker.has_method("command_move"):
+						# Slight offset so workers don't stack
+						var angle: float = TAU * float(i) / float(maxi(workers.size(), 1))
+						var offset: Vector2 = Vector2(cos(angle), sin(angle)) * 15.0
+						worker.command_move(building.global_position + offset)
+				AudioManager.play_rts_command()
+				return
+			elif "is_production" in building and building.is_production:
+				# Select the production building (so player can queue units via HUD)
+				_selection_mgr.deselect_all()
+				# Buildings aren't in rts_units, but we can still let the HUD know
+				# For now, set rally point if a rally point command is pending
+				# Otherwise just select the building for the HUD
+				if building.has_method("queue_unit"):
+					_command_sys.issue_set_rally_point(building, world_pos)
+				return
+			return
+
 	# Check if clicking on a resource (gather with workers)
 	if _selection_mgr.has_selected_workers():
 		for res in get_tree().get_nodes_in_group("rts_resources"):
@@ -124,7 +191,9 @@ func _handle_right_click() -> void:
 			if res.has_method("is_depleted") and res.is_depleted():
 				continue
 			if world_pos.distance_to(res.global_position) < 50.0:
-				_command_sys.issue_gather(_selection_mgr.get_selected_workers(), res)
+				var workers: Array = _selection_mgr.get_selected_workers()
+				# Send ALL selected workers with slight position offsets
+				_command_sys.issue_gather(workers, res)
 				return
 
 	# Default: move
@@ -172,6 +241,23 @@ func _unhandled_input(event: InputEvent) -> void:
 				_selection_mgr.deselect_all()
 			get_viewport().set_input_as_handled()
 
+		# Period key (.) — find and select next idle worker
+		if event.keycode == KEY_PERIOD:
+			var idle_worker: Node2D = _selection_mgr.find_next_idle_worker()
+			if idle_worker:
+				_selection_mgr.select_unit(idle_worker, false)
+				# Center camera on the idle worker
+				if _camera and _camera.has_method("focus_position"):
+					_camera.focus_position(idle_worker.global_position)
+			get_viewport().set_input_as_handled()
+			return
+
+		# Ctrl+A — select all military (non-worker) units
+		if event.keycode == KEY_A and event.ctrl_pressed:
+			_selection_mgr.select_all_military()
+			get_viewport().set_input_as_handled()
+			return
+
 		# Control groups (Ctrl+1-5 to assign, 1-5 to recall)
 		var group_keys: Array = [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5]
 		for i in range(group_keys.size()):
@@ -183,9 +269,16 @@ func _unhandled_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 				return
 
+		# TAB — toggle intel overlay
+		if event.keycode == KEY_TAB:
+			if _stage and _stage.has_method("toggle_intel_overlay"):
+				_stage.toggle_intel_overlay()
+			get_viewport().set_input_as_handled()
+			return
+
 		# Command hotkeys (only when not in build mode)
 		if _command_sys.current_mode != _command_sys.CommandMode.BUILD:
-			if event.keycode == KEY_A:
+			if event.keycode == KEY_A and not event.ctrl_pressed:
 				_command_sys.enter_attack_move_mode()
 				get_viewport().set_input_as_handled()
 			elif event.keycode == KEY_P:
