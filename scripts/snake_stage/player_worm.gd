@@ -112,6 +112,21 @@ var _trait_flash: float = 0.0  # Screen flash on activation
 var _idle_voice_timer: float = 4.0  # Delay before first idle vocalization
 var _trait_flash_color: Color = Color.WHITE
 
+# --- Flashlight Beam (MMB toggle) ---
+var _flashlight_on: bool = false
+var _flashlight_intensity: float = 0.0  # 0=off, 1=full (smooth lerp)
+var _flashlight_cone_mesh: MeshInstance3D = null  # Volumetric light cone
+const FLASHLIGHT_ENERGY_MULT: float = 3.5  # Moderate — lights surfaces, not fog
+const FLASHLIGHT_RANGE_MULT: float = 2.5  # Good reach without fog-sphere
+const FLASHLIGHT_ANGLE_ON: float = 15.0  # Tight focused beam
+const FLASHLIGHT_ANGLE_OFF: float = 28.0  # Normal cone
+const FLASHLIGHT_ENERGY_DRAIN: float = 5.0  # Energy per second while active
+const FLASHLIGHT_NOISE: float = 0.85  # Bright beam draws attention
+const FLASHLIGHT_RAMP_SPEED: float = 8.0  # Snappy on/off
+const FLASHLIGHT_CONE_ALPHA: float = 0.18  # Bright visible beam shaft
+const FLASHLIGHT_AMBIENT_DIM: float = 0.15  # Dim player OmniLights to 15% for contrast
+var _mmb_just_pressed: bool = false
+
 # --- Tractor Beam ---
 const TRACTOR_RANGE: float = 12.0  # Max pull distance
 const TRACTOR_FORCE: float = 15.0  # Pull speed
@@ -120,7 +135,10 @@ var _tractor_active: bool = false
 var _rmb_just_pressed: bool = false
 
 # --- Head direction ---
-var _head_flip: float = 0.0  # 0 = facing forward, PI = facing backward (smooth)
+var _head_flip: float = 0.0  # Legacy, kept at 0 (head tracks cursor now)
+var _aim_target: Vector3 = Vector3.ZERO  # World-space cursor hit point
+var _head_yaw_offset: float = 0.0  # Horizontal aim offset from body heading
+var _head_pitch: float = 0.0  # Vertical aim angle (positive = looking up)
 
 # --- Visuals ---
 var _eye_light: SpotLight3D = null
@@ -132,6 +150,7 @@ var _time: float = 0.0
 var _body_color: Color = Color(0.55, 0.35, 0.45)  # Pink-brown worm
 var _belly_color: Color = Color(0.7, 0.55, 0.5)
 var _vein_meshes: Array[MeshInstance3D] = []  # Purple vein details on segments
+var _cilia_meshes: Array[MeshInstance3D] = []  # Cilia hairs on segments
 var _synapse_lights: Array[OmniLight3D] = []  # Firing synapse pulses
 const GLOW_COLOR: Color = Color(0.15, 0.45, 0.1)  # Eerie green glow
 var _damage_flash: float = 0.0
@@ -141,6 +160,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		var mb: InputEventMouseButton = event
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
 			_rmb_just_pressed = true
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_MIDDLE:
+			_mmb_just_pressed = true
 
 func _ready() -> void:
 	add_to_group("player_worm")
@@ -157,6 +178,36 @@ func _ready() -> void:
 		_position_history.append(global_position)
 		_rotation_history.append(_heading)
 	_last_record_pos = global_position
+	# Set crosshair cursor
+	_create_crosshair_cursor()
+
+func _create_crosshair_cursor() -> void:
+	var sz: int = 32
+	var cx: int = sz / 2
+	var arm: int = 11
+	var gap: int = 4
+	var img: Image = Image.create(sz, sz, false, Image.FORMAT_RGBA8)
+	var col: Color = Color(0.3, 1.0, 0.5, 0.9)
+	var outline: Color = Color(0.0, 0.0, 0.0, 0.6)
+	# Draw crosshair with outline
+	for x in range(cx - arm, cx + arm + 1):
+		if x >= 0 and x < sz and abs(x - cx) >= gap:
+			if cx - 1 >= 0:
+				img.set_pixel(x, cx - 1, outline)
+			if cx + 1 < sz:
+				img.set_pixel(x, cx + 1, outline)
+			img.set_pixel(x, cx, col)
+	for y in range(cx - arm, cx + arm + 1):
+		if y >= 0 and y < sz and abs(y - cx) >= gap:
+			if cx - 1 >= 0:
+				img.set_pixel(cx - 1, y, outline)
+			if cx + 1 < sz:
+				img.set_pixel(cx + 1, y, outline)
+			img.set_pixel(cx, y, col)
+	# Center dot
+	img.set_pixel(cx, cx, Color(1.0, 1.0, 1.0, 1.0))
+	var tex: ImageTexture = ImageTexture.create_from_image(img)
+	Input.set_custom_mouse_cursor(tex, Input.CURSOR_ARROW, Vector2(cx, cx))
 
 func reset_position_history() -> void:
 	## Re-fill position history with current position (call after teleporting)
@@ -292,9 +343,40 @@ func _build_head() -> void:
 		_eye_light.shadow_enabled = true
 		_eye_light.rotation.x = deg_to_rad(-15.0)  # Tilt down slightly to hit ground
 		_eye_lure.add_child(_eye_light)
+
+		# Volumetric light cone (visible beam shaft cutting through fog)
+		_flashlight_cone_mesh = _create_flashlight_cone()
+		_eye_light.add_child(_flashlight_cone_mesh)
 	else:
 		# Fallback: procedural head if GLB not found
 		_build_head_procedural()
+
+func _create_flashlight_cone() -> MeshInstance3D:
+	## Creates the volumetric beam shaft mesh — a tight bright cone visible in fog.
+	var mesh_inst := MeshInstance3D.new()
+	mesh_inst.name = "FlashlightCone"
+	var cone := CylinderMesh.new()
+	cone.top_radius = 2.0  # Wide end (far forward, -Z after rotation)
+	cone.bottom_radius = 0.02  # Pinpoint at source (near eye, +Z after rotation)
+	cone.height = 20.0  # Long reach (dynamically scaled each frame)
+	cone.radial_segments = 24  # Smooth circle
+	cone.rings = 4  # Multiple rings for better alpha gradient look
+	mesh_inst.mesh = cone
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(1.0, 0.95, 0.8, 0.0)  # Bright white-warm, starts invisible
+	mat.no_depth_test = false
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED  # Visible from inside and outside
+	mat.vertex_color_use_as_albedo = false
+	mesh_inst.material_override = mat
+	# CylinderMesh is Y-aligned; rotate -90° on X to point along -Z (forward)
+	mesh_inst.rotation.x = deg_to_rad(-90.0)
+	mesh_inst.position.z = -10.0  # Center of beam, offset forward
+	mesh_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mesh_inst.visible = false
+	return mesh_inst
 
 func _build_head_procedural() -> void:
 	_head_mesh = MeshInstance3D.new()
@@ -382,7 +464,7 @@ func _trigger_bite() -> void:
 	_bite_cooldown = BITE_COOLDOWN_TIME
 
 	# --- LUNGE: thrust in direction the head is facing ---
-	var head_dir: float = _heading + _head_flip
+	var head_dir: float = _heading + _head_yaw_offset
 	var lunge_dir: Vector3 = Vector3(sin(head_dir), 0, cos(head_dir))
 	velocity += lunge_dir * LUNGE_VELOCITY
 
@@ -522,6 +604,10 @@ func _build_face() -> void:
 	_eye_light.rotation.x = deg_to_rad(-20.0)
 	_eye_lure.add_child(_eye_light)
 
+	# Volumetric cone for flashlight (procedural fallback)
+	_flashlight_cone_mesh = _create_flashlight_cone()
+	_eye_light.add_child(_flashlight_cone_mesh)
+
 func _build_body_sections() -> void:
 	var vein_color: Color = Color(0.35, 0.08, 0.45)  # Purple veins
 
@@ -579,6 +665,33 @@ func _build_body_sections() -> void:
 			vein.rotation.z = angle + PI * 0.5
 			seg.add_child(vein)
 			_vein_meshes.append(vein)
+
+		# Cilia hairs: thin filaments around each segment
+		var cilia_count: int = 8 if i % 2 == 0 else 6
+		for c in range(cilia_count):
+			var cilia: MeshInstance3D = MeshInstance3D.new()
+			var cilia_cyl: CylinderMesh = CylinderMesh.new()
+			cilia_cyl.top_radius = 0.003
+			cilia_cyl.bottom_radius = seg_radius * 0.035
+			cilia_cyl.height = seg_radius * 0.7
+			cilia_cyl.radial_segments = 3
+			cilia.mesh = cilia_cyl
+
+			var cilia_mat: StandardMaterial3D = StandardMaterial3D.new()
+			cilia_mat.albedo_color = col.lightened(0.15)
+			cilia_mat.roughness = 0.5
+			cilia_mat.emission_enabled = true
+			cilia_mat.emission = GLOW_COLOR * 0.6
+			cilia_mat.emission_energy_multiplier = 0.5
+			cilia.material_override = cilia_mat
+
+			var c_angle: float = TAU * c / cilia_count + i * 0.4
+			var c_r: float = seg_radius * 0.92
+			cilia.position = Vector3(cos(c_angle) * c_r, sin(c_angle) * c_r, 0)
+			cilia.rotation.z = c_angle
+			cilia.rotation.x = randf_range(-0.3, 0.3)
+			seg.add_child(cilia)
+			_cilia_meshes.append(cilia)
 
 		# Synapse light on every 3rd section
 		if i % 3 == 0:
@@ -640,7 +753,7 @@ func _physics_process(delta: float) -> void:
 	_is_sprinting = Input.is_action_pressed("sprint") and energy > 1.0
 	_is_creeping = Input.is_key_pressed(KEY_SPACE) and not _is_sprinting
 
-	# --- Turning ---
+	# --- Turning (A/D keys) ---
 	if absf(input_turn) > 0.1:
 		_heading += input_turn * TURN_SPEED * delta
 
@@ -677,13 +790,8 @@ func _physics_process(delta: float) -> void:
 	# --- Rotation ---
 	rotation.y = _heading
 
-	# --- Head faces movement direction (hold direction until opposite key) ---
-	var head_flip_target: float = _head_flip  # Hold current facing when idle
-	if input_forward < -0.1:
-		head_flip_target = PI  # S key: head faces backward
-	elif input_forward > 0.1:
-		head_flip_target = 0.0  # W key: head faces forward
-	_head_flip = lerp_angle(_head_flip, head_flip_target, delta * 8.0)
+	# --- Head cursor tracking (head independently aims at crosshair) ---
+	_update_head_aim(delta)
 
 	# --- Record position history ---
 	var dist_from_last: float = global_position.distance_to(_last_record_pos)
@@ -770,6 +878,35 @@ func _physics_process(delta: float) -> void:
 	if absf(_camo_alpha - 1.0) > 0.02:
 		_apply_camo_transparency(_camo_alpha)
 
+	# --- Flashlight Beam (MMB toggle) ---
+	if _mmb_just_pressed:
+		_flashlight_on = not _flashlight_on
+		if _flashlight_on and energy < 5.0:
+			_flashlight_on = false  # Can't turn on with near-empty energy
+		if _flashlight_on:
+			AudioManager.play_flashlight_click()
+		if _flashlight_cone_mesh:
+			_flashlight_cone_mesh.visible = _flashlight_on or _flashlight_intensity > 0.01
+	_mmb_just_pressed = false
+	# Auto-off if energy runs out
+	if _flashlight_on and energy <= 0:
+		_flashlight_on = false
+	# Smooth intensity ramp
+	var target_intensity: float = 1.0 if _flashlight_on else 0.0
+	_flashlight_intensity = lerpf(_flashlight_intensity, target_intensity, delta * FLASHLIGHT_RAMP_SPEED)
+	if _flashlight_intensity < 0.01:
+		_flashlight_intensity = 0.0
+		if _flashlight_cone_mesh:
+			_flashlight_cone_mesh.visible = false
+	elif _flashlight_cone_mesh:
+		_flashlight_cone_mesh.visible = true
+	# Energy drain while active
+	if _flashlight_intensity > 0.01:
+		energy -= FLASHLIGHT_ENERGY_DRAIN * _flashlight_intensity * delta
+		energy = maxf(energy, 0.0)
+		# Noise increase — bright light attracts enemies
+		noise_level = maxf(noise_level, FLASHLIGHT_NOISE * _flashlight_intensity)
+
 	# --- Boss Trait Activation (1-5 keys or auto from equipped) ---
 	_trait_cooldown = maxf(_trait_cooldown - delta, 0.0)
 	if _bone_shield_active:
@@ -821,7 +958,8 @@ func _physics_process(delta: float) -> void:
 	if _head_wrapper:
 		_head_wrapper.position.y = 0.6 + bob
 		_head_wrapper.position.z = _lunge_offset
-		_head_wrapper.rotation.y = PI + _head_flip  # PI = base forward flip, + _head_flip for backward
+		_head_wrapper.rotation.y = PI + _head_yaw_offset  # PI = base forward flip, yaw offset from cursor
+		_head_wrapper.rotation.x = _head_pitch  # Vertical aim (positive = look up)
 	elif _head_node:
 		_head_node.position.y = 0.6 + bob
 	elif _head_mesh:
@@ -834,19 +972,70 @@ func _physics_process(delta: float) -> void:
 		# Dim during creep for stealth
 		if _is_creeping:
 			beam_energy *= 0.1  # Nearly off when sneaking
+		# Flashlight beam boost — smoothly ramps energy, range, and cone angle
+		var base_range: float = 13.0 + GameManager.evolution_level * 1.0
+		if _flashlight_intensity > 0.01:
+			var fl: float = _flashlight_intensity
+			beam_energy *= lerpf(1.0, FLASHLIGHT_ENERGY_MULT, fl)
+			var target_range: float = base_range * FLASHLIGHT_RANGE_MULT
+			_eye_light.spot_range = lerpf(_eye_light.spot_range, target_range, fl * 0.2)
+			_eye_light.spot_angle = lerpf(FLASHLIGHT_ANGLE_OFF, FLASHLIGHT_ANGLE_ON, fl)
+			# Color shifts to bright white when beam is powered up
+			_eye_light.light_color = Color(0.8, 0.7, 0.4).lerp(Color(1.0, 0.97, 0.92), fl)
+			# Tighter attenuation for sharper beam edge
+			_eye_light.spot_attenuation = lerpf(1.2, 0.7, fl)
+		else:
+			# Return to default values when off
+			_eye_light.spot_range = lerpf(_eye_light.spot_range, base_range, 0.1)
+			_eye_light.spot_angle = lerpf(_eye_light.spot_angle, FLASHLIGHT_ANGLE_OFF, 0.1)
+			_eye_light.light_color = _eye_light.light_color.lerp(Color(0.8, 0.7, 0.4), 0.1)
+			_eye_light.spot_attenuation = lerpf(_eye_light.spot_attenuation, 1.2, 0.1)
 		_eye_light.light_energy = beam_energy
 		# Lure glow pulses with the light
 		if _lure_light:
-			_lure_light.light_energy = 0.4 + pulse * 0.3
+			var lure_energy: float = 0.4 + pulse * 0.3
 			if _is_creeping:
-				_lure_light.light_energy *= 0.15
+				lure_energy *= 0.15
+			# Lure glows slightly brighter when flashlight is on (but not globe-inducing)
+			lure_energy *= lerpf(1.0, 1.3, _flashlight_intensity)
+			_lure_light.light_energy = lure_energy
 		# Lure emission pulses
 		if _eye_lure and _eye_lure.material_override is StandardMaterial3D:
 			var lure_mat: StandardMaterial3D = _eye_lure.material_override
 			var lure_glow: float = 2.0 + pulse * 1.5
 			if _is_creeping:
 				lure_glow *= 0.15
+			lure_glow *= lerpf(1.0, 1.5, _flashlight_intensity)
 			lure_mat.emission_energy_multiplier = lure_glow
+		# Volumetric cone — bright visible beam shaft
+		if _flashlight_cone_mesh and _flashlight_cone_mesh.material_override is StandardMaterial3D:
+			var cone_mat: StandardMaterial3D = _flashlight_cone_mesh.material_override
+			# Strong alpha with slight pulse for liveliness
+			var cone_alpha: float = _flashlight_intensity * (FLASHLIGHT_CONE_ALPHA + pulse * 0.02)
+			cone_mat.albedo_color = Color(1.0, 0.95, 0.8, cone_alpha)
+			# Scale cone geometry to exactly match SpotLight cone
+			var cone_range: float = _eye_light.spot_range
+			var cone_end_radius: float = cone_range * tan(deg_to_rad(_eye_light.spot_angle))
+			_flashlight_cone_mesh.mesh.height = cone_range
+			_flashlight_cone_mesh.mesh.top_radius = cone_end_radius  # Wide end (far forward)
+			_flashlight_cone_mesh.mesh.bottom_radius = 0.02  # Pinpoint at eye
+			_flashlight_cone_mesh.position.z = -cone_range * 0.5
+
+	# --- Dim player OmniLights when flashlight active (prevents fog globe) ---
+	var p_light: OmniLight3D = get_node_or_null("PlayerLight") as OmniLight3D
+	var a_glow: OmniLight3D = get_node_or_null("PlayerAmbientGlow") as OmniLight3D
+	if _flashlight_intensity > 0.01:
+		var dim: float = lerpf(1.0, FLASHLIGHT_AMBIENT_DIM, _flashlight_intensity)
+		if p_light:
+			p_light.light_energy = 2.5 * dim
+		if a_glow:
+			a_glow.light_energy = 1.0 * dim
+	else:
+		# Smoothly restore to base energies when flashlight off
+		if p_light and p_light.light_energy < 2.45:
+			p_light.light_energy = lerpf(p_light.light_energy, 2.5, 0.1)
+		if a_glow and a_glow.light_energy < 0.95:
+			a_glow.light_energy = lerpf(a_glow.light_energy, 1.0, 0.1)
 
 	# --- Eye stalk sway (organic wobble) ---
 	if _eye_stalk:
@@ -855,6 +1044,50 @@ func _physics_process(delta: float) -> void:
 		# More sway when moving fast
 		var speed_sway: float = clampf(absf(_current_speed) / BASE_SPEED, 0.0, 1.0)
 		_eye_stalk.rotation.x += sin(_time * 4.0) * 0.04 * speed_sway
+
+func _update_head_aim(delta: float) -> void:
+	## Raycast from camera through cursor to find world aim point, then compute
+	## head yaw offset and pitch so the head independently tracks the crosshair.
+	var cam: Camera3D = get_viewport().get_camera_3d()
+	if not cam:
+		return
+	var mouse_pos: Vector2 = get_viewport().get_mouse_position()
+	var ray_origin: Vector3 = cam.project_ray_origin(mouse_pos)
+	var ray_dir: Vector3 = cam.project_ray_normal(mouse_pos)
+
+	# Raycast against cave geometry to find what the cursor points at
+	var space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+	if not space:
+		return
+	var query := PhysicsRayQueryParameters3D.new()
+	query.from = ray_origin
+	query.to = ray_origin + ray_dir * 200.0
+	query.exclude = [get_rid()]
+	var result: Dictionary = space.intersect_ray(query)
+	if result.size() > 0:
+		_aim_target = result.position
+	else:
+		# No hit — project 50 units along the ray
+		_aim_target = ray_origin + ray_dir * 50.0
+
+	# Direction from head to aim target
+	var head_world: Vector3 = global_position + Vector3(0, 0.6, 0)
+	var aim_dir: Vector3 = _aim_target - head_world
+	if aim_dir.length() < 0.5:
+		return
+	aim_dir = aim_dir.normalized()
+
+	# Yaw offset: how far left/right the cursor is from body forward
+	var aim_yaw: float = atan2(aim_dir.x, aim_dir.z)
+	var yaw_diff: float = angle_difference(_heading, aim_yaw)
+	yaw_diff = clampf(yaw_diff, -PI * 0.55, PI * 0.55)  # Max ~100° turn
+	_head_yaw_offset = lerp_angle(_head_yaw_offset, yaw_diff, delta * 12.0)
+
+	# Pitch: vertical aim (positive = looking up)
+	var horiz: float = Vector2(aim_dir.x, aim_dir.z).length()
+	var target_pitch: float = atan2(aim_dir.y, horiz)
+	target_pitch = clampf(target_pitch, deg_to_rad(-30.0), deg_to_rad(55.0))
+	_head_pitch = lerpf(_head_pitch, target_pitch, delta * 10.0)
 
 func _update_segments(delta: float) -> void:
 	var prev_pos: Vector3
@@ -875,6 +1108,10 @@ func _update_segments(delta: float) -> void:
 		# Wobble animation
 		var wobble: float = sin(_time * 3.0 + i * 1.5) * 0.06
 		seg.position.y += wobble
+
+		# Spiral twist: cilia rotate around body axis, staggered per segment
+		var twist_speed: float = clampf(absf(_current_speed) / BASE_SPEED, 0.0, 1.0)
+		seg.rotation.z = (_time * 1.8 + i * 0.6) * twist_speed
 
 		# Green glow breathing per section (staggered wave)
 		if seg.material_override:
@@ -1035,7 +1272,7 @@ func _do_acid_spit() -> void:
 	var mult: float = GameManager.get_trait_multiplier("acid_spit")
 	var proj: Area3D = Area3D.new()
 	proj.set_script(proj_script)
-	var forward: Vector3 = Vector3(sin(_heading + _head_flip), 0, cos(_heading + _head_flip)).normalized()
+	var forward: Vector3 = Vector3(sin(_heading + _head_yaw_offset), 0, cos(_heading + _head_yaw_offset)).normalized()
 	proj.direction = forward
 	proj.speed = 25.0
 	proj.damage = 8.0 * mult
@@ -1050,7 +1287,7 @@ func _do_acid_spit() -> void:
 
 func _do_wind_gust() -> void:
 	var mult: float = GameManager.get_trait_multiplier("wind_gust")
-	var forward: Vector3 = Vector3(sin(_heading + _head_flip), 0, cos(_heading + _head_flip)).normalized()
+	var forward: Vector3 = Vector3(sin(_heading + _head_yaw_offset), 0, cos(_heading + _head_yaw_offset)).normalized()
 	for group in ["white_blood_cell", "phagocyte", "killer_t_cell", "mast_cell", "flyer", "boss"]:
 		for enemy in get_tree().get_nodes_in_group(group):
 			var dist: float = global_position.distance_to(enemy.global_position)
@@ -1344,6 +1581,7 @@ var last_death_position: Vector3 = Vector3.ZERO
 
 func _die() -> void:
 	# Death penalty: lose half nutrients/health
+	_flashlight_on = false  # Turn off flashlight on death
 	last_death_position = global_position
 	AudioManager.play_player_voice("death")
 	died.emit()
@@ -1370,7 +1608,7 @@ func _trigger_stun_burst() -> void:
 func get_bite_targets() -> Array:
 	## Returns creatures within bite range and head-facing cone (WBCs, prey, flyers)
 	var targets: Array = []
-	var head_dir: float = _heading + _head_flip
+	var head_dir: float = _heading + _head_yaw_offset
 	var forward: Vector3 = Vector3(sin(head_dir), 0, cos(head_dir))
 	for group_name in ["white_blood_cell", "prey", "flyer"]:
 		for creature in get_tree().get_nodes_in_group(group_name):
@@ -1396,6 +1634,8 @@ func _check_hazards(delta: float) -> void:
 		match hz_type:
 			"acid":
 				take_damage(node.get_meta("dps", 5.0) * delta)
+				if node.has_meta("slow_factor"):
+					_hazard_slow = minf(_hazard_slow, node.get_meta("slow_factor"))
 			"bile":
 				_hazard_slow = minf(_hazard_slow, node.get_meta("slow_factor", 0.4))
 			"slow":
@@ -1458,7 +1698,7 @@ func _update_tractor_beam(delta: float) -> void:
 	if not _tractor_active:
 		return
 	# Pull nearby nutrients toward the worm (in head-facing direction)
-	var head_dir: float = _heading + _head_flip
+	var head_dir: float = _heading + _head_yaw_offset
 	var forward: Vector3 = Vector3(sin(head_dir), 0, cos(head_dir))
 	for node in get_tree().get_nodes_in_group("nutrient"):
 		var to_item: Vector3 = node.global_position - global_position

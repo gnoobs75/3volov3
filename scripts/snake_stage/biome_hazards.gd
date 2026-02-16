@@ -18,9 +18,13 @@ static func add_hazards(parent: Node3D, hub_data, biome_colors: Dictionary) -> v
 
 	match hub_data.biome:
 		STOMACH: _acid_zones(container, hub_data, biome_colors)
-		HEART_CHAMBER: _pulse_zones(container, hub_data, biome_colors)
+		HEART_CHAMBER:
+			_pulse_zones(container, hub_data, biome_colors)
+			_blood_pools(container, hub_data)
 		LUNG_TISSUE: _lung_gas_clouds(container, hub_data, biome_colors)
-		INTESTINAL_TRACT: _peristalsis_zones(container, hub_data, biome_colors)
+		INTESTINAL_TRACT:
+			_peristalsis_zones(container, hub_data, biome_colors)
+			_digestive_pools(container, hub_data)
 		LIVER: _bile_zones(container, hub_data, biome_colors)
 		BRAIN: _nerve_zones(container, hub_data, biome_colors)
 
@@ -30,15 +34,16 @@ static func add_hazards(parent: Node3D, hub_data, biome_colors: Dictionary) -> v
 	for child in container.get_children():
 		child.add_to_group("biome_hazard")
 
-# --- Stomach: acid damage zones (interactive fluid pools) ---
+# --- Stomach: acid damage zones (large steaming pools) ---
 static func _acid_zones(container: Node3D, hd, colors: Dictionary) -> void:
 	var FluidPool = load("res://scripts/snake_stage/fluid_pool.gd")
-	var count: int = clampi(int(hd.radius * 0.08), 1, 4)
+	var count: int = clampi(int(hd.radius * 0.08), 2, 5)
 	for i in range(count):
 		var pool: Node3D = Node3D.new()
 		pool.set_script(FluidPool)
 		pool.name = "AcidPool_%d" % i
-		var pool_radius: float = randf_range(2.5, 5.0)
+		# Larger pools: mix of medium and large
+		var pool_radius: float = randf_range(4.0, 9.0)
 		pool.setup(
 			pool_radius,
 			Color(0.25, 0.55, 0.08, 0.55),
@@ -47,7 +52,7 @@ static func _acid_zones(container: Node3D, hd, colors: Dictionary) -> void:
 			1.0   # no slow
 		)
 		var angle: float = randf() * TAU
-		var dist: float = hd.radius * randf_range(0.35, 0.55)
+		var dist: float = hd.radius * randf_range(0.3, 0.6)
 		pool.position = Vector3(cos(angle) * dist, 0.2, sin(angle) * dist)
 		container.add_child(pool)
 
@@ -161,3 +166,45 @@ static func _peristalsis_zones(container: Node3D, hd, colors: Dictionary) -> voi
 		# Push direction: toward hub center then outward (radial wave)
 		zone.set_meta("push_angle", angle + PI)  # Push away from zone origin
 		container.add_child(zone)
+
+# --- Heart: blood pools (hot, slow damage from thick warm blood) ---
+static func _blood_pools(container: Node3D, hd) -> void:
+	var FluidPool = load("res://scripts/snake_stage/fluid_pool.gd")
+	var count: int = clampi(int(hd.radius * 0.05), 1, 3)
+	for i in range(count):
+		var pool: Node3D = Node3D.new()
+		pool.set_script(FluidPool)
+		pool.name = "BloodPool_%d" % i
+		var pool_radius: float = randf_range(5.0, 10.0)
+		pool.setup(
+			pool_radius,
+			Color(0.5, 0.06, 0.04, 0.6),  # Dark red
+			"acid",  # Reuse acid damage type
+			2.0,  # Low DPS (warm blood, not corrosive)
+			0.6   # Slight slow from viscous blood
+		)
+		var angle: float = randf() * TAU
+		var dist: float = hd.radius * randf_range(0.3, 0.55)
+		pool.position = Vector3(cos(angle) * dist, 0.15, sin(angle) * dist)
+		container.add_child(pool)
+
+# --- Intestine: digestive fluid pools (enzyme-rich, damaging) ---
+static func _digestive_pools(container: Node3D, hd) -> void:
+	var FluidPool = load("res://scripts/snake_stage/fluid_pool.gd")
+	var count: int = clampi(int(hd.radius * 0.06), 2, 4)
+	for i in range(count):
+		var pool: Node3D = Node3D.new()
+		pool.set_script(FluidPool)
+		pool.name = "DigestivePool_%d" % i
+		var pool_radius: float = randf_range(4.0, 8.0)
+		pool.setup(
+			pool_radius,
+			Color(0.4, 0.35, 0.08, 0.5),  # Brown-yellow
+			"acid",  # Reuse acid damage type
+			3.5,  # Moderate enzyme damage
+			0.7   # Slight slow from viscous fluid
+		)
+		var angle: float = randf() * TAU
+		var dist: float = hd.radius * randf_range(0.3, 0.6)
+		pool.position = Vector3(cos(angle) * dist, 0.15, sin(angle) * dist)
+		container.add_child(pool)

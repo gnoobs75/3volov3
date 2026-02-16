@@ -111,16 +111,40 @@ func _build_floor(colors: Dictionary) -> void:
 	var subdivs: int = clampi(int(radius * 1.0), 20, 60)
 	_grid_size = subdivs + 1
 
-	# Per-biome terrain amplitude for organic feel
-	var biome_amplitude: float = 2.5  # Default (Stomach — folds)
+	# Per-biome terrain amplitude — scaled to hub size for dramatic visible terrain.
+	# Hubs are 200-250 unit radius, so terrain needs 8-15 unit hills to be visible.
+	var biome_amplitude: float = 10.0  # Medium detail features
+	var hill_amplitude: float = 8.0    # Low-frequency broad hills
+	var mesa_amplitude: float = 6.0    # Ultra-low-frequency sweeping elevation changes
 	match _hub_data.biome:
-		0: biome_amplitude = 2.5   # STOMACH: gastric folds
-		1: biome_amplitude = 1.5   # HEART: smoother muscle
-		2: biome_amplitude = 3.0   # INTESTINE: villi ridges
-		3: biome_amplitude = 1.0   # LUNG: spongy, gentle
-		4: biome_amplitude = 2.0   # BONE_MARROW: rough
-		5: biome_amplitude = 1.5   # LIVER: moderate
-		6: biome_amplitude = 1.0   # BRAIN: folds but smooth
+		0:  # STOMACH: dramatic gastric folds + rolling hills
+			biome_amplitude = 10.0
+			hill_amplitude = 8.0
+			mesa_amplitude = 6.0
+		1:  # HEART: muscular ridges with strong undulation
+			biome_amplitude = 8.0
+			hill_amplitude = 10.0
+			mesa_amplitude = 7.0
+		2:  # INTESTINE: dense villi ridges + deep folds (most dramatic)
+			biome_amplitude = 14.0
+			hill_amplitude = 9.0
+			mesa_amplitude = 5.0
+		3:  # LUNG: spongy, rolling terrain with gentle valleys
+			biome_amplitude = 7.0
+			hill_amplitude = 11.0
+			mesa_amplitude = 8.0
+		4:  # BONE_MARROW: rough, jagged terrain with sharp peaks
+			biome_amplitude = 12.0
+			hill_amplitude = 7.0
+			mesa_amplitude = 5.0
+		5:  # LIVER: moderate lobule bumps with broad mounds
+			biome_amplitude = 9.0
+			hill_amplitude = 8.0
+			mesa_amplitude = 7.0
+		6:  # BRAIN: deep cortical folds, smooth ridges
+			biome_amplitude = 8.0
+			hill_amplitude = 12.0
+			mesa_amplitude = 9.0
 
 	# Generate heightmap
 	_floor_heightmap.resize(_grid_size)
@@ -131,32 +155,38 @@ func _build_floor(colors: Dictionary) -> void:
 			var wx: float = (float(gx) / subdivs - 0.5) * radius * 2.0
 			var wz: float = (float(gz) / subdivs - 0.5) * radius * 2.0
 			var dist_from_center: float = Vector2(wx, wz).length()
-			# Two-octave organic terrain noise
-			var height_noise: float = _noise.get_noise_2d(wx, wz) * biome_amplitude
-			height_noise += _noise.get_noise_2d(wx * 3.0, wz * 3.0) * biome_amplitude * 0.3  # Detail layer
+			# Four-octave organic terrain noise for dramatic, visible terrain
+			# Octave 0: ultra-broad sweeping elevation (mesas, valleys)
+			var height_noise: float = _noise.get_noise_2d(wx * 0.008, wz * 0.008) * mesa_amplitude
+			# Octave 1: broad rolling hills
+			height_noise += _noise.get_noise_2d(wx * 0.04, wz * 0.04) * hill_amplitude
+			# Octave 2: medium terrain features (ridges, bumps)
+			height_noise += _noise.get_noise_2d(wx * 0.12, wz * 0.12) * biome_amplitude * 0.5
+			# Octave 3: fine detail (wrinkles, folds)
+			height_noise += _noise.get_noise_2d(wx * 0.4, wz * 0.4) * biome_amplitude * 0.2
 
-			# Gentle rise at very edge only (mostly flat floor)
+			# Gentle rise at edge to meet walls
 			var edge_factor: float = clampf(dist_from_center / radius, 0.0, 1.0)
-			var edge_rise: float = edge_factor * edge_factor * edge_factor * edge_factor * _hub_data.height * 0.08
+			var edge_rise: float = edge_factor * edge_factor * edge_factor * _hub_data.height * 0.12
 
 			_floor_heightmap[gx][gz] = height_noise + edge_rise
 
-	# Flatten an 8-unit radius circle at hub center (safe spawn zone)
+	# Flatten a small circle at hub center (safe spawn zone — just enough to stand on)
 	for gx2 in range(_grid_size):
 		for gz2 in range(_grid_size):
 			var wx2: float = (float(gx2) / subdivs - 0.5) * radius * 2.0
 			var wz2: float = (float(gz2) / subdivs - 0.5) * radius * 2.0
 			var center_dist: float = Vector2(wx2, wz2).length()
-			if center_dist < 8.0:
-				var blend: float = center_dist / 8.0
+			if center_dist < 5.0:
+				var blend: float = center_dist / 5.0
 				blend = blend * blend * blend  # Cubic ease
 				_floor_heightmap[gx2][gz2] = lerpf(0.0, _floor_heightmap[gx2][gz2], blend)
 
-	# Flatten floor around tunnel connection points (wide gentle ramp for big hallways)
+	# Flatten floor around tunnel connection points (narrow ramp, not a plateau)
 	for ti in range(_tunnel_connection_points.size()):
 		var conn_world_pos: Vector3 = _tunnel_connection_points[ti]
 		var mouth_w: float = _tunnel_mouth_widths[ti] if ti < _tunnel_mouth_widths.size() else 4.0
-		var flatten_radius: float = maxf(mouth_w * 0.8, 20.0)  # Scale with hallway width
+		var flatten_radius: float = maxf(mouth_w * 0.6, 8.0)  # Tight ramp around mouth only
 		var local_x: float = conn_world_pos.x - _hub_data.position.x
 		var local_z: float = conn_world_pos.z - _hub_data.position.z
 		for gx2 in range(_grid_size):
@@ -174,20 +204,20 @@ func _build_floor(colors: Dictionary) -> void:
 
 	# POST-SMOOTH flatten: hard-set center area to y=0 so spawn is always safe.
 	# This runs AFTER smoothing so the blur can't undo it.
-	# Inner 14 units: perfectly flat (y=0). 14-22 units: smooth blend to terrain.
-	# (Expanded from 10/16 to accommodate larger terrain hills)
+	# Inner 4 units: perfectly flat. 4-10 units: smooth blend to terrain.
+	# Kept small so terrain features are visible almost immediately from spawn.
 	for gx3 in range(_grid_size):
 		for gz3 in range(_grid_size):
 			var wx3: float = (float(gx3) / subdivs - 0.5) * radius * 2.0
 			var wz3: float = (float(gz3) / subdivs - 0.5) * radius * 2.0
 			var center_dist3: float = Vector2(wx3, wz3).length()
-			if center_dist3 < 22.0:
-				if center_dist3 < 14.0:
+			if center_dist3 < 10.0:
+				if center_dist3 < 4.0:
 					# Inner zone: perfectly flat
 					_floor_heightmap[gx3][gz3] = 0.0
 				else:
 					# Transition zone: blend from flat to terrain
-					var blend3: float = (center_dist3 - 14.0) / 8.0
+					var blend3: float = (center_dist3 - 4.0) / 6.0
 					blend3 = blend3 * blend3  # Quadratic ease
 					_floor_heightmap[gx3][gz3] = lerpf(0.0, _floor_heightmap[gx3][gz3], blend3)
 
@@ -373,9 +403,9 @@ func _build_floor(colors: Dictionary) -> void:
 	var safety_shape: CollisionShape3D = CollisionShape3D.new()
 	var safety_box: BoxShape3D = BoxShape3D.new()
 	var safety_extent: float = radius * 2.2  # Cover entire hub plus margin
-	safety_box.size = Vector3(safety_extent, 0.5, safety_extent)
+	safety_box.size = Vector3(safety_extent, 1.0, safety_extent)
 	safety_shape.shape = safety_box
-	safety_shape.position = Vector3(0, -0.5, 0)  # Just below floor surface
+	safety_shape.position = Vector3(0, -30.0, 0)  # Well below deepest terrain valleys
 	safety_body.add_child(safety_shape)
 	add_child(safety_body)
 

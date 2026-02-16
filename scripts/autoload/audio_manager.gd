@@ -127,6 +127,7 @@ var _buf_acid_spit_muzzle: PackedFloat32Array
 var _buf_wind_gust: PackedFloat32Array
 var _buf_bone_shield: PackedFloat32Array
 var _buf_summon_minions: PackedFloat32Array
+var _buf_flashlight_click: PackedFloat32Array
 
 # Cell stage ambient
 var _cell_ambient_player: AudioStreamPlayer = null
@@ -246,6 +247,7 @@ func _ready() -> void:
 	_buf_wind_gust = SynthSounds.gen_wind_gust()
 	_buf_bone_shield = SynthSounds.gen_bone_shield()
 	_buf_summon_minions = SynthSounds.gen_summon_minions()
+	_buf_flashlight_click = SynthSounds.gen_flashlight_click()
 
 	# Setup music players for file-based music
 	_setup_music_players()
@@ -826,6 +828,9 @@ func play_bone_shield() -> void:
 
 func play_summon_minions() -> void:
 	_play_buffer(_buf_summon_minions, -3.0)
+
+func play_flashlight_click() -> void:
+	_play_buffer(_buf_flashlight_click, -4.0)
 
 ## === CELL STAGE AMBIENT ===
 

@@ -521,11 +521,11 @@ func get_random_position_in_hub(near_pos: Vector3, max_dist: float = 500.0) -> V
 	var r: float = hub.radius * 0.7 * sqrt(randf())
 	var x: float = hub.position.x + cos(angle) * r
 	var z: float = hub.position.z + sin(angle) * r
-	var y: float = hub.position.y + 1.0
+	var y: float = hub.position.y + 2.0
 
-	# Get actual floor height
+	# Get actual floor height — spawn well above surface to avoid embedding in terrain
 	if hub.node_3d and hub.node_3d.has_method("get_floor_y"):
-		y = hub.node_3d.get_floor_y(x, z) + 0.5
+		y = hub.node_3d.get_floor_y(x, z) + 2.0
 
 	return Vector3(x, y, z)
 

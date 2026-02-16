@@ -662,7 +662,7 @@ func _reveal_player_and_start_tutorial(overlay_layer: CanvasLayer) -> void:
 			cam.set_process(true)
 	# Refresh body shape from customization (shape is computed at _ready before editor opens)
 	if player:
-		player._compute_elongation()
+		player._compute_body_shape()
 		player._init_procedural_shape()
 	_start_tutorial(overlay_layer)
 

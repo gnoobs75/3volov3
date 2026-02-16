@@ -115,6 +115,7 @@ const META_BOSS_INTRO_T: String = "boss_intro_t"
 # --- Cached Enemy Scan (shared by combat state, threat scan, venom tick) ---
 const ENEMY_GROUPS: Array = ["white_blood_cell", "flyer", "phagocyte", "killer_t_cell", "mast_cell", "boss"]
 const ALL_CREATURE_GROUPS: Array = ["white_blood_cell", "prey", "flyer", "phagocyte", "killer_t_cell", "mast_cell", "boss"]
+const ALL_REVEALABLE_GROUPS: Array = ["white_blood_cell", "prey", "flyer", "phagocyte", "killer_t_cell", "mast_cell", "boss", "nutrient", "ambient_life"]
 var _cached_enemies: Array = []  # [{node, dist}] updated once per frame
 var _enemy_cache_frame: int = -1
 
@@ -124,17 +125,17 @@ var _player_omni_light: OmniLight3D = null  # Reference for dynamic range update
 var _last_sensory_level: int = -1
 
 # Vision tier parameters: [fog_density, player_light_range, eye_spot_range, biolum_mult, ambient_energy]
-# DESIGN: Total darkness beyond the player's light sphere. Only the parasite's glow illuminates.
-# Ambient = 0 at start (nothing visible without player light). Fog contains the light sphere.
-# Biolum = 0 at start (cave lights invisible until sensory upgrades reveal them).
-# Monsters lurk in pure black — sonar pulse briefly reveals them. That's the horror.
+# DESIGN: Pure black void. Sonar pointcloud is the ONLY way to see the environment.
+# No traditional lighting — the expanding pulse and persistent points ARE vision.
+# Player light is a faint halo to see your own body, not the cave.
+# Upgrades make sonar denser and longer-lasting, not brighter lights.
 const VISION_TIERS: Array = [
-	{"fog": 0.15, "light_range": 12.0, "spot_range": 8.0, "biolum": 0.0, "ambient": 0.0},
-	{"fog": 0.08, "light_range": 18.0, "spot_range": 12.0, "biolum": 0.1, "ambient": 0.002},
-	{"fog": 0.05, "light_range": 25.0, "spot_range": 16.0, "biolum": 0.3, "ambient": 0.005},
-	{"fog": 0.03, "light_range": 32.0, "spot_range": 20.0, "biolum": 0.55, "ambient": 0.01},
-	{"fog": 0.02, "light_range": 40.0, "spot_range": 25.0, "biolum": 0.8, "ambient": 0.015},
-	{"fog": 0.01, "light_range": 50.0, "spot_range": 30.0, "biolum": 1.0, "ambient": 0.025},
+	{"fog": 0.008, "light_range": 3.0, "spot_range": 2.0, "biolum": 0.0, "ambient": 0.0},
+	{"fog": 0.007, "light_range": 4.0, "spot_range": 3.0, "biolum": 0.02, "ambient": 0.0},
+	{"fog": 0.006, "light_range": 5.0, "spot_range": 4.0, "biolum": 0.05, "ambient": 0.001},
+	{"fog": 0.005, "light_range": 5.0, "spot_range": 4.0, "biolum": 0.08, "ambient": 0.001},
+	{"fog": 0.004, "light_range": 6.0, "spot_range": 5.0, "biolum": 0.12, "ambient": 0.002},
+	{"fog": 0.003, "light_range": 6.0, "spot_range": 5.0, "biolum": 0.15, "ambient": 0.002},
 ]
 
 func _ready() -> void:
@@ -153,32 +154,31 @@ func _setup_environment() -> void:
 	_environment = WorldEnvironment.new()
 	var env: Environment = Environment.new()
 
-	# Pure black underground — no sky contribution at all
+	# Pure black void — sonar pointcloud is the ONLY way to see
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0, 0, 0)
 
-	# Zero ambient light at start — ONLY the player's light sphere illuminates
+	# Zero ambient — the cave geometry is invisible without sonar
 	var tier: Dictionary = _get_vision_tier()
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_energy = tier.ambient
-	env.ambient_light_color = Color(0.01, 0.02, 0.015)
+	env.ambient_light_energy = 0.0
+	env.ambient_light_color = Color(0, 0, 0)
 
-	# Fog creates the light sphere edge — dense fog = tight sphere, thin fog = wider view
+	# Light fog to gently fade very distant sonar points (not to block vision)
 	env.fog_enabled = true
-	env.fog_light_color = Color(0, 0, 0)  # Pure black fog (no color bleed)
+	env.fog_light_color = Color(0, 0, 0)
 	env.fog_density = tier.fog
-	env.fog_aerial_perspective = 0.95
+	env.fog_aerial_perspective = 0.0  # No aerial perspective — sonar is unshaded additive
 
-	# Strong glow (makes emissions pop in darkness)
+	# Aggressive glow — makes sonar points bloom and bleed into each other
 	env.glow_enabled = true
-	env.glow_intensity = 1.0
-	env.glow_bloom = 0.4
+	env.glow_intensity = 1.8
+	env.glow_bloom = 0.7
 	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_ADDITIVE
+	env.glow_hdr_threshold = 0.3  # Lower threshold so sonar points trigger glow easily
 
-	# SSAO for cave depth
-	env.ssao_enabled = true
-	env.ssao_radius = 3.0
-	env.ssao_intensity = 2.0
+	# Disable SSAO — there's nothing to occlude in the void
+	env.ssao_enabled = false
 
 	_vision_env = env
 	_environment.environment = env
@@ -299,25 +299,25 @@ func _safety_check_position() -> void:
 func _add_player_light() -> void:
 	if not _player:
 		return
-	# Warm bioluminescent glow on player — visible radius scales with vision tier
+	# Faint self-illumination — just enough to see the player worm body, not the cave
 	var tier: Dictionary = _get_vision_tier()
 	var heat_light: OmniLight3D = OmniLight3D.new()
 	heat_light.name = "PlayerLight"
-	heat_light.light_color = Color(0.25, 0.55, 0.4)  # Bright green-teal
-	heat_light.light_energy = 2.5  # Strong core glow
+	heat_light.light_color = Color(0.2, 0.6, 0.4)
+	heat_light.light_energy = 0.6  # Dim — just a body glow
 	heat_light.omni_range = tier.light_range
-	heat_light.omni_attenuation = 1.0  # Linear falloff (brighter further out)
-	heat_light.shadow_enabled = true
+	heat_light.omni_attenuation = 1.5  # Tight falloff
+	heat_light.shadow_enabled = false
 	heat_light.position = Vector3(0, 0.8, 0)
 	_player.add_child(heat_light)
 	_player_omni_light = heat_light
 
-	# Secondary wider ambient glow (softer, dimmer, fills the 50% zone)
+	# Tiny ambient halo (barely visible)
 	var ambient_glow: OmniLight3D = OmniLight3D.new()
 	ambient_glow.name = "PlayerAmbientGlow"
-	ambient_glow.light_color = Color(0.15, 0.35, 0.25)
-	ambient_glow.light_energy = 1.0
-	ambient_glow.omni_range = tier.light_range * 1.8  # Extends ~2x beyond the core
+	ambient_glow.light_color = Color(0.1, 0.3, 0.2)
+	ambient_glow.light_energy = 0.2
+	ambient_glow.omni_range = tier.light_range * 1.2
 	ambient_glow.omni_attenuation = 2.0  # Soft falloff
 	ambient_glow.shadow_enabled = false
 	ambient_glow.position = Vector3(0, 0.8, 0)
@@ -449,7 +449,7 @@ func _setup_hud() -> void:
 
 	# Controls label (bottom of middle pane)
 	_controls_label = Label.new()
-	_controls_label.text = "WASD: Move | Shift: Sprint | RMB: Bite | LMB: Pull | E: Stun | F: Tail Whip | C: Camo | Hold Q: Traits | TAB: Codex"
+	_controls_label.text = "WASD: Move | Shift: Sprint | RMB: Bite | LMB: Pull | MMB: Flashlight | E: Stun | F: Tail Whip | C: Camo | Hold Q: Traits | TAB: Codex"
 	_controls_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	_controls_label.position = Vector2(20, -30)
 	_controls_label.add_theme_font_size_override("font_size", 12)
@@ -533,22 +533,35 @@ func _setup_hud() -> void:
 # --- Scan pulse timer ---
 var _scan_timer: float = 0.0
 var _scan_intensity: float = 0.0
-const SCAN_INTERVAL: float = 3.5
-const SCAN_DURATION: float = 1.5
+const SCAN_INTERVAL: float = 4.0  # Active pulse every 4 seconds — dramatic mapping burst
+const SCAN_DURATION: float = 2.0  # Longer visible pulse
 
-# --- Sonar heightmap pointcloud system (Moondust-style) ---
-const SONAR_POINT_COUNT: int = 8000
-const SONAR_RANGE: float = 60.0
-const SONAR_FADE_TIME: float = 25.0  # Terrain persists long
-const SONAR_EXPAND_SPEED: float = 18.0  # units/sec ring expansion
-const SONAR_RAIN_HEIGHT: float = 2.5  # subtle drop into position
-const SONAR_RAIN_DURATION: float = 0.12  # quick snap-to-place
+# --- Sonar pointcloud system: THIS IS THE PRIMARY VISION SYSTEM ---
+# The cave is pitch black. Sonar pulses paint the environment with glowing dots.
+# Walls, ceiling, floor, creatures — everything is only visible via sonar.
+const SONAR_POINT_COUNT: int = 50000
+const SONAR_RANGE: float = 150.0  # Reach walls/ceiling in 200-250 radius hubs
+const SONAR_FADE_TIME: float = 40.0  # Points persist long — you build up a map
+const SONAR_EXPAND_SPEED: float = 40.0  # Fast dramatic pulse expansion
+const SONAR_RAIN_HEIGHT: float = 0.0  # No rain — instant placement for mapping feel
+const SONAR_RAIN_DURATION: float = 0.02  # Near-instant snap
 
-# Passive sonar: continuous terrain mapping near the player
+# Passive sonar: continuous full-sphere environment mapping
 var _passive_sonar_timer: float = 0.0
-const PASSIVE_SONAR_INTERVAL: float = 1.5  # Cast rays every 1.5s
-const PASSIVE_SONAR_RANGE: float = 20.0  # Close-range terrain mapping
-const PASSIVE_SONAR_RAYS: int = 120  # Rays per passive tick
+const PASSIVE_SONAR_INTERVAL: float = 0.5  # Frequent scans to keep environment painted
+const PASSIVE_SONAR_RANGE: float = 150.0  # Full cave coverage
+const PASSIVE_SONAR_RAYS: int = 300  # Dense full-sphere coverage per tick
+var _passive_sonar_rotation: float = 0.0  # Rotates each tick to avoid re-sampling
+const GOLDEN_ANGLE: float = 2.39996323  # PI * (3 - sqrt(5)) — Fibonacci spiral constant
+
+# Terrain wireframe grid: subtle contour underlay beneath the sonar pointcloud
+const TERRAIN_GRID_SPOKES: int = 72  # Dense angular resolution
+const TERRAIN_GRID_RINGS: int = 20   # Many rings for wide coverage
+const TERRAIN_GRID_INTERVAL: float = 0.7  # Responsive rebuild
+const TERRAIN_GRID_DISTANCES: Array = [3.0, 6.0, 10.0, 15.0, 21.0, 28.0, 36.0, 45.0, 55.0, 66.0, 78.0, 91.0, 105.0, 120.0, 136.0, 153.0, 171.0, 190.0, 210.0, 232.0]
+var _terrain_grid_timer: float = 0.0
+var _terrain_grid_hits: Array = []  # [ring][spoke] = Vector3 or null
+var _terrain_mesh: MeshInstance3D = null
 var _sonar_multimesh: MultiMeshInstance3D = null
 var _sonar_mm: MultiMesh = null
 var _sonar_points: Array = []  # {target_pos, active, life, rain_t, dist, color, rand_delay}
@@ -560,6 +573,17 @@ var _sonar_ready: bool = false
 var _sonar_ring: MeshInstance3D = null
 var _sonar_ring_mat: StandardMaterial3D = null
 var _sonar_next_free: int = 0  # fast free-slot search
+
+# --- Creature Pulse-Reveal System ---
+# Enemies are invisible in the dark. Sonar pulse temporarily reveals them with a flash of light.
+const PARASITE_LENGTH: float = 7.0  # 10 body segments × 0.7 spacing
+const BASE_REVEAL_RANGE: float = 28.0  # 4 parasite lengths — starting reveal distance
+const REVEAL_FADE_TIME: float = 5.0  # Seconds for revealed creature to fade back to invisible
+const REVEAL_LIGHT_ENERGY: float = 2.5  # Brightness of reveal flash
+const REVEAL_LIGHT_RANGE: float = 6.0  # Illumination radius per creature
+const REVEAL_RANGE_PER_LEVEL: float = 7.0  # Extra reveal range per sensory level (1 parasite length)
+var _creature_reveals: Dictionary = {}  # instance_id -> {time_left, light, node}
+var _reveal_range: float = BASE_REVEAL_RANGE  # Scales up with evolution
 
 func _process(delta: float) -> void:
 	_handle_input()
@@ -656,8 +680,8 @@ func _update_visual_systems(delta: float) -> void:
 	if _player:
 		var scan_light: Node = _player.get_node_or_null("ScanLight")
 		if scan_light:
-			scan_light.light_energy = _scan_intensity * 1.2
-			scan_light.omni_range = 15.0 * (0.5 + _scan_intensity * 0.3)
+			scan_light.light_energy = _scan_intensity * 0.4  # Brief dim flash — sonar dots are the visual
+			scan_light.omni_range = 8.0 * (0.5 + _scan_intensity * 0.3)
 	# Update sonar contour points
 	_update_sonar(delta)
 	# Passive terrain sonar
@@ -667,6 +691,8 @@ func _update_visual_systems(delta: float) -> void:
 		_cast_passive_sonar()
 	# Brain hallucination flicker
 	_update_hallucination(delta)
+	# Creature pulse-reveal system (fade revealed enemies back to invisible)
+	_update_creature_reveals(delta)
 
 	# Ambient cave sounds
 	_drip_timer += delta
@@ -858,12 +884,27 @@ func _manage_nutrients() -> void:
 	if current_count < NUTRIENT_TARGET_COUNT:
 		_spawn_nutrient()
 
+func _snap_above_floor(pos: Vector3, offset: float = 2.0) -> Vector3:
+	## Raycast down from well above the target to find the actual collision floor.
+	## Returns position offset units above the floor. Falls back to original pos.
+	var space_state = get_world_3d().direct_space_state
+	if not space_state:
+		return pos
+	var ray_start: Vector3 = Vector3(pos.x, pos.y + 40.0, pos.z)
+	var ray_end: Vector3 = Vector3(pos.x, pos.y - 60.0, pos.z)
+	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(ray_start, ray_end)
+	var result: Dictionary = space_state.intersect_ray(query)
+	if result:
+		return Vector3(pos.x, result.position.y + offset, pos.z)
+	return pos
+
 func _spawn_nutrient() -> void:
 	if not _player or not _cave_gen:
 		return
 	var nutrient: Node3D = _create_nutrient()
 	# Spawn inside a nearby hub — guaranteed to be inside cave geometry
 	var pos: Vector3 = _cave_gen.get_random_position_in_hub(_player.global_position)
+	pos = _snap_above_floor(pos, 1.5)  # Nutrients float just above floor
 	nutrient.position = pos
 	_nutrients_container.add_child(nutrient)
 
@@ -968,6 +1009,7 @@ func _spawn_prey() -> void:
 
 	# Spawn inside a nearby hub — guaranteed inside cave geometry
 	var pos: Vector3 = _cave_gen.get_random_position_in_hub(_player.global_position)
+	pos = _snap_above_floor(pos, 2.0)
 	bug.position = pos
 	_creatures_container.add_child(bug)
 	if bug.has_signal("died"):
@@ -1090,6 +1132,7 @@ func _spawn_wbc() -> void:
 
 	# Spawn inside a nearby hub — guaranteed inside cave geometry
 	var pos: Vector3 = _cave_gen.get_random_position_in_hub(_player.global_position)
+	pos = _snap_above_floor(pos, 2.0)
 	wbc.position = pos
 	_wbc_container.add_child(wbc)
 	if wbc.has_signal("died"):
@@ -1141,11 +1184,11 @@ func _spawn_flyer(initial_spread: bool = false) -> void:
 		var r: float = hub.radius * randf_range(0.75, 0.95)
 		pos = Vector3(
 			hub.position.x + cos(angle) * r,
-			hub.position.y + 1.0,
+			hub.position.y + 2.0,
 			hub.position.z + sin(angle) * r
 		)
 		if hub.node_3d and hub.node_3d.has_method("get_floor_y"):
-			pos.y = hub.node_3d.get_floor_y(pos.x, pos.z) + 0.5
+			pos.y = hub.node_3d.get_floor_y(pos.x, pos.z) + 2.0
 	else:
 		# Runtime respawns: spawn in a nearby hub but away from the player
 		for _attempt in range(8):
@@ -1236,11 +1279,12 @@ func _spawn_new_enemy(enemy_type: String) -> void:
 	var r: float = hub.radius * 0.6 * sqrt(randf())
 	var pos: Vector3 = Vector3(
 		hub.position.x + cos(angle) * r,
-		hub.position.y + 1.0,
+		hub.position.y + 2.0,
 		hub.position.z + sin(angle) * r
 	)
 	if hub.node_3d and hub.node_3d.has_method("get_floor_y"):
-		pos.y = hub.node_3d.get_floor_y(pos.x, pos.z) + 0.5
+		pos.y = hub.node_3d.get_floor_y(pos.x, pos.z) + 2.0
+	pos = _snap_above_floor(pos, 2.0)
 
 	var enemy: CharacterBody3D = CharacterBody3D.new()
 	enemy.set_script(enemy_script)
@@ -1269,7 +1313,7 @@ func _spawn_macrophage_queen() -> void:
 	# Place queen at center of brain hub
 	var queen_pos: Vector3 = brain_hub.position
 	if brain_hub.node_3d and brain_hub.node_3d.has_method("get_floor_y"):
-		queen_pos.y = brain_hub.node_3d.get_floor_y(queen_pos.x, queen_pos.z) + 0.5
+		queen_pos.y = brain_hub.node_3d.get_floor_y(queen_pos.x, queen_pos.z) + 2.0
 	else:
 		queen_pos.y += 0.5
 	_queen.position = queen_pos
@@ -1324,7 +1368,7 @@ func _spawn_biome_bosses() -> void:
 		# Place at hub center
 		var boss_pos: Vector3 = hub.position
 		if hub.node_3d and hub.node_3d.has_method("get_floor_y"):
-			boss_pos.y = hub.node_3d.get_floor_y(boss_pos.x, boss_pos.z) + 0.5
+			boss_pos.y = hub.node_3d.get_floor_y(boss_pos.x, boss_pos.z) + 2.0
 		else:
 			boss_pos.y += 0.5
 		boss.position = boss_pos
@@ -1476,24 +1520,22 @@ func _update_bite_flash(delta: float) -> void:
 			if _bite_flash_alpha <= 0.01:
 				_bite_flash_overlay.visible = false
 
-# --- Sonar heightmap pointcloud system (Moondust-style) ---
-# Points rain down from above, height-coded blue→green→yellow, expanding ring reveal
+# --- Sonar pointcloud: PRIMARY VISION SYSTEM ---
+# Pure black cave. Sonar pulses paint walls, ceiling, floor, creatures with glowing dots.
+# This IS how you see. No traditional lighting.
 
 const SONAR_SHADER_CODE: String = """
 shader_type spatial;
 render_mode blend_add, cull_disabled, shadows_disabled, unshaded, depth_draw_never;
 
 void vertex() {
-	// Extract per-instance scale for rain stretching
 	float sx = length(MODEL_MATRIX[0].xyz);
 	float sy = length(MODEL_MATRIX[1].xyz);
-
-	// Apply scale to vertex
 	VERTEX.x *= sx;
 	VERTEX.y *= sy;
 	VERTEX.z *= sx;
 
-	// Billboard: face camera, keep instance world position
+	// Billboard: face camera
 	MODELVIEW_MATRIX = VIEW_MATRIX * mat4(
 		INV_VIEW_MATRIX[0],
 		INV_VIEW_MATRIX[1],
@@ -1503,15 +1545,16 @@ void vertex() {
 }
 
 void fragment() {
-	// Disc shape from quad UV
 	vec2 uv = UV - 0.5;
 	float r = length(uv);
-	float disc = 1.0 - smoothstep(0.35, 0.5, r);
+	// Soft glowing dot with bright core and falloff halo
+	float core = 1.0 - smoothstep(0.0, 0.25, r);
+	float halo = 1.0 - smoothstep(0.15, 0.5, r);
+	float brightness = core * 1.5 + halo;
 
-	// COLOR from MultiMesh instance color (height-based + alpha for fade)
-	ALBEDO = COLOR.rgb * 3.5;
-	ALPHA = COLOR.a * disc;
-	if (ALPHA < 0.01) discard;
+	ALBEDO = COLOR.rgb * brightness * 4.0;
+	ALPHA = COLOR.a * halo;
+	if (ALPHA < 0.005) discard;
 }
 """
 
@@ -1526,9 +1569,9 @@ func _setup_sonar() -> void:
 	_sonar_mm.use_colors = true
 	_sonar_mm.instance_count = SONAR_POINT_COUNT
 
-	# Base mesh: pixel-sized quad for billboard shader
+	# Sonar dot quad — sized for visibility as primary vision system
 	var quad: QuadMesh = QuadMesh.new()
-	quad.size = Vector2(0.035, 0.035)
+	quad.size = Vector2(0.12, 0.12)
 	_sonar_mm.mesh = quad
 
 	# Shader material for additive glow + billboard + disc shape
@@ -1546,6 +1589,7 @@ func _setup_sonar() -> void:
 		_sonar_mm.set_instance_color(i, hidden_color)
 
 	_sonar_multimesh.multimesh = _sonar_mm
+	_sonar_multimesh.visible = false  # Dots disabled — pulse reveals objects directly
 	add_child(_sonar_multimesh)
 
 	# Initialize point data array
@@ -1567,13 +1611,35 @@ func _setup_sonar() -> void:
 	_sonar_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_sonar_ring_mat = StandardMaterial3D.new()
 	_sonar_ring_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_sonar_ring_mat.albedo_color = Color(0.15, 0.5, 0.35)
+	_sonar_ring_mat.albedo_color = Color(0.1, 0.6, 0.4)
 	_sonar_ring_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 	_sonar_ring_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_sonar_ring_mat.render_priority = 1
 	_sonar_ring.material_override = _sonar_ring_mat
 	_sonar_ring.visible = false
 	add_child(_sonar_ring)
+
+	# --- Terrain wireframe grid mesh (subtle contour underlay beneath sonar dots) ---
+	_terrain_mesh = MeshInstance3D.new()
+	_terrain_mesh.name = "TerrainWireframe"
+	_terrain_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var twf_mat: StandardMaterial3D = StandardMaterial3D.new()
+	twf_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	twf_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	twf_mat.vertex_color_use_as_albedo = true
+	twf_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	twf_mat.no_depth_test = false
+	twf_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_terrain_mesh.material_override = twf_mat
+	_terrain_mesh.transparency = 0.72  # Very subtle — organic sonar contour underlay
+	add_child(_terrain_mesh)
+	# Init grid hits: [ring][spoke] = null
+	_terrain_grid_hits.resize(TERRAIN_GRID_RINGS)
+	for r_idx in range(TERRAIN_GRID_RINGS):
+		_terrain_grid_hits[r_idx] = []
+		_terrain_grid_hits[r_idx].resize(TERRAIN_GRID_SPOKES)
+		for s_idx in range(TERRAIN_GRID_SPOKES):
+			_terrain_grid_hits[r_idx][s_idx] = null
 
 	_sonar_ready = true
 
@@ -1606,9 +1672,6 @@ func _trigger_sonar_pulse() -> void:
 	_sonar_pulse_active = true
 	_sonar_pulse_radius = 0.0
 	_sonar_pulse_origin = _player.global_position + Vector3(0, 0.5, 0)
-	_sonar_pending_hits.clear()
-	_sonar_next_free = 0
-	_cast_all_sonar_rays()
 	if AudioManager.has_method("play_sonar_ping"):
 		AudioManager.play_sonar_ping()
 	# Show ring at pulse origin
@@ -1654,6 +1717,8 @@ func _is_near_tunnel_mouth(pos: Vector3, tunnel_mouths: Array[Vector3]) -> bool:
 const SONAR_TUNNEL_COLOR: Color = Color(0.3, 1.0, 0.9)  # Bright cyan for tunnel exits
 
 func _cast_all_sonar_rays() -> void:
+	## Active pulse: massive burst of rays in every direction to paint the environment.
+	## Full sphere coverage — floor, walls, ceiling, everything gets hit.
 	var space_state = get_world_3d().direct_space_state
 	if not space_state:
 		return
@@ -1665,14 +1730,15 @@ func _cast_all_sonar_rays() -> void:
 
 	var tunnel_mouths: Array[Vector3] = _get_tunnel_mouth_positions()
 
-	# Dense ray pattern: 64 horizontal × 20 elevations = 1280 structured rays
-	var h_count: int = 64
-	var v_count: int = 20
+	# Dense full-sphere ray pattern: 96 horizontal × 32 elevations = 3072 structured rays
+	var h_count: int = 96
+	var v_count: int = 32
 
 	for h in range(h_count):
-		var phi: float = TAU * float(h) / h_count + randf_range(-0.015, 0.015)
+		var phi: float = TAU * float(h) / h_count + randf_range(-0.01, 0.01)
 		for v in range(v_count):
-			var elev: float = lerpf(-0.78, 0.85, float(v) / (v_count - 1)) + randf_range(-0.02, 0.02)
+			# Full sphere: -PI/2 to +PI/2 (straight down to straight up)
+			var elev: float = lerpf(-1.4, 1.4, float(v) / (v_count - 1)) + randf_range(-0.015, 0.015)
 			var dir: Vector3 = Vector3(
 				cos(phi) * cos(elev),
 				sin(elev),
@@ -1682,14 +1748,13 @@ func _cast_all_sonar_rays() -> void:
 			var ray_end: Vector3 = origin + dir * SONAR_RANGE
 			var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, ray_end)
 			query.exclude = exclude_rids
-			query.collide_with_areas = true  # Detect creatures with Area3D
+			query.collide_with_areas = true
 
 			var result: Dictionary = space_state.intersect_ray(query)
 			if result:
 				var hit_pos: Vector3 = result.position
 				var hit_dist: float = origin.distance_to(hit_pos)
 				var col: Color = _height_color(hit_pos.y, player_y)
-				# Check if we hit a creature — override color
 				var creature_col: Color = _get_sonar_color_for_collider(result.collider)
 				if creature_col.a > 0:
 					col = creature_col
@@ -1701,10 +1766,10 @@ func _cast_all_sonar_rays() -> void:
 					"color": col,
 				})
 
-	# Additional 200 random-direction rays for gap filling
-	for _r in range(200):
+	# Additional 400 random-direction rays for gap filling
+	for _r in range(400):
 		var phi: float = randf() * TAU
-		var elev: float = randf_range(-0.8, 0.85)
+		var elev: float = randf_range(-1.5, 1.5)
 		var dir: Vector3 = Vector3(
 			cos(phi) * cos(elev),
 			sin(elev),
@@ -1730,13 +1795,13 @@ func _cast_all_sonar_rays() -> void:
 				"color": col,
 			})
 
-	# Targeted rays aimed at nearby tunnel mouths (guaranteed visibility)
+	# Targeted rays at tunnel mouths (bright cyan landmarks)
 	for mouth_pos in tunnel_mouths:
 		var mouth_dist: float = origin.distance_to(mouth_pos)
 		if mouth_dist > SONAR_RANGE or mouth_dist < 0.5:
 			continue
-		for _t in range(4):
-			var jitter: Vector3 = Vector3(randf_range(-1.5, 1.5), randf_range(-0.5, 1.0), randf_range(-1.5, 1.5))
+		for _t in range(8):
+			var jitter: Vector3 = Vector3(randf_range(-2.0, 2.0), randf_range(-1.0, 2.0), randf_range(-2.0, 2.0))
 			var target: Vector3 = mouth_pos + jitter
 			var dir: Vector3 = (target - origin).normalized()
 			var ray_end: Vector3 = origin + dir * SONAR_RANGE
@@ -1753,16 +1818,22 @@ func _cast_all_sonar_rays() -> void:
 				})
 
 func _height_color(world_y: float, player_y: float) -> Color:
-	# Normalize relative height: -10 to +10 maps to 0..1
+	# Normalize relative height: -20 to +20 maps to 0..1 (wider range for dramatic terrain)
 	var rel_y: float = world_y - player_y
-	var t: float = clampf((rel_y + 10.0) / 20.0, 0.0, 1.0)
-	var col_low: Color = Color(0.0, 0.4, 1.0)    # Blue (floor/below)
-	var col_mid: Color = Color(0.0, 0.9, 0.4)    # Green (level)
-	var col_high: Color = Color(0.9, 0.85, 0.15)  # Yellow (ceiling/above)
-	if t < 0.5:
-		return col_low.lerp(col_mid, t * 2.0)
+	var t: float = clampf((rel_y + 20.0) / 40.0, 0.0, 1.0)
+	var col_deep: Color = Color(0.05, 0.15, 0.6)  # Deep blue (valleys far below)
+	var col_low: Color = Color(0.0, 0.5, 0.9)     # Bright blue (below player)
+	var col_mid: Color = Color(0.0, 0.9, 0.4)     # Green (player level)
+	var col_high: Color = Color(0.9, 0.85, 0.15)  # Yellow (hills above)
+	var col_peak: Color = Color(1.0, 0.4, 0.1)    # Orange (peaks far above)
+	if t < 0.25:
+		return col_deep.lerp(col_low, t * 4.0)
+	elif t < 0.5:
+		return col_low.lerp(col_mid, (t - 0.25) * 4.0)
+	elif t < 0.75:
+		return col_mid.lerp(col_high, (t - 0.5) * 4.0)
 	else:
-		return col_mid.lerp(col_high, (t - 0.5) * 2.0)
+		return col_high.lerp(col_peak, (t - 0.75) * 4.0)
 
 const SONAR_COLOR_AGGRESSIVE: Color = Color(1.0, 0.15, 0.1)  # Red — hostile
 const SONAR_COLOR_ALERT: Color = Color(1.0, 0.8, 0.1)        # Yellow — alert range
@@ -1793,85 +1864,43 @@ func _update_sonar(delta: float) -> void:
 	if not _sonar_ready:
 		return
 
-	var hidden_xform: Transform3D = Transform3D(Basis.IDENTITY.scaled(Vector3.ZERO), Vector3(0, -9999, 0))
-
-	# Update all active points
-	for i in range(SONAR_POINT_COUNT):
-		var pt = _sonar_points[i]
-		if not pt.active:
-			continue
-
-		# Snap-to-place animation (subtle drop)
-		if pt.rain_t < 1.0:
-			pt.rain_t = minf(pt.rain_t + delta / SONAR_RAIN_DURATION, 1.0)
-			var eased: float = 1.0 - pow(1.0 - pt.rain_t, 3.0)
-			var y_offset: float = SONAR_RAIN_HEIGHT * (1.0 - eased)
-			var current_pos: Vector3 = pt.target_pos + Vector3(0, y_offset, 0)
-
-			# Subtle vertical stretch during drop
-			var stretch_blend: float = clampf(pt.rain_t / 0.5, 0.0, 1.0)
-			var y_scale: float = lerpf(1.5, 1.0, stretch_blend)
-			var basis: Basis = Basis.IDENTITY.scaled(Vector3(1.0, y_scale, 1.0))
-			_sonar_mm.set_instance_transform(i, Transform3D(basis, current_pos))
-
-			# Quick fade in + color snap to height color
-			var rain_alpha: float = eased
-			var color_blend: float = clampf(pt.rain_t / 0.3, 0.0, 1.0)
-			var display_col: Color = Color(0.4, 0.9, 0.8).lerp(pt.color, color_blend)
-			display_col.a = rain_alpha
-			_sonar_mm.set_instance_color(i, display_col)
-		else:
-			# Landed: fade out over time
-			pt.life -= delta
-			if pt.life <= 0:
-				pt.active = false
-				_sonar_mm.set_instance_transform(i, hidden_xform)
-				_sonar_mm.set_instance_color(i, Color(0, 0, 0, 0))
-				continue
-
-			var fade: float = pt.life / SONAR_FADE_TIME
-			fade = fade * fade  # Quadratic smooth fade
-			var col: Color = pt.color
-			col.a = fade
-			_sonar_mm.set_instance_color(i, col)
-
-	# Expand pulse ring and reveal pending hits progressively
+	# Expand pulse ring — no dots, just the ring + creature/object reveals
 	if _sonar_pulse_active:
 		_sonar_pulse_radius += SONAR_EXPAND_SPEED * delta
-
-		# Reveal hits that the pulse ring has reached
-		var remaining: Array = []
-		for hit in _sonar_pending_hits:
-			if hit.distance <= _sonar_pulse_radius:
-				_place_sonar_point(hit.position, hit.color, hit.distance)
-			else:
-				remaining.append(hit)
-		_sonar_pending_hits = remaining
 
 		# Update ring visual
 		if _sonar_ring:
 			_sonar_ring.scale = Vector3(_sonar_pulse_radius, 1.0, _sonar_pulse_radius)
-			# Fade ring as it expands
 			var ring_alpha: float = clampf(1.0 - _sonar_pulse_radius / SONAR_RANGE, 0.0, 1.0)
-			_sonar_ring_mat.albedo_color = Color(0.15, 0.5, 0.35) * (0.3 + ring_alpha * 0.4)
+			_sonar_ring_mat.albedo_color = Color(0.1, 0.6, 0.4) * (0.4 + ring_alpha * 0.6)
+
+		# Reveal ALL objects caught by the expanding pulse ring
+		var prev_radius: float = _sonar_pulse_radius - SONAR_EXPAND_SPEED * delta
+		for group_name in ALL_REVEALABLE_GROUPS:
+			for obj in get_tree().get_nodes_in_group(group_name):
+				if not is_instance_valid(obj) or not obj.is_inside_tree():
+					continue
+				var obj_dist: float = _sonar_pulse_origin.distance_to(obj.global_position)
+				# Check if pulse ring just swept past this object
+				if obj_dist <= _sonar_pulse_radius and obj_dist > maxf(prev_radius - 2.0, 0.0):
+					_reveal_creature(obj)
 
 		if _sonar_pulse_radius >= SONAR_RANGE:
 			_sonar_pulse_active = false
-			_sonar_pending_hits.clear()
 			if _sonar_ring:
 				_sonar_ring.visible = false
 
-func _place_sonar_point(pos: Vector3, col: Color, dist: float = 0.0) -> void:
-	# Distance LOD: skip some far points for sparser coverage
+func _place_sonar_point(pos: Vector3, col: Color, dist: float = 0.0, life_mult: float = 1.0) -> void:
 	var dist_ratio: float = clampf(dist / SONAR_RANGE, 0.0, 1.0)
-	if dist_ratio > 0.6 and randf() < 0.4:
-		return  # Skip 40% of points beyond 60% range
+	# Gentle LOD: only skip 20% of very far points (>80% range)
+	if dist_ratio > 0.8 and randf() < 0.2:
+		return
 
 	# Fast search: start from _sonar_next_free
 	for _j in range(SONAR_POINT_COUNT):
 		var i: int = (_sonar_next_free + _j) % SONAR_POINT_COUNT
 		if not _sonar_points[i].active:
-			_activate_sonar_point(i, pos, col, dist_ratio)
+			_activate_sonar_point(i, pos, col, dist_ratio, life_mult)
 			_sonar_next_free = (i + 1) % SONAR_POINT_COUNT
 			return
 
@@ -1882,28 +1911,106 @@ func _place_sonar_point(pos: Vector3, col: Color, dist: float = 0.0) -> void:
 		if _sonar_points[i].life < oldest_life:
 			oldest_life = _sonar_points[i].life
 			oldest_idx = i
-	_activate_sonar_point(oldest_idx, pos, col, dist_ratio)
+	_activate_sonar_point(oldest_idx, pos, col, dist_ratio, life_mult)
 
-func _activate_sonar_point(idx: int, pos: Vector3, col: Color, dist_ratio: float = 0.0) -> void:
+func _activate_sonar_point(idx: int, pos: Vector3, col: Color, dist_ratio: float = 0.0, life_mult: float = 1.0) -> void:
 	var pt = _sonar_points[idx]
 	pt.target_pos = pos
 	pt.active = true
-	# Distance LOD: far points fade faster and are smaller
-	var life_scale: float = lerpf(1.0, 0.5, dist_ratio * dist_ratio)
-	var size_scale: float = lerpf(1.0, 0.4, dist_ratio * dist_ratio)
+	# Distance-based scaling: far points slightly smaller/shorter-lived
+	var life_scale: float = lerpf(1.0, 0.7, dist_ratio * dist_ratio) * life_mult
+	var size_scale: float = lerpf(1.0, 0.6, dist_ratio * dist_ratio)
 	pt.life = SONAR_FADE_TIME * life_scale
 	pt.rain_t = 0.0
 	pt.color = col
-	pt.rand_delay = randf() * 0.12
+	pt.rand_delay = randf() * 0.04  # Faster placement — no rain delay
 
-	# Start position: slightly above target (subtle drop)
-	var start_pos: Vector3 = pos + Vector3(0, SONAR_RAIN_HEIGHT, 0)
-	var basis: Basis = Basis.IDENTITY.scaled(Vector3(size_scale, 1.5 * size_scale, size_scale))
+	# Place at target position (no rain drop effect — instant mapping)
+	var start_pos: Vector3 = pos
+	var basis: Basis = Basis.IDENTITY.scaled(Vector3(size_scale, size_scale, size_scale))
 	_sonar_mm.set_instance_transform(idx, Transform3D(basis, start_pos))
 	_sonar_mm.set_instance_color(idx, Color(0.4, 0.9, 0.8, 0.0))
 
+func _update_terrain_grid(space_state: PhysicsDirectSpaceState3D, origin: Vector3, player_y: float, exclude_rids: Array) -> void:
+	## Cast structured radial rays and rebuild the wireframe terrain mesh.
+	## Grid = rings at increasing distances × evenly-spaced spokes.
+	## Uses vertical raycasts from above each grid point to find the actual floor surface,
+	## producing accurate terrain contours regardless of player elevation.
+
+	# Cast a downward ray from above each grid point to find terrain surface
+	for r_idx in range(TERRAIN_GRID_RINGS):
+		var ring_dist: float = TERRAIN_GRID_DISTANCES[r_idx] if r_idx < TERRAIN_GRID_DISTANCES.size() else 50.0
+		for s_idx in range(TERRAIN_GRID_SPOKES):
+			var angle: float = TAU * float(s_idx) / TERRAIN_GRID_SPOKES
+			# Cast straight down from well above the floor at the target XZ
+			var target_xz: Vector3 = Vector3(cos(angle) * ring_dist, 0.0, sin(angle) * ring_dist)
+			var ray_start: Vector3 = origin + target_xz + Vector3(0, 30.0, 0)
+			var ray_end: Vector3 = origin + target_xz + Vector3(0, -40.0, 0)
+			var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(ray_start, ray_end)
+			query.exclude = exclude_rids
+			var result: Dictionary = space_state.intersect_ray(query)
+			if result:
+				_terrain_grid_hits[r_idx][s_idx] = result.position
+			else:
+				# Fallback: try from player origin (handles caves with low ceilings)
+				var floor_target: Vector3 = origin + Vector3(cos(angle) * ring_dist, -25.0, sin(angle) * ring_dist)
+				var dir: Vector3 = (floor_target - origin).normalized()
+				var ray_end2: Vector3 = origin + dir * (ring_dist + 30.0)
+				var query2: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, ray_end2)
+				query2.exclude = exclude_rids
+				var result2: Dictionary = space_state.intersect_ray(query2)
+				if result2:
+					_terrain_grid_hits[r_idx][s_idx] = result2.position
+				else:
+					_terrain_grid_hits[r_idx][s_idx] = null
+
+	# Rebuild line mesh from grid hits
+	_rebuild_terrain_mesh(player_y)
+
+func _rebuild_terrain_mesh(player_y: float) -> void:
+	## Build organic contour rings from grid hits — no radial spokes (avoids grid look).
+	## Jitter + random segment skipping creates a soft, sonar-echo feel.
+	var imm: ImmediateMesh = ImmediateMesh.new()
+	imm.surface_begin(Mesh.PRIMITIVE_LINES)
+
+	# Contour rings only — connect consecutive spokes on the same ring
+	for r_idx in range(TERRAIN_GRID_RINGS):
+		var ring_dist: float = TERRAIN_GRID_DISTANCES[r_idx] if r_idx < TERRAIN_GRID_DISTANCES.size() else 50.0
+		# Soft distance fade — very subtle underlay
+		var dist_fade: float = clampf(1.0 - ring_dist / 250.0, 0.03, 0.25)
+		var arc_len: float = TAU * ring_dist / TERRAIN_GRID_SPOKES
+		var max_gap: float = arc_len * 2.5
+		for s_idx in range(TERRAIN_GRID_SPOKES):
+			# Random segment skip (~12%) for organic incomplete-scan feel
+			if randf() < 0.12:
+				continue
+			var s_next: int = (s_idx + 1) % TERRAIN_GRID_SPOKES
+			var a = _terrain_grid_hits[r_idx][s_idx]
+			var b = _terrain_grid_hits[r_idx][s_next]
+			if a == null or b == null:
+				continue
+			if a.distance_to(b) > max_gap:
+				continue
+			# Organic jitter — sonar returns aren't pixel-perfect
+			var ja: Vector3 = a + Vector3(randf_range(-0.4, 0.4), randf_range(-0.15, 0.15), randf_range(-0.4, 0.4))
+			var jb: Vector3 = b + Vector3(randf_range(-0.4, 0.4), randf_range(-0.15, 0.15), randf_range(-0.4, 0.4))
+			# Per-segment alpha variation for sonar-echo shimmer
+			var alpha_vary: float = randf_range(0.7, 1.0)
+			var col_a: Color = _height_color(ja.y, player_y)
+			col_a.a = dist_fade * alpha_vary
+			var col_b: Color = _height_color(jb.y, player_y)
+			col_b.a = dist_fade * alpha_vary
+			imm.surface_set_color(col_a)
+			imm.surface_add_vertex(ja)
+			imm.surface_set_color(col_b)
+			imm.surface_add_vertex(jb)
+
+	imm.surface_end()
+	_terrain_mesh.mesh = imm
+
 func _cast_passive_sonar() -> void:
-	## Continuous close-range terrain mapping — keeps floor/walls visible near player
+	## Terrain wireframe grid update only — active pulse handles environment painting.
+	## No passive terrain dots: the cave stays dark between pulses for dramatic feel.
 	if not _player or not _sonar_ready:
 		return
 	var space_state = get_world_3d().direct_space_state
@@ -1912,28 +2019,101 @@ func _cast_passive_sonar() -> void:
 	var origin: Vector3 = _player.global_position + Vector3(0, 0.5, 0)
 	var player_y: float = origin.y
 	var exclude_rids: Array = [_player.get_rid()]
+	_update_terrain_grid(space_state, origin, player_y, exclude_rids)
 
-	# Cast rays in a hemisphere around the player (mostly downward for floor mapping)
-	for _r in range(PASSIVE_SONAR_RAYS):
-		var phi: float = randf() * TAU
-		var elev: float = randf_range(-0.9, 0.5)  # Bias toward floor
-		var dir: Vector3 = Vector3(
-			cos(phi) * cos(elev),
-			sin(elev),
-			sin(phi) * cos(elev)
-		).normalized()
-		var ray_end: Vector3 = origin + dir * PASSIVE_SONAR_RANGE
-		var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, ray_end)
-		query.exclude = exclude_rids
-		var result: Dictionary = space_state.intersect_ray(query)
-		if result:
-			var hit_pos: Vector3 = result.position
-			var hit_dist: float = origin.distance_to(hit_pos)
-			var col: Color = _height_color(hit_pos.y, player_y)
-			# Dim passive points slightly vs active sonar pulse
-			col = col.darkened(0.15)
-			var dist_ratio: float = clampf(hit_dist / PASSIVE_SONAR_RANGE, 0.0, 1.0)
-			_place_sonar_point(hit_pos, col, hit_dist)
+# --- Creature Pulse-Reveal System ---
+
+func _update_creature_reveals(delta: float) -> void:
+	## Fade all revealed objects back to invisible. Hide any new untracked objects.
+	# Hide newly spawned/untracked objects in all revealable groups
+	for group_name in ALL_REVEALABLE_GROUPS:
+		for obj in get_tree().get_nodes_in_group(group_name):
+			if not is_instance_valid(obj) or not obj.is_inside_tree():
+				continue
+			var id: int = obj.get_instance_id()
+			if id not in _creature_reveals and obj.visible:
+				obj.visible = false
+
+	# Fade active reveals
+	var to_remove: Array = []
+	for id in _creature_reveals:
+		var data: Dictionary = _creature_reveals[id]
+		if not is_instance_valid(data.node):
+			to_remove.append(id)
+			continue
+		data.time_left -= delta
+		if data.time_left <= 0:
+			# Fully faded — hide object
+			data.node.visible = false
+			if is_instance_valid(data.light):
+				data.light.light_energy = 0.0
+			to_remove.append(id)
+		else:
+			# Smooth quadratic fade — holds bright briefly then drops off
+			var t: float = data.time_left / REVEAL_FADE_TIME
+			t = t * t
+			if is_instance_valid(data.light):
+				data.light.light_energy = data.base_energy * t
+				data.light.omni_range = data.base_range * (0.5 + t * 0.5)
+	for id in to_remove:
+		var data: Dictionary = _creature_reveals[id]
+		if is_instance_valid(data.light):
+			data.light.queue_free()
+		_creature_reveals.erase(id)
+
+func _reveal_creature(obj: Node3D) -> void:
+	## Flash a reveal light on any object — makes it visible in the dark cave.
+	var id: int = obj.get_instance_id()
+	obj.visible = true
+
+	# Determine light color and energy based on object type
+	var light_color: Color = Color(0.8, 0.85, 0.9)  # Default: neutral white
+	var energy: float = REVEAL_LIGHT_ENERGY
+	var l_range: float = REVEAL_LIGHT_RANGE
+
+	if obj.is_in_group("boss"):
+		light_color = Color(1.0, 0.35, 0.15)  # Orange-red for bosses
+		energy = REVEAL_LIGHT_ENERGY * 1.5
+		l_range = REVEAL_LIGHT_RANGE * 1.5
+	elif obj.is_in_group("white_blood_cell") or obj.is_in_group("phagocyte") or \
+		 obj.is_in_group("killer_t_cell") or obj.is_in_group("mast_cell"):
+		light_color = Color(1.0, 0.15, 0.1)  # Red for hostile enemies
+	elif obj.is_in_group("flyer"):
+		light_color = Color(0.9, 0.25, 0.4)  # Pink-red for flyers
+	elif obj.is_in_group("prey"):
+		light_color = Color(0.2, 0.9, 0.3)  # Green for prey
+		energy = REVEAL_LIGHT_ENERGY * 0.8
+	elif obj.is_in_group("nutrient"):
+		light_color = Color(0.7, 0.85, 0.95)  # Cool white — lets nutrient's own color show
+		energy = REVEAL_LIGHT_ENERGY * 0.6
+		l_range = REVEAL_LIGHT_RANGE * 0.7
+	elif obj.is_in_group("ambient_life"):
+		light_color = Color(0.3, 0.7, 0.8)  # Soft cyan for ambient life
+		energy = REVEAL_LIGHT_ENERGY * 0.4
+		l_range = REVEAL_LIGHT_RANGE * 0.5
+
+	# Reuse existing reveal light or create new one
+	var light: OmniLight3D = null
+	if id in _creature_reveals:
+		light = _creature_reveals[id].get("light")
+	if not is_instance_valid(light):
+		light = OmniLight3D.new()
+		light.name = "RevealLight"
+		light.shadow_enabled = false
+		light.omni_attenuation = 1.8
+		obj.add_child(light)
+
+	light.light_energy = energy
+	light.omni_range = l_range
+	light.light_color = light_color
+
+	_creature_reveals[id] = {
+		"time_left": REVEAL_FADE_TIME,
+		"light": light,
+		"node": obj,
+		"base_energy": energy,
+		"base_range": l_range,
+	}
 
 # --- Death VFX: blood particle burst + nutrient drops ---
 
@@ -2277,6 +2457,8 @@ func _update_vision_level() -> void:
 		var amb_glow: Node = _player.get_node_or_null("PlayerAmbientGlow")
 		if amb_glow:
 			amb_glow.omni_range = tier.light_range * 1.8
+	# Scale creature reveal range with sensory level (each level = +1 parasite length)
+	_reveal_range = BASE_REVEAL_RANGE + GameManager.sensory_level * REVEAL_RANGE_PER_LEVEL
 	# Update player flashlight (eye stalk spotlight)
 	_update_player_flashlight()
 	# Update bioluminescent lights throughout cave
@@ -2287,7 +2469,9 @@ func _update_player_flashlight() -> void:
 		return
 	var tier: Dictionary = _get_vision_tier()
 	if _player._eye_light:
-		_player._eye_light.spot_range = tier.spot_range
+		# Don't override range when player's flashlight beam is active
+		if _player._flashlight_intensity < 0.01:
+			_player._eye_light.spot_range = tier.spot_range
 		_player._eye_light_base_energy = 1.5 + tier.biolum * 2.0
 	if _player._lure_light:
 		_player._lure_light.omni_range = 3.0 + tier.biolum * 5.0
@@ -2394,7 +2578,7 @@ func _check_mirror_boss_spawn() -> void:
 	mirror.set_script(mirror_script)
 	var mirror_pos: Vector3 = stomach_hub.position
 	if stomach_hub.node_3d and stomach_hub.node_3d.has_method("get_floor_y"):
-		mirror_pos.y = stomach_hub.node_3d.get_floor_y(mirror_pos.x, mirror_pos.z) + 0.5
+		mirror_pos.y = stomach_hub.node_3d.get_floor_y(mirror_pos.x, mirror_pos.z) + 2.0
 	else:
 		mirror_pos.y += 0.5
 	mirror.position = mirror_pos

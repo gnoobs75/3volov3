@@ -75,6 +75,7 @@ func setup(radius: float, color: Color, h_type: String = "", damage: float = 0.0
 func _ready() -> void:
 	_build_visual()
 	_build_hazard()
+	_build_particles()
 
 func _build_visual() -> void:
 	_mesh_instance = MeshInstance3D.new()
@@ -113,6 +114,112 @@ func _build_visual() -> void:
 	pool_light.position = Vector3(0, 0.5, 0)
 	add_child(pool_light)
 
+func _build_particles() -> void:
+	## Add steam wisps and bubble pops for damaging pools (acid, digestive, blood)
+	if hazard_type == "" or hazard_type == "slow" or hazard_type == "bile":
+		return  # Cosmetic and slow pools don't steam
+
+	# --- Steam / vapor rising from surface ---
+	var steam: GPUParticles3D = GPUParticles3D.new()
+	steam.name = "Steam"
+	steam.amount = clampi(int(pool_radius * 4), 8, 24)
+	steam.lifetime = 2.5
+	steam.randomness = 0.3
+	steam.visibility_aabb = AABB(Vector3(-pool_radius, 0, -pool_radius), Vector3(pool_radius * 2, 6, pool_radius * 2))
+
+	var steam_pm: ParticleProcessMaterial = ParticleProcessMaterial.new()
+	steam_pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	steam_pm.emission_box_extents = Vector3(pool_radius * 0.7, 0.1, pool_radius * 0.7)
+	steam_pm.direction = Vector3(0, 1, 0)
+	steam_pm.spread = 15.0
+	steam_pm.initial_velocity_min = 0.3
+	steam_pm.initial_velocity_max = 0.8
+	steam_pm.gravity = Vector3(0, 0.1, 0)  # Slight updraft
+	steam_pm.damping_min = 0.5
+	steam_pm.damping_max = 1.0
+	steam_pm.scale_min = 0.3
+	steam_pm.scale_max = 0.8
+	# Fade out over lifetime
+	var alpha_curve: CurveTexture = CurveTexture.new()
+	var acurve: Curve = Curve.new()
+	acurve.add_point(Vector2(0.0, 0.0))
+	acurve.add_point(Vector2(0.15, 0.6))
+	acurve.add_point(Vector2(0.6, 0.4))
+	acurve.add_point(Vector2(1.0, 0.0))
+	alpha_curve.curve = acurve
+	steam_pm.alpha_curve = alpha_curve
+	# Tint steam based on pool type
+	var steam_color: Color = Color(0.9, 0.9, 0.85, 0.25)  # Default: whitish
+	if hazard_type == "acid":
+		steam_color = Color(0.6, 0.8, 0.3, 0.2)  # Green-tinged vapor
+	elif hazard_type == "blood":
+		steam_color = Color(0.8, 0.3, 0.25, 0.15)  # Reddish mist
+	elif hazard_type == "digestive":
+		steam_color = Color(0.7, 0.65, 0.3, 0.2)  # Brown-yellow haze
+	steam_pm.color = steam_color
+	steam.process_material = steam_pm
+
+	var steam_mesh: QuadMesh = QuadMesh.new()
+	steam_mesh.size = Vector2(0.6, 0.6)
+	steam.draw_pass_1 = steam_mesh
+	var steam_mat: StandardMaterial3D = StandardMaterial3D.new()
+	steam_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	steam_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	steam_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	steam_mat.albedo_color = Color(1, 1, 1, 0.5)
+	steam_mat.vertex_color_use_as_albedo = true
+	steam.material_override = steam_mat
+	steam.position.y = 0.2
+	add_child(steam)
+
+	# --- Bubbles popping on the surface ---
+	var bubbles: GPUParticles3D = GPUParticles3D.new()
+	bubbles.name = "Bubbles"
+	bubbles.amount = clampi(int(pool_radius * 3), 6, 18)
+	bubbles.lifetime = 1.2
+	bubbles.randomness = 0.5
+	bubbles.visibility_aabb = AABB(Vector3(-pool_radius, -0.5, -pool_radius), Vector3(pool_radius * 2, 2, pool_radius * 2))
+
+	var bub_pm: ParticleProcessMaterial = ParticleProcessMaterial.new()
+	bub_pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	bub_pm.emission_box_extents = Vector3(pool_radius * 0.6, 0.05, pool_radius * 0.6)
+	bub_pm.direction = Vector3(0, 1, 0)
+	bub_pm.spread = 5.0
+	bub_pm.initial_velocity_min = 0.1
+	bub_pm.initial_velocity_max = 0.4
+	bub_pm.gravity = Vector3(0, -0.5, 0)  # Lazy upward then pop
+	bub_pm.scale_min = 0.1
+	bub_pm.scale_max = 0.35
+	# Quick pop: appear, swell, vanish
+	var bub_scale_curve: CurveTexture = CurveTexture.new()
+	var bscurve: Curve = Curve.new()
+	bscurve.add_point(Vector2(0.0, 0.3))
+	bscurve.add_point(Vector2(0.5, 1.0))
+	bscurve.add_point(Vector2(0.85, 1.2))
+	bscurve.add_point(Vector2(1.0, 0.0))  # Pop!
+	bub_scale_curve.curve = bscurve
+	bub_pm.scale_curve = bub_scale_curve
+	bub_pm.color = pool_color.lightened(0.3)
+	bubbles.process_material = bub_pm
+
+	var bub_mesh: SphereMesh = SphereMesh.new()
+	bub_mesh.radius = 0.08
+	bub_mesh.height = 0.16
+	bub_mesh.radial_segments = 6
+	bub_mesh.rings = 3
+	bubbles.draw_pass_1 = bub_mesh
+	var bub_mat: StandardMaterial3D = StandardMaterial3D.new()
+	bub_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	bub_mat.albedo_color = pool_color.lightened(0.2)
+	bub_mat.albedo_color.a = 0.4
+	bub_mat.emission_enabled = true
+	bub_mat.emission = pool_color.lightened(0.1)
+	bub_mat.emission_energy_multiplier = 0.5
+	bub_mat.vertex_color_use_as_albedo = true
+	bubbles.material_override = bub_mat
+	bubbles.position.y = 0.15
+	add_child(bubbles)
+
 func _build_hazard() -> void:
 	if hazard_type == "":
 		return
@@ -124,6 +231,8 @@ func _build_hazard() -> void:
 	_hazard_node.set_meta("radius", pool_radius)
 	if hazard_type == "acid":
 		_hazard_node.set_meta("dps", dps)
+		if slow_factor < 0.99:
+			_hazard_node.set_meta("slow_factor", slow_factor)
 	elif hazard_type == "bile":
 		_hazard_node.set_meta("slow_factor", slow_factor)
 	elif hazard_type == "slow":

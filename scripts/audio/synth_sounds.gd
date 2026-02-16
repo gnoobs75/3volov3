@@ -1264,3 +1264,27 @@ static func gen_summon_minions() -> PackedFloat32Array:
 			s += noise() * 0.15 * env
 		buf[i] = s * env * 0.5
 	return buf
+
+static func gen_flashlight_click() -> PackedFloat32Array:
+	## Electric click + rising hum — bioluminescent organ powering on
+	var dur: float = 0.25
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.003, 0.04, 0.3, 0.12, dur)
+		var s: float = 0.0
+		# Sharp initial click (impulse noise burst, 3ms)
+		if t < 0.003:
+			s += noise() * 0.8
+		# Rising electric tone (800 -> 1600Hz, fast sweep)
+		var freq: float = lerpf(800.0, 1600.0, clampf(t / 0.08, 0.0, 1.0))
+		s += sine(t * freq) * 0.3 * env
+		# Warm undertone hum
+		s += sine(t * 220.0) * 0.15 * env
+		# Crackling texture (sparse noise pops)
+		if fmod(t * 4000.0, 7.0) < 0.5:
+			s += noise() * 0.1 * env
+		buf[i] = s * env * 0.6
+	return buf
