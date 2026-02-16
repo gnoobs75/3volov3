@@ -149,7 +149,9 @@ func _setup_navigation() -> void:
 		var angle: float = TAU * float(i) / float(num_pts)
 		outline.append(Vector2(cos(angle), sin(angle)) * 3900.0)  # Slightly inside map boundary
 	nav_poly.add_outline(outline)
-	nav_poly.make_polygons_from_outlines()
+	var source_geo := NavigationMeshSourceGeometryData2D.new()
+	NavigationServer2D.parse_source_geometry_data(nav_poly, source_geo, self)
+	NavigationServer2D.bake_from_source_geometry_data(nav_poly, source_geo)
 	_nav_region.navigation_polygon = nav_poly
 	add_child(_nav_region)
 

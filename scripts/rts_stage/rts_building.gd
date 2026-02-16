@@ -39,16 +39,17 @@ var _tower_target: Node2D = null
 
 # Visual
 var _time: float = 0.0
+var _collision_shape: CollisionShape2D = null
 
 func _ready() -> void:
 	add_to_group("rts_buildings")
 	add_to_group("faction_%d" % faction_id)
 	# Collision shape
-	var shape := CollisionShape2D.new()
+	_collision_shape = CollisionShape2D.new()
 	var circle := CircleShape2D.new()
 	circle.radius = size_radius
-	shape.shape = circle
-	add_child(shape)
+	_collision_shape.shape = circle
+	add_child(_collision_shape)
 
 func setup(p_faction_id: int, p_building_type: int, p_template: CreatureTemplate, pre_built: bool = false) -> void:
 	faction_id = p_faction_id
@@ -70,10 +71,9 @@ func setup(p_faction_id: int, p_building_type: int, p_template: CreatureTemplate
 	attack_range = stats.get("attack_range", 0.0)
 	attack_damage = stats.get("attack_damage", 0.0)
 	attack_cooldown = stats.get("attack_cooldown", 1.5)
-	# Update collision
-	var cs: CollisionShape2D = get_child(0) as CollisionShape2D
-	if cs and cs.shape is CircleShape2D:
-		(cs.shape as CircleShape2D).radius = size_radius
+	# Update collision (shape may not exist yet if _ready() hasn't fired)
+	if _collision_shape and _collision_shape.shape is CircleShape2D:
+		(_collision_shape.shape as CircleShape2D).radius = size_radius
 	if pre_built:
 		construction_progress = build_time
 		_is_constructed = true
