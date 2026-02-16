@@ -176,7 +176,7 @@ func find_next_idle_worker() -> Node2D:
 			continue
 		if "unit_type" in unit and unit.unit_type != UnitStats.UnitType.WORKER:
 			continue
-		if "state" in unit and unit.state == 0:  # State.IDLE
+		if "state" in unit and unit.state == 0:  # IDLE=0
 			idle_workers.append(unit)
 	if idle_workers.is_empty():
 		return null

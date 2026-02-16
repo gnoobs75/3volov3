@@ -49,7 +49,6 @@ var _hurt_flash: float = 0.0
 
 func _ready() -> void:
 	add_to_group("rts_buildings")
-	add_to_group("faction_%d" % faction_id)
 	# Collision shape
 	_collision_shape = CollisionShape2D.new()
 	var circle := CircleShape2D.new()

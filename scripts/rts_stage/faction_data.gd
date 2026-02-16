@@ -81,6 +81,8 @@ static func get_faction(id: int) -> Dictionary:
 	return FACTIONS[0]
 
 static func get_faction_color(id: int) -> Color:
+	if id < 0:
+		return Color(0.7, 0.25, 0.15)  # Neutral hostile — orange-red
 	return get_faction(id).get("color", Color.WHITE)
 
 static func get_faction_name(id: int) -> String:

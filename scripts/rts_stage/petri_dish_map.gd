@@ -9,6 +9,9 @@ const TITAN_RING_RADIUS: float = 0.45  # Titans at 45% radius
 const NUM_RESOURCE_NODES: int = 45
 const NUM_TITAN_CORPSES: int = 10
 const NUM_OBSTACLES: int = 20
+const NUM_STARTER_RESOURCES_PER_SPAWN: int = 4
+const NUM_RESOURCE_CACHES: int = 30
+const NUM_NPC_POCKETS: int = 8
 
 var _time: float = 0.0
 var _substrate_dots: Array[Vector2] = []
@@ -20,6 +23,7 @@ var spawn_positions: Array[Vector2] = []
 var resource_nodes: Array[Node2D] = []
 var titan_corpses: Array[Node2D] = []
 var obstacles: Array[Node2D] = []
+var npc_creatures: Array[Node2D] = []
 
 # Liquid environment
 var _ambient_particles: Array = []  # [{pos, vel, size, alpha, type}]
@@ -89,8 +93,22 @@ func _ready() -> void:
 		})
 
 func spawn_resources() -> void:
-	# Spawn titan corpses in ring at ~45% radius, offset from cardinal axes
-	var titan_scene: PackedScene = null  # Created programmatically
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 123
+
+	# 1. Starter resources near each spawn (close, easy to reach)
+	for si in range(spawn_positions.size()):
+		var sp: Vector2 = spawn_positions[si]
+		for ri in range(NUM_STARTER_RESOURCES_PER_SPAWN):
+			var angle: float = TAU * float(ri) / float(NUM_STARTER_RESOURCES_PER_SPAWN) + rng.randf_range(-0.3, 0.3)
+			var dist: float = rng.randf_range(150.0, 350.0)
+			var pos: Vector2 = sp + Vector2(cos(angle) * dist, sin(angle) * dist)
+			var node: Node2D = _create_resource_node(100 + si * 10 + ri, 150)  # Medium-sized starter
+			node.global_position = pos
+			add_child(node)
+			resource_nodes.append(node)
+
+	# 2. Titan corpses in ring at ~45% radius
 	for i in range(NUM_TITAN_CORPSES):
 		var angle: float = TAU * float(i) / NUM_TITAN_CORPSES + PI / NUM_TITAN_CORPSES
 		var pos: Vector2 = Vector2(cos(angle), sin(angle)) * MAP_RADIUS * TITAN_RING_RADIUS
@@ -99,9 +117,7 @@ func spawn_resources() -> void:
 		add_child(titan)
 		titan_corpses.append(titan)
 
-	# Spawn scattered biomolecule resource nodes
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 123
+	# 3. Scattered standard biomolecule resource nodes (mid-map)
 	for i in range(NUM_RESOURCE_NODES):
 		var angle: float = rng.randf() * TAU
 		var dist: float = rng.randf_range(MAP_RADIUS * 0.15, MAP_RADIUS * 0.85)
@@ -109,7 +125,7 @@ func spawn_resources() -> void:
 		# Avoid spawning too close to spawn points
 		var too_close: bool = false
 		for sp in spawn_positions:
-			if pos.distance_to(sp) < 600.0:
+			if pos.distance_to(sp) < 400.0:
 				too_close = true
 				break
 		if too_close:
@@ -119,7 +135,20 @@ func spawn_resources() -> void:
 		add_child(node)
 		resource_nodes.append(node)
 
-	# Spawn terrain obstacles
+	# 4. Small resource caches scattered everywhere (quick pick-ups)
+	for i in range(NUM_RESOURCE_CACHES):
+		var angle: float = rng.randf() * TAU
+		var dist: float = rng.randf_range(MAP_RADIUS * 0.1, MAP_RADIUS * 0.9)
+		var pos: Vector2 = Vector2(cos(angle) * dist, sin(angle) * dist)
+		var node: Node2D = _create_resource_node(200 + i, rng.randi_range(40, 80))  # Small caches
+		node.global_position = pos
+		add_child(node)
+		resource_nodes.append(node)
+
+	# 5. NPC danger pockets — clusters of hostile creatures at strategic mid-map positions
+	_spawn_npc_pockets(rng)
+
+	# 6. Terrain obstacles
 	for i in range(NUM_OBSTACLES):
 		var angle: float = TAU * float(i) / NUM_OBSTACLES + randi() % 100 * 0.01
 		var dist: float = MAP_RADIUS * rng.randf_range(0.3, 0.75)
@@ -129,6 +158,49 @@ func spawn_resources() -> void:
 		add_child(obs)
 		obstacles.append(obs)
 
+func _spawn_npc_pockets(rng: RandomNumberGenerator) -> void:
+	## Spawns isolated pockets of neutral hostile creatures at strategic locations.
+	## Each pocket has 2-4 creatures guarding a resource-rich area.
+	var NpcCreature := preload("res://scripts/rts_stage/npc_creature.gd")
+	# Place pockets in a ring between spawns and center, and along inter-faction borders
+	for pi in range(NUM_NPC_POCKETS):
+		var angle: float = TAU * float(pi) / float(NUM_NPC_POCKETS) + rng.randf_range(-0.2, 0.2)
+		var dist: float = MAP_RADIUS * rng.randf_range(0.25, 0.6)
+		var pocket_center: Vector2 = Vector2(cos(angle) * dist, sin(angle) * dist)
+		# Avoid spawning too close to faction spawns
+		var too_close: bool = false
+		for sp in spawn_positions:
+			if pocket_center.distance_to(sp) < 800.0:
+				too_close = true
+				break
+		if too_close:
+			continue
+		# Determine pocket composition
+		var pocket_size: int = rng.randi_range(2, 4)
+		var has_brute: bool = rng.randf() < 0.35
+		for ci in range(pocket_size):
+			var offset: Vector2 = Vector2(rng.randf_range(-60, 60), rng.randf_range(-60, 60))
+			var creature: CharacterBody2D = NpcCreature.new()
+			creature.name = "NPC_%d_%d" % [pi, ci]
+			var ctype: int = 0  # SWARMLING
+			if has_brute and ci == 0:
+				ctype = 1  # BRUTE
+			elif rng.randf() < 0.25:
+				ctype = 2  # SPITTER
+			creature.global_position = pocket_center + offset
+			add_child(creature)
+			creature.setup(ctype, pocket_center)
+			creature.died.connect(_on_npc_died)
+			npc_creatures.append(creature)
+		# Place a rich resource node at the pocket center as reward
+		var reward: Node2D = _create_resource_node(300 + pi, 300)  # Rich cache guarded by NPCs
+		reward.global_position = pocket_center
+		add_child(reward)
+		resource_nodes.append(reward)
+
+func _on_npc_died(_creature: Node2D) -> void:
+	npc_creatures.erase(_creature)
+
 func _create_titan_corpse(index: int) -> Node2D:
 	var tc: Node2D = preload("res://scripts/rts_stage/titan_corpse.gd").new()
 	tc.name = "TitanCorpse_%d" % index
@@ -136,9 +208,11 @@ func _create_titan_corpse(index: int) -> Node2D:
 	tc.add_to_group("titan_corpses")
 	return tc
 
-func _create_resource_node(index: int) -> Node2D:
+func _create_resource_node(index: int, biomass_amount: int = 200) -> Node2D:
 	var rn: Node2D = preload("res://scripts/rts_stage/resource_node.gd").new()
 	rn.name = "ResourceNode_%d" % index
+	rn.biomass_remaining = biomass_amount
+	rn.max_biomass = biomass_amount
 	rn.add_to_group("rts_resources")
 	rn.add_to_group("resource_nodes")
 	return rn

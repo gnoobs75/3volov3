@@ -138,8 +138,13 @@ func _ready() -> void:
 	_faction_manager.faction_eliminated.connect(_on_faction_eliminated_check)
 	_command_system.command_issued.connect(_on_command_issued)
 
-	# 9. Spawn resources on map
+	# 9. Spawn resources on map (including NPC dangers)
 	_petri_dish.spawn_resources()
+
+	# 10b. Connect NPC creature death signals for stats
+	for npc in _petri_dish.npc_creatures:
+		if is_instance_valid(npc):
+			npc.died.connect(_on_unit_died)
 
 	# 10. Setup starting bases for all 4 factions
 	_setup_starting_bases()
@@ -314,8 +319,9 @@ func _on_unit_died(unit: Node2D) -> void:
 	var fid: int = unit.faction_id if "faction_id" in unit else 0
 	if fid == 0:
 		_victory_manager.stats_units_lost += 1
-	# Delayed elimination check
-	call_deferred("_check_faction_elimination", fid)
+	# Delayed elimination check (only for real factions 0-3)
+	if fid >= 0 and fid <= 3:
+		call_deferred("_check_faction_elimination", fid)
 
 func _on_unit_killed(unit: Node2D, _killer: Node2D) -> void:
 	AudioManager.play_rts_unit_death()

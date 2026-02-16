@@ -5,6 +5,7 @@ var _target: Node2D = null
 var _target_pos: Vector2 = Vector2.ZERO
 var _damage: float = 10.0
 var _faction_id: int = 0
+var faction_id: int = 0  # Public for kill tracking
 var _speed: float = 300.0
 var _time: float = 0.0
 var _max_life: float = 3.0
@@ -16,6 +17,7 @@ func setup(origin: Vector2, target: Node2D, dmg: float, fid: int) -> void:
 	_target_pos = target.global_position if is_instance_valid(target) else origin + Vector2(100, 0)
 	_damage = dmg
 	_faction_id = fid
+	faction_id = fid
 
 func _ready() -> void:
 	# Collision

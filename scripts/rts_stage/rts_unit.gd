@@ -57,7 +57,6 @@ var _using_nav: bool = false
 
 func _ready() -> void:
 	add_to_group("rts_units")
-	add_to_group("faction_%d" % faction_id)
 	# Collision
 	var shape := CollisionShape2D.new()
 	var circle := CircleShape2D.new()

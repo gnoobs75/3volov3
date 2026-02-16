@@ -21,7 +21,7 @@ func _ready() -> void:
 	area.name = "ResourceArea"
 	var shape := CollisionShape2D.new()
 	var circle := CircleShape2D.new()
-	circle.radius = 20.0
+	circle.radius = 5.0 + 9.0 * clampf(float(max_biomass) / 200.0, 0.3, 1.0) + 5.0
 	shape.shape = circle
 	area.add_child(shape)
 	area.collision_layer = 0
@@ -78,7 +78,7 @@ func _find_nearest_gathering_worker() -> Node2D:
 		if not is_instance_valid(unit):
 			continue
 		if "unit_type" in unit and unit.unit_type == UnitStats.UnitType.WORKER:
-			if "state" in unit and unit.state == 2:  # GATHERING (typical enum value)
+			if "state" in unit and unit.state == 3:  # State.GATHER (IDLE=0, MOVE=1, ATTACK=2, GATHER=3)
 				var dist: float = global_position.distance_to(unit.global_position)
 				if dist < nearest_dist:
 					nearest_dist = dist
@@ -101,9 +101,10 @@ func _draw() -> void:
 		return
 	if not _is_on_screen():
 		return
-	var fill: float = float(biomass_remaining) / float(max_biomass)
+	var fill: float = float(biomass_remaining) / float(maxi(max_biomass, 1))
 	var pulse: float = 1.0 + 0.15 * sin(_time * 2.0 + _pulse_offset)
-	var radius: float = 8.0 + 6.0 * fill
+	var base_radius: float = 5.0 + 9.0 * clampf(float(max_biomass) / 200.0, 0.3, 1.0)
+	var radius: float = base_radius * (0.3 + 0.7 * fill)
 
 	# Outer pulsing glow ring (oscillating alpha 0.05-0.15)
 	var glow_alpha: float = 0.05 + 0.10 * (0.5 + 0.5 * sin(_time * 1.5 + _pulse_offset))
