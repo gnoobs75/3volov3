@@ -16,6 +16,7 @@ var _music_on: bool = false
 const BUTTONS: Array = [
 	{"label": "BEGIN OBSERVATION", "action": "cell"},
 	{"label": "PARASITE STAGE", "action": "snake"},
+	{"label": "COLONY WARS", "action": "rts"},
 	{"label": "XENOBIOLOGY DATABASE", "action": "database"},
 	{"label": "QUIT", "action": "quit"},
 ]
@@ -93,9 +94,12 @@ func _gui_input(event: InputEvent) -> void:
 			GameManager.go_to_snake_stage()
 		elif _hover_button == 2:
 			AudioManager.play_ui_select()
+			GameManager.go_to_rts_stage()
+		elif _hover_button == 3:
+			AudioManager.play_ui_select()
 			if _database:
 				_database.toggle()
-		elif _hover_button == 3:
+		elif _hover_button == 4:
 			AudioManager.play_ui_select()
 			get_tree().quit()
 

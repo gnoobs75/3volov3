@@ -15,7 +15,7 @@ signal sensory_level_changed(new_level: int)
 signal trait_unlocked(trait_id: String)
 signal trait_upgraded(trait_id: String, new_tier: int)
 
-enum Stage { MENU, INTRO, CELL, SNAKE, OCEAN_STUB }
+enum Stage { MENU, INTRO, CELL, RTS, SNAKE, OCEAN_STUB }
 
 var current_stage: Stage = Stage.MENU
 
@@ -131,6 +131,12 @@ func go_to_cell_stage() -> void:
 	Engine.time_scale = 0.85  # 15% slower for accessibility
 	get_tree().change_scene_to_file("res://scenes/cell_stage.tscn")
 	stage_changed.emit("cell")
+
+func go_to_rts_stage() -> void:
+	current_stage = Stage.RTS
+	Engine.time_scale = 1.0
+	get_tree().change_scene_to_file("res://scenes/rts_stage.tscn")
+	stage_changed.emit("rts")
 
 func go_to_snake_stage() -> void:
 	current_stage = Stage.SNAKE

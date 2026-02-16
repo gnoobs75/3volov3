@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://rts_stage"]
+
+[ext_resource type="Script" path="res://scripts/rts_stage/rts_stage_manager.gd" id="1"]
+
+[node name="RTSStage" type="Node2D"]
+script = ExtResource("1")

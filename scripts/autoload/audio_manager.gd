@@ -129,6 +129,15 @@ var _buf_bone_shield: PackedFloat32Array
 var _buf_summon_minions: PackedFloat32Array
 var _buf_flashlight_click: PackedFloat32Array
 
+# RTS stage sound buffers
+var _buf_rts_select: PackedFloat32Array
+var _buf_rts_command: PackedFloat32Array
+var _buf_rts_build_place: PackedFloat32Array
+var _buf_rts_build_complete: PackedFloat32Array
+var _buf_rts_attack: PackedFloat32Array
+var _buf_rts_unit_death: PackedFloat32Array
+var _buf_rts_gather: PackedFloat32Array
+
 # Cell stage ambient
 var _cell_ambient_player: AudioStreamPlayer = null
 
@@ -248,6 +257,15 @@ func _ready() -> void:
 	_buf_bone_shield = SynthSounds.gen_bone_shield()
 	_buf_summon_minions = SynthSounds.gen_summon_minions()
 	_buf_flashlight_click = SynthSounds.gen_flashlight_click()
+
+	# Pre-generate RTS stage sounds
+	_buf_rts_select = _gen_rts_select()
+	_buf_rts_command = _gen_rts_command()
+	_buf_rts_build_place = _gen_rts_build_place()
+	_buf_rts_build_complete = _gen_rts_build_complete()
+	_buf_rts_attack = _gen_rts_attack()
+	_buf_rts_unit_death = _gen_rts_unit_death()
+	_buf_rts_gather = _gen_rts_gather()
 
 	# Setup music players for file-based music
 	_setup_music_players()
@@ -739,6 +757,8 @@ func _on_stage_changed(new_stage: String) -> void:
 			play_music("menu")  # Use menu music for intro too
 		"cell":
 			play_music("cell_stage")
+		"rts":
+			play_music("cell_stage")  # Reuse cell stage music for RTS
 		"ocean_stub":
 			play_music("victory")
 
@@ -751,6 +771,8 @@ func _start_music_for_current_stage() -> void:
 		GameManager.Stage.INTRO:
 			play_music("menu")
 		GameManager.Stage.CELL:
+			play_music("cell_stage")
+		GameManager.Stage.RTS:
 			play_music("cell_stage")
 		GameManager.Stage.OCEAN_STUB:
 			play_music("victory")
@@ -831,6 +853,103 @@ func play_summon_minions() -> void:
 
 func play_flashlight_click() -> void:
 	_play_buffer(_buf_flashlight_click, -4.0)
+
+## === RTS STAGE SOUNDS ===
+
+func play_rts_select() -> void:
+	_play_buffer(_buf_rts_select, -6.0)
+
+func play_rts_command() -> void:
+	_play_buffer(_buf_rts_command, -5.0)
+
+func play_rts_build_place() -> void:
+	_play_buffer(_buf_rts_build_place, -4.0)
+
+func play_rts_build_complete() -> void:
+	_play_buffer(_buf_rts_build_complete, -2.0)
+
+func play_rts_attack() -> void:
+	_play_buffer(_buf_rts_attack, -3.0)
+
+func play_rts_unit_death() -> void:
+	_play_buffer(_buf_rts_unit_death, -3.0)
+
+func play_rts_gather() -> void:
+	_play_buffer(_buf_rts_gather, -8.0)
+
+# RTS sound generators (simple procedural)
+func _gen_rts_select() -> PackedFloat32Array:
+	var buf := PackedFloat32Array()
+	var len: int = int(SAMPLE_RATE * 0.12)
+	buf.resize(len)
+	for i in range(len):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = (1.0 - t / 0.12) * 0.4
+		buf[i] = sin(t * 880.0 * TAU) * env + sin(t * 1320.0 * TAU) * env * 0.3
+	return buf
+
+func _gen_rts_command() -> PackedFloat32Array:
+	var buf := PackedFloat32Array()
+	var len: int = int(SAMPLE_RATE * 0.15)
+	buf.resize(len)
+	for i in range(len):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = (1.0 - t / 0.15) * 0.35
+		var freq: float = 660.0 + t * 200.0
+		buf[i] = sin(t * freq * TAU) * env
+	return buf
+
+func _gen_rts_build_place() -> PackedFloat32Array:
+	var buf := PackedFloat32Array()
+	var len: int = int(SAMPLE_RATE * 0.2)
+	buf.resize(len)
+	for i in range(len):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = (1.0 - t / 0.2) * 0.3
+		buf[i] = sin(t * 440.0 * TAU) * env + sin(t * 550.0 * TAU) * env * 0.5
+	return buf
+
+func _gen_rts_build_complete() -> PackedFloat32Array:
+	var buf := PackedFloat32Array()
+	var len: int = int(SAMPLE_RATE * 0.4)
+	buf.resize(len)
+	for i in range(len):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = (1.0 - t / 0.4) * 0.35
+		var freq: float = 440.0 if t < 0.15 else 660.0 if t < 0.3 else 880.0
+		buf[i] = sin(t * freq * TAU) * env
+	return buf
+
+func _gen_rts_attack() -> PackedFloat32Array:
+	var buf := PackedFloat32Array()
+	var len: int = int(SAMPLE_RATE * 0.1)
+	buf.resize(len)
+	for i in range(len):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = (1.0 - t / 0.1) * 0.5
+		buf[i] = sin(t * 220.0 * TAU) * env + sin(t * 330.0 * TAU) * env * 0.3
+	return buf
+
+func _gen_rts_unit_death() -> PackedFloat32Array:
+	var buf := PackedFloat32Array()
+	var len: int = int(SAMPLE_RATE * 0.3)
+	buf.resize(len)
+	for i in range(len):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = (1.0 - t / 0.3) * 0.4
+		var freq: float = 300.0 - t * 200.0
+		buf[i] = sin(t * freq * TAU) * env
+	return buf
+
+func _gen_rts_gather() -> PackedFloat32Array:
+	var buf := PackedFloat32Array()
+	var len: int = int(SAMPLE_RATE * 0.08)
+	buf.resize(len)
+	for i in range(len):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = (1.0 - t / 0.08) * 0.2
+		buf[i] = sin(t * 1200.0 * TAU) * env
+	return buf
 
 ## === CELL STAGE AMBIENT ===
 
