@@ -10,6 +10,10 @@ var _build_menu_open: bool = false
 var _hover_btn: int = -1
 var _hover_build: int = -1
 var _hover_production: int = -1
+var _game_speed: float = 1.0
+var _dragging_speed_slider: bool = false
+const SPEED_MIN: float = 0.25
+const SPEED_MAX: float = 2.0
 
 const BUILD_BUTTONS: Array = [
 	{"type": BuildingStats.BuildingType.SPAWNING_POOL, "key": "Q"},
@@ -52,21 +56,39 @@ func _process(delta: float) -> void:
 					_hover_production = i
 	queue_redraw()
 
-func _gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+func _input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		var vp: Vector2 = get_viewport_rect().size
-		# Command buttons
-		if _hover_btn >= 0:
-			_handle_cmd_button(_hover_btn)
-			get_viewport().set_input_as_handled()
-		# Build menu
-		if _hover_build >= 0:
-			_handle_build_button(_hover_build)
-			get_viewport().set_input_as_handled()
-		# Production
-		if _hover_production >= 0:
-			_handle_production_button(_hover_production)
-			get_viewport().set_input_as_handled()
+		var mouse: Vector2 = event.position
+		if event.pressed:
+			# Speed slider drag start
+			var sr: Rect2 = _get_speed_slider_rect(vp)
+			if sr.has_point(mouse):
+				_dragging_speed_slider = true
+				_update_speed_from_mouse(mouse, sr)
+				get_viewport().set_input_as_handled()
+				return
+			# Command buttons
+			if _hover_btn >= 0:
+				_handle_cmd_button(_hover_btn)
+				get_viewport().set_input_as_handled()
+				return
+			# Build menu
+			if _hover_build >= 0:
+				_handle_build_button(_hover_build)
+				get_viewport().set_input_as_handled()
+				return
+			# Production
+			if _hover_production >= 0:
+				_handle_production_button(_hover_production)
+				get_viewport().set_input_as_handled()
+				return
+		else:
+			_dragging_speed_slider = false
+	elif event is InputEventMouseMotion and _dragging_speed_slider:
+		var vp: Vector2 = get_viewport_rect().size
+		_update_speed_from_mouse(event.position, _get_speed_slider_rect(vp))
+		get_viewport().set_input_as_handled()
 
 func _handle_cmd_button(idx: int) -> void:
 	if not _selection_mgr:
@@ -101,6 +123,14 @@ func _handle_production_button(idx: int) -> void:
 		return
 	if idx >= 0 and idx < building.can_produce.size():
 		building.queue_unit(building.can_produce[idx])
+
+func _get_speed_slider_rect(vp: Vector2) -> Rect2:
+	return Rect2(vp.x - 220, 8, 150, 24)
+
+func _update_speed_from_mouse(mouse: Vector2, sr: Rect2) -> void:
+	var t: float = clampf((mouse.x - sr.position.x) / sr.size.x, 0.0, 1.0)
+	_game_speed = lerpf(SPEED_MIN, SPEED_MAX, t)
+	Engine.time_scale = _game_speed
 
 func _get_cmd_btn_rect(vp: Vector2, idx: int) -> Rect2:
 	var bw: float = 60.0
@@ -150,6 +180,9 @@ func _draw() -> void:
 		var cap: int = fm.get_supply_cap(0)
 		var pop_col: Color = UIConstants.STAT_GREEN if used < cap else UIConstants.STAT_RED
 		draw_string(font, Vector2(400, 27), "Pop: %d/%d" % [used, cap], HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_BODY, pop_col)
+
+	# === GAME SPEED SLIDER (top right) ===
+	_draw_speed_slider(vp, font)
 
 	# === BOTTOM BAR ===
 	draw_rect(Rect2(0, vp.y - 120, vp.x, 120), Color(UIConstants.BG_DARK.r, UIConstants.BG_DARK.g, UIConstants.BG_DARK.b, 0.85))
@@ -284,3 +317,22 @@ func _draw_production_panel(vp: Vector2, font: Font) -> void:
 		draw_rect(Rect2(bar_x, bar_y, 200, 8), Color(0.1, 0.1, 0.1, 0.7))
 		draw_rect(Rect2(bar_x, bar_y, 200 * pct, 8), Color(0.3, 0.7, 1.0, 0.8))
 		draw_string(font, Vector2(bar_x + 205, bar_y + 8), "Q:%d" % sel.get_queue_size(), HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM)
+
+func _draw_speed_slider(vp: Vector2, font: Font) -> void:
+	var sr: Rect2 = _get_speed_slider_rect(vp)
+	# Label
+	draw_string(font, Vector2(sr.position.x - 50, sr.position.y + 16), "Speed", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, UIConstants.TEXT_DIM)
+	# Track
+	draw_rect(sr, Color(0.08, 0.1, 0.15, 0.9))
+	draw_rect(sr, Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.4), false, 1.0)
+	# Fill
+	var t: float = clampf((_game_speed - SPEED_MIN) / (SPEED_MAX - SPEED_MIN), 0.0, 1.0)
+	var fill_w: float = sr.size.x * t
+	var fill_color: Color = UIConstants.STAT_GREEN if _game_speed <= 1.1 else UIConstants.STAT_YELLOW if _game_speed <= 1.6 else UIConstants.STAT_RED
+	draw_rect(Rect2(sr.position.x, sr.position.y, fill_w, sr.size.y), Color(fill_color.r, fill_color.g, fill_color.b, 0.4))
+	# Thumb
+	var thumb_x: float = sr.position.x + fill_w
+	draw_rect(Rect2(thumb_x - 3, sr.position.y - 2, 6, sr.size.y + 4), fill_color)
+	# Value text
+	var speed_text: String = "%dx" % int(_game_speed) if is_equal_approx(_game_speed, roundf(_game_speed)) else "%.1fx" % _game_speed
+	draw_string(font, Vector2(sr.position.x + sr.size.x + 8, sr.position.y + 16), speed_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, fill_color)

@@ -8,7 +8,7 @@ const ZOOM_MIN: float = 0.3
 const ZOOM_MAX: float = 1.5
 const ZOOM_STEP: float = 0.1
 const ZOOM_LERP_SPEED: float = 8.0
-const MAP_RADIUS: float = 4000.0
+const MAP_RADIUS: float = 8000.0
 
 var _target_zoom: float = 0.6
 var _pan_velocity: Vector2 = Vector2.ZERO

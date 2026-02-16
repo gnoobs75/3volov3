@@ -2,12 +2,12 @@ extends Node2D
 ## Circular petri dish arena for the RTS stage.
 ## Draws the boundary, substrate, and spawns resources + obstacles.
 
-const MAP_RADIUS: float = 4000.0
+const MAP_RADIUS: float = 8000.0
 const SPAWN_INSET: float = 0.7  # Spawn at 70% from center
 const TITAN_RING_RADIUS: float = 0.45  # Titans at 45% radius
-const NUM_RESOURCE_NODES: int = 25
-const NUM_TITAN_CORPSES: int = 6
-const NUM_OBSTACLES: int = 12
+const NUM_RESOURCE_NODES: int = 45
+const NUM_TITAN_CORPSES: int = 10
+const NUM_OBSTACLES: int = 20
 
 var _time: float = 0.0
 var _substrate_dots: Array[Vector2] = []
@@ -58,7 +58,7 @@ func spawn_resources() -> void:
 		# Avoid spawning too close to spawn points
 		var too_close: bool = false
 		for sp in spawn_positions:
-			if pos.distance_to(sp) < 300.0:
+			if pos.distance_to(sp) < 600.0:
 				too_close = true
 				break
 		if too_close:

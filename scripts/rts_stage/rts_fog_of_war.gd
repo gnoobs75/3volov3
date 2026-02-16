@@ -5,7 +5,7 @@ extends Node2D
 enum FogState { UNEXPLORED, EXPLORED, VISIBLE }
 
 const CELL_SIZE: float = 80.0
-const MAP_RADIUS: float = 4000.0
+const MAP_RADIUS: float = 8000.0
 var _grid_size: int = 0
 var _grid: Array = []  # 2D array of FogState
 var _offset: int = 0  # Grid offset (grid center = _offset, _offset)

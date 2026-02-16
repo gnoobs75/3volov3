@@ -8,12 +8,12 @@ var _time: float = 0.0
 
 const MINIMAP_RADIUS: float = 85.0
 const MINIMAP_CENTER: Vector2 = Vector2(95, 0)  # Offset from bottom-left
-const MAP_RADIUS: float = 4000.0
+const MAP_RADIUS: float = 8000.0
 
 func setup(stage: Node, camera: Camera2D) -> void:
 	_stage = stage
 	_camera = camera
-	mouse_filter = Control.MOUSE_FILTER_STOP
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func _process(delta: float) -> void:
 	_time += delta
@@ -34,7 +34,7 @@ func _minimap_to_world(minimap_pos: Vector2) -> Vector2:
 	var normalized: Vector2 = offset / MINIMAP_RADIUS
 	return normalized * MAP_RADIUS
 
-func _gui_input(event: InputEvent) -> void:
+func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		var center: Vector2 = _get_minimap_center()
 		var dist: float = event.position.distance_to(center)
