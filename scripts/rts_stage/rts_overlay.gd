@@ -10,6 +10,9 @@ var _elimination_timer: float = 0.0
 var _appear_t: float = 0.0
 var _stats: Dictionary = {}  # Game stats for end screen
 
+func _ready() -> void:
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+
 func show_victory(game_time: float) -> void:
 	_show_victory = true
 	_game_time = game_time
