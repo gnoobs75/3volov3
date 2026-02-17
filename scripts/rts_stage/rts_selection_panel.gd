@@ -5,6 +5,7 @@ extends Control
 var _selection_mgr: Node
 var _time: float = 0.0
 var _hovered_unit_idx: int = -1
+var _hovered_produce_btn: int = -1  # Index of hovered produce button in multi-building panel
 var _last_click_time: float = 0.0
 var _last_click_group: int = -1
 
@@ -47,7 +48,14 @@ func _draw() -> void:
 		else:
 			_draw_single_unit(sel, panel_x, panel_y)
 	else:
-		_draw_multi_selection(selected, panel_x, panel_y)
+		# Check if selection contains buildings
+		var buildings_in_sel: Array = selected.filter(func(u):
+			return is_instance_valid(u) and u.is_in_group("rts_buildings")
+		)
+		if not buildings_in_sel.is_empty() and buildings_in_sel.size() == selected.size():
+			_draw_multi_building_panel(buildings_in_sel, panel_x, panel_y)
+		else:
+			_draw_multi_selection(selected, panel_x, panel_y)
 
 	# Control groups bar at bottom-center
 	_draw_control_groups(vp)
@@ -363,6 +371,99 @@ func _draw_building_info(building: Node2D, x: float, y: float) -> void:
 		draw_rect(Rect2(x + 12, res_y + 4, 150.0, 4.0), Color(0.1, 0.05, 0.15, 0.5))
 		draw_rect(Rect2(x + 12, res_y + 4, 150.0 * res_pct, 4.0), Color(0.55, 0.2, 0.85, 0.8))
 
+# === MULTI BUILDING PANEL ===
+
+func _draw_multi_building_panel(buildings: Array, x: float, y: float) -> void:
+	## Draws shared panel when multiple buildings are selected.
+	_hovered_produce_btn = -1
+	var mouse: Vector2 = get_local_mouse_position()
+
+	# Count buildings by type
+	var type_counts: Dictionary = {}  # building_type -> count
+	var type_queues: Dictionary = {}  # building_type -> total queue size
+	for bld in buildings:
+		if not is_instance_valid(bld) or not "building_type" in bld:
+			continue
+		var bt: int = bld.building_type
+		type_counts[bt] = type_counts.get(bt, 0) + 1
+		if "_production_queue" in bld:
+			type_queues[bt] = type_queues.get(bt, 0) + bld._production_queue.size()
+
+	var all_same_type: bool = type_counts.size() == 1
+
+	if all_same_type:
+		# All same type: show "3x Spawning Pool" header with combined info
+		var bt: int = type_counts.keys()[0]
+		var count: int = type_counts[bt]
+		var bname: String = BuildingStats.get_building_name(bt)
+		var header: String = "%dx %s" % [count, bname]
+		draw_string(_font, Vector2(x + 12, y + 22), header, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_SUBHEADER, UIConstants.TEXT_BRIGHT)
+
+		# Combined HP bar (average health across all)
+		var total_hp: float = 0.0
+		var total_max_hp: float = 0.0
+		for bld in buildings:
+			if is_instance_valid(bld) and "health" in bld and "max_health" in bld:
+				total_hp += bld.health
+				total_max_hp += bld.max_health
+		if total_max_hp > 0:
+			var hp_fill: float = clampf(total_hp / total_max_hp, 0.0, 1.0)
+			var hp_bar_x: float = x + 12.0
+			var hp_bar_y: float = y + 30.0
+			var hp_bar_w: float = 200.0
+			var hp_bar_h: float = 8.0
+			draw_rect(Rect2(hp_bar_x, hp_bar_y, hp_bar_w, hp_bar_h), Color(0.08, 0.08, 0.08, 0.8))
+			var top_color: Color = Color(0.3, 0.95, 0.5) if hp_fill > 0.5 else Color(0.95, 0.85, 0.2) if hp_fill > 0.25 else Color(0.95, 0.3, 0.2)
+			draw_rect(Rect2(hp_bar_x, hp_bar_y, hp_bar_w * hp_fill, hp_bar_h * 0.5), top_color)
+			draw_rect(Rect2(hp_bar_x, hp_bar_y + hp_bar_h * 0.5, hp_bar_w * hp_fill, hp_bar_h * 0.5), top_color.darkened(0.4))
+			var hp_text: String = "%d/%d" % [int(total_hp), int(total_max_hp)]
+			draw_string(_mono, Vector2(hp_bar_x + hp_bar_w + 4, hp_bar_y + 7), hp_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM)
+
+		# Combined queue display
+		var total_queue: int = type_queues.get(bt, 0)
+		if total_queue > 0:
+			var queue_y: float = y + 50.0
+			draw_string(_mono, Vector2(x + 12, queue_y), "Queue: %d total" % total_queue, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM)
+
+		# Produce buttons (if production buildings)
+		var ref_building: Node2D = buildings[0]
+		if is_instance_valid(ref_building) and "can_produce" in ref_building and not ref_building.can_produce.is_empty():
+			var btn_x: float = x + 12.0
+			var btn_y: float = y + 64.0
+			draw_string(_mono, Vector2(btn_x, btn_y), "Produce:", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM)
+			btn_x += 52.0
+			for pi in range(ref_building.can_produce.size()):
+				var ut: int = ref_building.can_produce[pi]
+				var btn_rect: Rect2 = Rect2(btn_x + float(pi) * 32.0, btn_y - 10.0, 28.0, 16.0)
+				var hovered: bool = btn_rect.has_point(mouse)
+				if hovered:
+					_hovered_produce_btn = pi
+				var btn_bg: Color = Color(0.2, 0.5, 0.8, 0.5) if hovered else Color(0.15, 0.25, 0.4, 0.4)
+				draw_rect(btn_rect, btn_bg)
+				draw_rect(btn_rect, Color(0.3, 0.6, 1.0, 0.6 if hovered else 0.3), false, 1.0)
+				var letter: String = UnitStats.get_unit_name(ut).substr(0, 1)
+				draw_string(_mono, Vector2(btn_rect.position.x + 9, btn_rect.position.y + 12), letter, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_BRIGHT)
+
+		# Rally indicator
+		var any_rally: bool = false
+		for bld in buildings:
+			if is_instance_valid(bld) and "has_rally_point" in bld and bld.has_rally_point:
+				any_rally = true
+				break
+		if any_rally:
+			var rally_y: float = y + 88.0
+			draw_circle(Vector2(x + 20, rally_y - 3), 3.0, Color(0.2, 1.0, 0.4, 0.5))
+			draw_string(_mono, Vector2(x + 28, rally_y), "Rally set", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(0.3, 0.9, 0.5, 0.7))
+	else:
+		# Mixed types: show type counts
+		draw_string(_font, Vector2(x + 8, y + 18), "%d buildings selected" % buildings.size(), HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, UIConstants.TEXT_BRIGHT)
+		var row_y: float = y + 32.0
+		for bt in type_counts:
+			var bname: String = BuildingStats.get_building_name(bt)
+			var count_text: String = "%dx %s" % [type_counts[bt], bname]
+			draw_string(_mono, Vector2(x + 16, row_y), count_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM)
+			row_y += 14.0
+
 # === NO SELECTION ===
 
 func _draw_no_selection(x: float, y: float) -> void:
@@ -456,6 +557,33 @@ func _gui_input(event: InputEvent) -> void:
 					_selection_mgr.select_unit(clicked_unit, false)
 				get_viewport().set_input_as_handled()
 				return
+
+		# Check multi-building produce button clicks
+		if selected.size() > 1 and _hovered_produce_btn >= 0:
+			var buildings_in_sel: Array = selected.filter(func(u):
+				return is_instance_valid(u) and u.is_in_group("rts_buildings")
+			)
+			if not buildings_in_sel.is_empty() and buildings_in_sel.size() == selected.size():
+				var ref_bld: Node2D = buildings_in_sel[0]
+				if is_instance_valid(ref_bld) and "can_produce" in ref_bld and _hovered_produce_btn < ref_bld.can_produce.size():
+					var ut: int = ref_bld.can_produce[_hovered_produce_btn]
+					# Find building of that type with shortest queue
+					var best_bld: Node2D = null
+					var shortest_queue: int = 9999
+					for bld in buildings_in_sel:
+						if not is_instance_valid(bld):
+							continue
+						if not bld.has_method("queue_unit"):
+							continue
+						var qs: int = bld.get_queue_size() if bld.has_method("get_queue_size") else 0
+						if qs < shortest_queue:
+							shortest_queue = qs
+							best_bld = bld
+					if best_bld and best_bld.has_method("queue_unit"):
+						best_bld.queue_unit(ut)
+						AudioManager.play_rts_command()
+					get_viewport().set_input_as_handled()
+					return
 
 		# Check control group clicks
 		var strip_w: float = 9 * 42.0
