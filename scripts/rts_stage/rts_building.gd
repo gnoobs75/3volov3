@@ -4,6 +4,7 @@ extends StaticBody2D
 signal construction_complete(building: Node2D)
 signal destroyed(building: Node2D)
 signal unit_produced(building: Node2D, unit_type: int)
+signal research_complete(building: Node2D, upgrade_id: int, is_building_upgrade: bool)
 
 var faction_id: int = 0
 var building_type: int = BuildingStats.BuildingType.BIO_WALL
@@ -40,6 +41,15 @@ var _tower_target: Node2D = null
 # Rally point
 var rally_point: Vector2 = Vector2.ZERO
 var has_rally_point: bool = false
+
+# Research
+var _research_queue: Array = []  # Array of {id: int, is_building: bool}
+var _research_timer: float = 0.0
+var _current_research_time: float = 0.0
+var _is_researching: bool = false
+var _current_research_type: String = ""  # "unit" or "building"
+var _building_upgrade_id: int = -1  # BuildingUpgradeId applied to this building, -1 = none
+var _tech_tree: Node = null
 
 # Visual
 var _time: float = 0.0
@@ -156,6 +166,9 @@ func get_queue_size() -> int:
 func _process(delta: float) -> void:
 	_time += delta
 	_hurt_flash = maxf(_hurt_flash - delta * 3.0, 0.0)
+	# Research
+	if _is_constructed:
+		_process_research(delta)
 	# Production
 	if _is_constructed and not _production_queue.is_empty():
 		_production_timer += delta
@@ -256,6 +269,14 @@ func _draw() -> void:
 	# Production progress
 	if not _production_queue.is_empty():
 		_draw_production_bar()
+
+	# Research progress
+	if _is_researching:
+		_draw_research_bar()
+
+	# Upgraded indicator
+	if _building_upgrade_id >= 0:
+		_draw_upgrade_indicator(gc)
 
 	# Rally point
 	if has_rally_point and faction_id == 0:
@@ -387,3 +408,173 @@ func _draw_rally_point() -> void:
 
 	# Small base circle
 	draw_circle(pole_base, 2.0, flag_color)
+
+# === RESEARCH ===
+
+func set_tech_tree(tree: Node) -> void:
+	_tech_tree = tree
+
+func queue_research(upgrade_id: int, is_building_upgrade: bool = false) -> bool:
+	## Queue a research item. Returns true if successfully queued.
+	if not _is_constructed:
+		return false
+	if not _tech_tree:
+		return false
+
+	var data: Dictionary = {}
+	if is_building_upgrade:
+		if upgrade_id not in _tech_tree.BUILDING_UPGRADE_DATA:
+			return false
+		if _tech_tree.has_building_upgrade(faction_id, upgrade_id):
+			return false
+		data = _tech_tree.BUILDING_UPGRADE_DATA[upgrade_id]
+		# Building upgrades can only be researched at the correct building type
+		var target_building: int = data.get("target_building", -1)
+		if target_building != building_type:
+			return false
+	else:
+		if upgrade_id not in _tech_tree.UPGRADE_DATA:
+			return false
+		if not _tech_tree.can_research(faction_id, upgrade_id):
+			return false
+		# Unit upgrades are researched at Evolution Chamber
+		if building_type != BuildingStats.BuildingType.EVOLUTION_CHAMBER:
+			return false
+		data = _tech_tree.UPGRADE_DATA[upgrade_id]
+
+	# Spend resources
+	var stage: Node = get_tree().get_first_node_in_group("rts_stage")
+	if not stage or not stage.has_method("get_resource_manager"):
+		return false
+	var rm: Node = stage.get_resource_manager()
+	if not rm.spend(faction_id, data.get("cost_biomass", 0), data.get("cost_genes", 0)):
+		return false
+
+	_research_queue.append({"id": upgrade_id, "is_building": is_building_upgrade})
+	if not _is_researching:
+		_start_research()
+	return true
+
+func _start_research() -> void:
+	if _research_queue.is_empty():
+		_is_researching = false
+		_current_research_type = ""
+		return
+	var entry: Dictionary = _research_queue[0]
+	var upgrade_id: int = entry.get("id", 0)
+	var is_building: bool = entry.get("is_building", false)
+	var data: Dictionary = {}
+	if is_building:
+		data = _tech_tree.BUILDING_UPGRADE_DATA.get(upgrade_id, {})
+		_current_research_type = "building"
+	else:
+		data = _tech_tree.UPGRADE_DATA.get(upgrade_id, {})
+		_current_research_type = "unit"
+	_current_research_time = data.get("research_time", 20.0)
+	# Apply production multiplier from faction data
+	var fd: Dictionary = FactionData.get_faction(faction_id)
+	_current_research_time /= fd.get("build_speed_mult", 1.0)
+	_research_timer = 0.0
+	_is_researching = true
+
+func _process_research(delta: float) -> void:
+	if not _is_researching or _research_queue.is_empty():
+		return
+	_research_timer += delta
+	if _research_timer >= _current_research_time:
+		_complete_current_research()
+
+func _complete_current_research() -> void:
+	if _research_queue.is_empty():
+		_is_researching = false
+		return
+	var entry: Dictionary = _research_queue.pop_front()
+	var upgrade_id: int = entry.get("id", 0)
+	var is_building: bool = entry.get("is_building", false)
+	if _tech_tree:
+		if is_building:
+			_tech_tree.complete_building_upgrade(faction_id, upgrade_id)
+			_apply_building_upgrade(upgrade_id)
+		else:
+			_tech_tree.complete_upgrade(faction_id, upgrade_id)
+	research_complete.emit(self, upgrade_id, is_building)
+	if faction_id == 0:
+		AudioManager.play_rts_build_complete()
+	# Start next in queue
+	_start_research()
+
+func _apply_building_upgrade(uid: int) -> void:
+	## Apply a building-specific upgrade to this building.
+	_building_upgrade_id = uid
+	match uid:
+		0:  # HATCHERY — applied to Spawning Pool
+			supply_provided += 10
+		1:  # SPINE_TOWER — applied to Membrane Tower
+			attack_damage *= 1.5
+			attack_range += 50.0
+		2:  # REFINERY — applied to Nutrient Processor
+			pass  # Gather rate bonus is checked via tech_tree by units
+
+func get_research_progress() -> float:
+	if not _is_researching or _current_research_time <= 0:
+		return 0.0
+	return clampf(_research_timer / _current_research_time, 0.0, 1.0)
+
+func is_researching() -> bool:
+	return _is_researching
+
+func is_upgraded() -> bool:
+	return _building_upgrade_id >= 0
+
+func get_upgrade_name() -> String:
+	if _building_upgrade_id < 0:
+		return ""
+	if not _tech_tree:
+		return "Upgraded"
+	return _tech_tree.get_building_upgrade_name(_building_upgrade_id)
+
+func get_current_research_name() -> String:
+	if _research_queue.is_empty():
+		return ""
+	var entry: Dictionary = _research_queue[0]
+	var upgrade_id: int = entry.get("id", 0)
+	var is_building: bool = entry.get("is_building", false)
+	if is_building:
+		return _tech_tree.get_building_upgrade_name(upgrade_id) if _tech_tree else "Research"
+	else:
+		return _tech_tree.get_upgrade_name(upgrade_id) if _tech_tree else "Research"
+
+func get_research_queue_size() -> int:
+	return _research_queue.size()
+
+func _draw_research_bar() -> void:
+	## Purple/cyan research progress bar below production bar
+	var bar_w: float = size_radius * 1.5
+	var bar_h: float = 2.5
+	# Place below production bar if it exists, otherwise below building
+	var bar_y: float = size_radius + 5.0
+	if not _production_queue.is_empty():
+		bar_y += 5.0  # Offset below production bar
+	var pct: float = get_research_progress()
+	# Background
+	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w, bar_h), Color(0.1, 0.05, 0.15, 0.5))
+	# Fill — animated purple-cyan gradient
+	var fill_color: Color = Color(0.55 + 0.15 * sin(_time * 2.0), 0.2, 0.85 + 0.1 * sin(_time * 3.0), 0.8)
+	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w * pct, bar_h), fill_color)
+	# Small glow at fill edge
+	if pct > 0.02 and pct < 0.99:
+		var edge_x: float = -bar_w * 0.5 + bar_w * pct
+		draw_circle(Vector2(edge_x, bar_y + bar_h * 0.5), 2.5, Color(0.6, 0.3, 1.0, 0.3))
+
+func _draw_upgrade_indicator(gc: Color) -> void:
+	## Small chevron/star indicator showing this building is upgraded
+	var indicator_y: float = -size_radius - 14.0
+	# Small diamond
+	var pts := PackedVector2Array()
+	pts.append(Vector2(0, indicator_y - 4.0))
+	pts.append(Vector2(3.0, indicator_y))
+	pts.append(Vector2(0, indicator_y + 4.0))
+	pts.append(Vector2(-3.0, indicator_y))
+	draw_colored_polygon(pts, Color(gc.r, gc.g, gc.b, 0.7))
+	# Tiny glow
+	draw_circle(Vector2(0, indicator_y), 5.0, Color(gc.r, gc.g, gc.b, 0.1))
