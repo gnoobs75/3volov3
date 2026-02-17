@@ -695,6 +695,38 @@ func _draw() -> void:
 	if _is_burst_gathering:
 		draw_circle(Vector2.ZERO, _cell_radius * 1.3, Color(0.3, 0.9, 0.4, 0.12 + 0.06 * sin(_time * 5.0)))
 
+	# 15. Command queue waypoints (shift-queue visualization)
+	if is_selected and not _command_queue.is_empty():
+		_draw_command_queue()
+
+func _draw_command_queue() -> void:
+	## Draw faint lines from current position through queued waypoints, with numbered dots.
+	var queue_color: Color = Color(0.5, 0.9, 1.0, 0.35)
+	var dot_color: Color = Color(0.5, 0.9, 1.0, 0.6)
+	var prev_pos: Vector2 = Vector2.ZERO  # Local coords (unit is at origin)
+	for i in range(_command_queue.size()):
+		var cmd: Dictionary = _command_queue[i]
+		var wp: Vector2 = Vector2.ZERO
+		var has_pos: bool = false
+		if cmd.has("target_pos"):
+			wp = cmd["target_pos"] - global_position  # Convert to local
+			has_pos = true
+		elif cmd.has("target_node") and is_instance_valid(cmd["target_node"]):
+			wp = cmd["target_node"].global_position - global_position
+			has_pos = true
+		if not has_pos:
+			continue
+		# Draw line from previous waypoint (or unit) to this one
+		draw_line(prev_pos, wp, queue_color, 1.0)
+		# Draw numbered dot
+		draw_circle(wp, 3.5, dot_color)
+		draw_circle(wp, 2.0, Color(0.1, 0.15, 0.2, 0.8))
+		# Number label
+		var num_font: Font = ThemeDB.fallback_font
+		if num_font:
+			draw_string(num_font, wp + Vector2(-2.5, 3.0), str(i + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(0.8, 0.95, 1.0, 0.9))
+		prev_pos = wp
+
 func _draw_unit_decorations() -> void:
 	match unit_type:
 		UnitStats.UnitType.FIGHTER:

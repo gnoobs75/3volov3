@@ -11,6 +11,11 @@ var _build_ghost: Node2D = null
 var _drag_rect_visible: bool = false
 var _drag_rect: Rect2 = Rect2()
 
+# Formation notification
+var _formation_notification: String = ""
+var _formation_notify_timer: float = 0.0
+const FORMATION_NOTIFY_DURATION: float = 1.5
+
 # Double-click tracking
 var _last_click_time: float = 0.0
 var _last_click_pos: Vector2 = Vector2.ZERO
@@ -23,6 +28,11 @@ func setup(sel: Node, cmd: Node, cam: Camera2D, stage: Node) -> void:
 	_camera = cam
 	_stage = stage
 	mouse_filter = Control.MOUSE_FILTER_STOP
+
+func _process(delta: float) -> void:
+	if _formation_notify_timer > 0:
+		_formation_notify_timer -= delta
+		queue_redraw()
 
 func _get_world_mouse_pos() -> Vector2:
 	if not _camera:
@@ -71,7 +81,7 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 				_command_sys.exit_special_mode()
 				_remove_build_ghost()
 			else:
-				_handle_right_click()
+				_handle_right_click(event.shift_pressed)
 
 func _handle_double_click() -> void:
 	## Select all player units of the same type as the unit under cursor (on screen)
@@ -126,7 +136,7 @@ func _try_select_at_mouse(add_to_selection: bool) -> void:
 	elif not add_to_selection:
 		_selection_mgr.deselect_all()
 
-func _handle_right_click() -> void:
+func _handle_right_click(shift_held: bool = false) -> void:
 	if _selection_mgr.selected_units.is_empty():
 		return
 
@@ -139,7 +149,10 @@ func _handle_right_click() -> void:
 		if "faction_id" in unit and unit.faction_id == 0:
 			continue
 		if world_pos.distance_to(unit.global_position) < 25.0:
-			_command_sys.issue_attack(_selection_mgr.selected_units, unit)
+			if shift_held:
+				_queue_command_to_selected({"type": "attack", "target_node": unit})
+			else:
+				_command_sys.issue_attack(_selection_mgr.selected_units, unit)
 			return
 
 	# Check if clicking on enemy building (attack)
@@ -149,7 +162,10 @@ func _handle_right_click() -> void:
 		if "faction_id" in building and building.faction_id == 0:
 			continue
 		if world_pos.distance_to(building.global_position) < 40.0:
-			_command_sys.issue_attack(_selection_mgr.selected_units, building)
+			if shift_held:
+				_queue_command_to_selected({"type": "attack", "target_node": building})
+			else:
+				_command_sys.issue_attack(_selection_mgr.selected_units, building)
 			return
 
 	# Check if clicking on own building (select production / deposit at depot)
@@ -163,13 +179,18 @@ func _handle_right_click() -> void:
 			if "is_depot" in building and building.is_depot and _selection_mgr.has_selected_workers():
 				# Send selected workers to deposit at this depot
 				var workers: Array = _selection_mgr.get_selected_workers()
-				for i in range(workers.size()):
-					var worker: Node2D = workers[i]
-					if is_instance_valid(worker) and worker.has_method("command_move"):
-						# Slight offset so workers don't stack
-						var angle: float = TAU * float(i) / float(maxi(workers.size(), 1))
-						var offset: Vector2 = Vector2(cos(angle), sin(angle)) * 15.0
-						worker.command_move(building.global_position + offset)
+				if shift_held:
+					for worker in workers:
+						if is_instance_valid(worker) and worker.has_method("queue_command"):
+							worker.queue_command({"type": "move", "target_pos": building.global_position})
+				else:
+					for i in range(workers.size()):
+						var worker: Node2D = workers[i]
+						if is_instance_valid(worker) and worker.has_method("command_move"):
+							# Slight offset so workers don't stack
+							var angle: float = TAU * float(i) / float(maxi(workers.size(), 1))
+							var offset: Vector2 = Vector2(cos(angle), sin(angle)) * 15.0
+							worker.command_move(building.global_position + offset)
 				AudioManager.play_rts_command()
 				return
 			elif "is_production" in building and building.is_production:
@@ -192,16 +213,35 @@ func _handle_right_click() -> void:
 				continue
 			if world_pos.distance_to(res.global_position) < 50.0:
 				var workers: Array = _selection_mgr.get_selected_workers()
-				# Send ALL selected workers with slight position offsets
-				_command_sys.issue_gather(workers, res)
+				if shift_held:
+					for worker in workers:
+						if is_instance_valid(worker) and worker.has_method("queue_command"):
+							worker.queue_command({"type": "gather", "target_node": res})
+				else:
+					# Send ALL selected workers with slight position offsets
+					_command_sys.issue_gather(workers, res)
+				AudioManager.play_rts_command()
 				return
 
 	# Default: move
 	if _command_sys.current_mode == _command_sys.CommandMode.ATTACK_MOVE:
-		_command_sys.issue_attack_move(_selection_mgr.selected_units, world_pos)
-		_command_sys.exit_special_mode()
+		if shift_held:
+			_queue_command_to_selected({"type": "move", "target_pos": world_pos})
+		else:
+			_command_sys.issue_attack_move(_selection_mgr.selected_units, world_pos)
+			_command_sys.exit_special_mode()
 	else:
-		_command_sys.issue_move(_selection_mgr.selected_units, world_pos)
+		if shift_held:
+			_queue_command_to_selected({"type": "move", "target_pos": world_pos})
+		else:
+			_command_sys.issue_move(_selection_mgr.selected_units, world_pos)
+
+func _queue_command_to_selected(cmd: Dictionary) -> void:
+	## Queue a command to all selected units (shift-queue).
+	for unit in _selection_mgr.selected_units:
+		if is_instance_valid(unit) and unit.has_method("queue_command"):
+			unit.queue_command(cmd.duplicate())
+	AudioManager.play_rts_command()
 
 func _try_place_building() -> void:
 	if not _build_ghost or not is_instance_valid(_build_ghost):
@@ -301,6 +341,18 @@ func _unhandled_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 				return
 
+		# F key — cycle formation (requires 3+ military units selected)
+		if event.keycode == KEY_F:
+			var military: Array = _selection_mgr.selected_units.filter(func(u):
+				return is_instance_valid(u) and "unit_type" in u and u.unit_type != UnitStats.UnitType.WORKER
+			)
+			if military.size() >= 3:
+				var new_formation: int = _command_sys.cycle_formation()
+				_formation_notification = "Formation: %s" % RtsFormation.get_formation_name(new_formation)
+				_formation_notify_timer = FORMATION_NOTIFY_DURATION
+			get_viewport().set_input_as_handled()
+			return
+
 		# Command hotkeys (only when not in build mode)
 		if _command_sys.current_mode != _command_sys.CommandMode.BUILD:
 			if event.keycode == KEY_A and not event.ctrl_pressed:
@@ -330,3 +382,17 @@ func _draw() -> void:
 	if _drag_rect_visible and _drag_rect.size.length() > 0:
 		draw_rect(_drag_rect, Color(0.2, 1.0, 0.3, 0.15))
 		draw_rect(_drag_rect, Color(0.2, 1.0, 0.3, 0.6), false, 1.5)
+
+	# Draw formation notification
+	if _formation_notify_timer > 0 and _formation_notification.length() > 0:
+		var vp: Vector2 = get_viewport_rect().size
+		var alpha: float = clampf(_formation_notify_timer / 0.3, 0.0, 1.0)  # Fade out last 0.3s
+		var font: Font = ThemeDB.fallback_font
+		var cx: float = vp.x * 0.5
+		var cy: float = vp.y * 0.82
+		var pill_w: float = 200.0
+		var pill_h: float = 32.0
+		draw_rect(Rect2(cx - pill_w * 0.5, cy - pill_h * 0.5, pill_w, pill_h), Color(0.06, 0.1, 0.18, 0.7 * alpha))
+		draw_rect(Rect2(cx - pill_w * 0.5, cy - pill_h * 0.5, pill_w, pill_h), Color(0.3, 0.7, 1.0, 0.4 * alpha), false, 1.0)
+		if font:
+			draw_string(font, Vector2(cx - pill_w * 0.5 + 10, cy + 5), _formation_notification, HORIZONTAL_ALIGNMENT_CENTER, int(pill_w - 20), 13, Color(0.7, 0.9, 1.0, 0.9 * alpha))
