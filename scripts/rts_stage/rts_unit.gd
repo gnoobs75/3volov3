@@ -43,6 +43,34 @@ var _gather_timer: float = 0.0
 var is_selected: bool = false
 var control_group: int = -1
 
+# Command Queue (shift-queue)
+var _command_queue: Array = []
+const MAX_QUEUE: int = 8
+
+# Abilities
+var _ability_cooldown_timer: float = 0.0
+var _ability_cooldown_max: float = 0.0
+var _ability_active: bool = false
+var _ability_timer: float = 0.0
+var _is_fortified: bool = false
+var _is_burst_gathering: bool = false
+var _is_stunned: bool = false
+var _stun_timer: float = 0.0
+
+# Veterancy
+var _xp: int = 0
+var _vet_level: int = 0
+const VET_THRESHOLDS: Array = [0, 3, 8, 15]
+const VET_HP_BONUS: Array = [0.0, 0.1, 0.2, 0.3]
+const VET_DMG_BONUS: Array = [0.0, 0.1, 0.2, 0.3]
+const VET_SPD_BONUS: Array = [0.0, 0.0, 0.05, 0.1]
+const VET_CD_BONUS: Array = [1.0, 1.0, 1.0, 0.75]
+var _last_combat_time: float = 999.0
+var _base_max_health: float = 100.0
+var _base_damage: float = 10.0
+var _base_speed: float = 100.0
+var _base_attack_cooldown: float = 1.0
+
 # Visual
 var _time: float = 0.0
 var _cell_radius: float = 12.0
@@ -92,6 +120,13 @@ func setup(p_faction_id: int, p_unit_type: int, p_template: CreatureTemplate) ->
 	detection_range = stats.get("detection_range", 200.0)
 	carry_capacity = stats.get("carry_capacity", 0)
 	build_speed = stats.get("build_speed", 0.0) * fd.get("build_speed_mult", 1.0)
+	# Store base stats for veterancy recalculation
+	_base_max_health = max_health
+	_base_damage = damage
+	_base_speed = speed
+	_base_attack_cooldown = attack_cooldown
+	# Initialize ability cooldown from stats
+	_ability_cooldown_max = stats.get("ability_cooldown", 0.0)
 	if _nav_agent:
 		_nav_agent.max_speed = speed
 	# Update groups
@@ -122,6 +157,33 @@ func _physics_process(delta: float) -> void:
 	if _blink_timer < 0:
 		_blink_timer = randf_range(3.0, 6.0)
 
+	# Ability cooldown tick
+	_ability_cooldown_timer = maxf(_ability_cooldown_timer - delta, 0.0)
+
+	# Ability active timer tick
+	if _ability_active:
+		_ability_timer -= delta
+		if _ability_timer <= 0:
+			_ability_active = false
+			_is_fortified = false
+			_is_burst_gathering = false
+			if has_meta("spore_reveal"):
+				remove_meta("spore_reveal")
+				remove_meta("spore_reveal_radius")
+
+	# Stun timer tick
+	if _is_stunned:
+		_stun_timer -= delta
+		if _stun_timer <= 0:
+			_is_stunned = false
+		else:
+			velocity = Vector2.ZERO
+			queue_redraw()
+			return  # Skip state processing while stunned
+
+	# Combat timer for veterancy
+	_last_combat_time += delta
+
 	match state:
 		State.IDLE:
 			_process_idle(delta)
@@ -145,6 +207,10 @@ func _physics_process(delta: float) -> void:
 # === STATE PROCESSORS ===
 
 func _process_idle(_delta: float) -> void:
+	# Advance command queue if pending
+	if not _command_queue.is_empty():
+		_advance_queue()
+		return
 	# Auto-retaliate: find nearby enemies
 	_check_auto_retaliate()
 
@@ -206,7 +272,10 @@ func _process_gather(delta: float) -> void:
 		_gather_timer += delta
 		if _gather_timer >= 1.0:
 			_gather_timer = 0.0
-			var harvested: Dictionary = _gather_target.harvest(2)
+			var gather_amount: int = 2
+			if _is_burst_gathering:
+				gather_amount *= 3
+			var harvested: Dictionary = _gather_target.harvest(gather_amount)
 			carried_biomass += harvested.get("biomass", 0)
 			carried_genes += harvested.get("genes", 0)
 			if carried_biomass + carried_genes >= carry_capacity:
@@ -363,12 +432,67 @@ func command_stop() -> void:
 	_attack_target = null
 	_gather_target = null
 	_build_target = null
+	clear_command_queue()
+
+# === COMMAND QUEUE (shift-queue) ===
+
+func queue_command(cmd: Dictionary) -> void:
+	## Append a command to the queue. Dict: {"type": String, "target_pos": Vector2, "target_node": Node2D}
+	if _command_queue.size() >= MAX_QUEUE:
+		return
+	_command_queue.append(cmd)
+
+func get_command_queue() -> Array:
+	return _command_queue
+
+func clear_command_queue() -> void:
+	_command_queue.clear()
+
+func _advance_queue() -> void:
+	## Pop front command and dispatch to appropriate command method.
+	if _command_queue.is_empty():
+		return
+	var cmd: Dictionary = _command_queue.pop_front()
+	var cmd_type: String = cmd.get("type", "")
+	match cmd_type:
+		"move":
+			var pos: Vector2 = cmd.get("target_pos", global_position)
+			command_move(pos)
+		"attack":
+			var target: Node2D = cmd.get("target_node", null)
+			if is_instance_valid(target):
+				command_attack(target)
+			else:
+				_advance_queue()  # Skip invalid, try next
+		"gather":
+			var target: Node2D = cmd.get("target_node", null)
+			if is_instance_valid(target) and not (target.has_method("is_depleted") and target.is_depleted()):
+				command_gather(target)
+			else:
+				_advance_queue()
+		"build":
+			var target: Node2D = cmd.get("target_node", null)
+			if is_instance_valid(target):
+				command_build(target)
+			else:
+				_advance_queue()
+		"patrol":
+			var pa: Vector2 = cmd.get("patrol_a", global_position)
+			var pb: Vector2 = cmd.get("target_pos", global_position)
+			command_patrol(pa, pb)
+		"hold":
+			command_hold()
+		"stop":
+			command_stop()
+		_:
+			pass  # Unknown command type, skip
 
 # === COMBAT ===
 
 func _perform_attack() -> void:
 	if not is_instance_valid(_attack_target):
 		return
+	_last_combat_time = 0.0
 	var actual_damage: float = damage
 	# Fighter charge bonus
 	if unit_type == UnitStats.UnitType.FIGHTER and _charge_moved:
@@ -404,9 +528,18 @@ func _fire_projectile(target: Node2D) -> void:
 	get_parent().add_child(proj)
 
 func take_damage(amount: float, _attacker: Node2D = null) -> void:
-	health -= amount
+	# Fortify armor bonus
+	var effective_amount: float = amount
+	if _is_fortified:
+		var bonus_armor: float = UnitStats.get_stats(unit_type).get("ability_armor_bonus", 0.0)
+		effective_amount = maxf(amount - bonus_armor, 1.0)
+	health -= effective_amount
 	_hurt_flash = 1.0
+	_last_combat_time = 0.0
 	if health <= 0:
+		# Grant XP to attacker on kill
+		if is_instance_valid(_attacker) and _attacker.has_method("grant_xp"):
+			_attacker.grant_xp(1)
 		_die()
 	elif state == State.IDLE and is_instance_valid(_attacker):
 		# Auto-retaliate
@@ -542,6 +675,26 @@ func _draw() -> void:
 	if carried_biomass > 0 or carried_genes > 0:
 		_draw_carry_indicator()
 
+	# 10. Veterancy stars
+	if _vet_level > 0:
+		_draw_veterancy_stars()
+
+	# 11. Ability cooldown indicator
+	if _ability_cooldown_timer > 0 and _ability_cooldown_max > 0:
+		_draw_ability_cooldown()
+
+	# 12. Fortify ring
+	if _is_fortified:
+		_draw_fortify_ring()
+
+	# 13. Stun indicator
+	if _is_stunned:
+		_draw_stun_indicator()
+
+	# 14. Burst gather glow
+	if _is_burst_gathering:
+		draw_circle(Vector2.ZERO, _cell_radius * 1.3, Color(0.3, 0.9, 0.4, 0.12 + 0.06 * sin(_time * 5.0)))
+
 func _draw_unit_decorations() -> void:
 	match unit_type:
 		UnitStats.UnitType.FIGHTER:
@@ -638,3 +791,243 @@ func _draw_carry_indicator() -> void:
 	var fill: float = float(total) / float(cap)
 	var indicator_y: float = _cell_radius + 4.0
 	draw_rect(Rect2(-5.0, indicator_y, 10.0 * fill, 2.0), Color(0.3, 0.9, 0.5, 0.6))
+
+func _draw_veterancy_stars() -> void:
+	## Draw gold 5-pointed stars above health bar based on vet level (1-3).
+	var star_y: float = -_cell_radius - 12.0
+	var star_color: Color = Color(1.0, 0.85, 0.2, 0.9)
+	var star_size: float = 2.5
+	var spacing: float = 7.0
+	var total_w: float = float(_vet_level - 1) * spacing
+	var start_x: float = -total_w * 0.5
+	for i in range(_vet_level):
+		var cx: float = start_x + float(i) * spacing
+		var center: Vector2 = Vector2(cx, star_y)
+		_draw_star(center, star_size, 5, star_color)
+
+func _draw_star(center: Vector2, radius: float, points: int, color: Color) -> void:
+	## Draw a filled 5-pointed star.
+	var pts: PackedVector2Array = PackedVector2Array()
+	var inner_r: float = radius * 0.4
+	for i in range(points * 2):
+		var angle: float = float(i) * PI / float(points) - PI * 0.5
+		var r: float = radius if i % 2 == 0 else inner_r
+		pts.append(center + Vector2(cos(angle) * r, sin(angle) * r))
+	draw_colored_polygon(pts, color)
+
+func _draw_ability_cooldown() -> void:
+	## Draw a small radial sweep near the unit showing ability cooldown progress.
+	var cd_center: Vector2 = Vector2(_cell_radius + 6.0, -_cell_radius + 2.0)
+	var cd_radius: float = 4.0
+	var cd_progress: float = 1.0 - (_ability_cooldown_timer / _ability_cooldown_max)
+	# Background circle
+	draw_circle(cd_center, cd_radius, Color(0.15, 0.15, 0.15, 0.6))
+	# Progress arc (clockwise from top)
+	if cd_progress > 0.01:
+		var start_angle: float = -PI * 0.5
+		var sweep: float = cd_progress * TAU
+		draw_arc(cd_center, cd_radius - 1.0, start_angle, start_angle + sweep, 12, Color(0.3, 0.8, 1.0, 0.8), 2.0)
+	# Ready flash
+	if _ability_cooldown_timer <= 0:
+		var pulse: float = 0.3 + 0.2 * sin(_time * 4.0)
+		draw_circle(cd_center, cd_radius + 1.0, Color(0.3, 0.8, 1.0, pulse))
+
+func _draw_fortify_ring() -> void:
+	## Draw extra armor ring when fortified.
+	var fortify_alpha: float = 0.5 + 0.2 * sin(_time * 3.0)
+	draw_arc(Vector2.ZERO, _cell_radius + 4.0, 0, TAU, 24, Color(0.9, 0.75, 0.3, fortify_alpha), 3.0)
+	draw_arc(Vector2.ZERO, _cell_radius + 6.0, 0, TAU, 24, Color(0.9, 0.75, 0.3, fortify_alpha * 0.4), 1.5)
+
+func _draw_stun_indicator() -> void:
+	## Draw spinning stars above the unit's head when stunned.
+	var stun_y: float = -_cell_radius - 10.0
+	var spin_speed: float = _time * 5.0
+	for i in range(3):
+		var angle: float = spin_speed + float(i) * TAU / 3.0
+		var orbit_r: float = 6.0
+		var pos: Vector2 = Vector2(cos(angle) * orbit_r, stun_y + sin(angle) * orbit_r * 0.4)
+		_draw_star(pos, 2.0, 4, Color(1.0, 1.0, 0.3, 0.8))
+
+# === ABILITIES ===
+
+func can_use_ability() -> bool:
+	## Returns true if cooldown is ready and unit is not stunned.
+	return _ability_cooldown_timer <= 0 and not _is_stunned and _ability_cooldown_max > 0
+
+func use_ability(target_pos: Vector2) -> void:
+	## Dispatch to type-specific ability execution.
+	if not can_use_ability():
+		return
+	match unit_type:
+		UnitStats.UnitType.FIGHTER:
+			_execute_charge(target_pos)
+		UnitStats.UnitType.DEFENDER:
+			_execute_fortify()
+		UnitStats.UnitType.SCOUT:
+			_execute_spores()
+		UnitStats.UnitType.RANGED:
+			_execute_acid_volley(target_pos)
+		UnitStats.UnitType.WORKER:
+			_execute_burst_gather()
+	# Apply veterancy cooldown reduction
+	var cd_mult: float = VET_CD_BONUS[_vet_level] if _vet_level < VET_CD_BONUS.size() else 1.0
+	_ability_cooldown_timer = _ability_cooldown_max * cd_mult
+	AudioManager.play_rts_attack()
+
+func _execute_charge(target_pos: Vector2) -> void:
+	## Dash 150 units toward target, deal 2.5x damage to first enemy within 40u, stun 0.5s.
+	var stats: Dictionary = UnitStats.get_stats(unit_type)
+	var charge_range: float = stats.get("ability_range", 150.0)
+	var dir: Vector2 = (target_pos - global_position).normalized()
+	var charge_dest: Vector2 = global_position + dir * charge_range
+	# Teleport/dash to destination
+	global_position = charge_dest
+	# Find and hit nearest enemy within 40 units of destination
+	var hit_radius: float = 40.0
+	var dmg_mult: float = stats.get("ability_damage_mult", 2.5)
+	var stun_dur: float = stats.get("ability_stun", 0.5)
+	var best_enemy: Node2D = null
+	var best_dist: float = hit_radius
+	for unit in get_tree().get_nodes_in_group("rts_units"):
+		if not is_instance_valid(unit) or unit == self:
+			continue
+		if "faction_id" in unit and unit.faction_id == faction_id:
+			continue
+		var dist: float = global_position.distance_to(unit.global_position)
+		if dist < best_dist:
+			best_dist = dist
+			best_enemy = unit
+	if is_instance_valid(best_enemy):
+		var charge_damage: float = damage * dmg_mult
+		var stage: Node = get_tree().get_first_node_in_group("rts_stage")
+		if stage and stage.has_method("get_combat_system"):
+			stage.get_combat_system().apply_damage(best_enemy, charge_damage, self)
+		elif best_enemy.has_method("take_damage"):
+			best_enemy.take_damage(charge_damage, self)
+		if best_enemy.has_method("apply_stun"):
+			best_enemy.apply_stun(stun_dur)
+	_last_combat_time = 0.0
+
+func _execute_fortify() -> void:
+	## Set fortified for ability_duration seconds. Armor bonus applied in take_damage.
+	var stats: Dictionary = UnitStats.get_stats(unit_type)
+	_is_fortified = true
+	_ability_active = true
+	_ability_timer = stats.get("ability_duration", 5.0)
+	velocity = Vector2.ZERO  # Can't move while fortified
+
+func _execute_spores() -> void:
+	## Set spore_reveal metadata for fog-of-war integration.
+	var stats: Dictionary = UnitStats.get_stats(unit_type)
+	set_meta("spore_reveal", true)
+	set_meta("spore_reveal_radius", stats.get("ability_reveal_radius", 400.0))
+	_ability_active = true
+	_ability_timer = stats.get("ability_reveal_duration", 8.0)
+
+func _execute_acid_volley(target_pos: Vector2) -> void:
+	## Fire 3 projectiles in a spread pattern.
+	var stats: Dictionary = UnitStats.get_stats(unit_type)
+	var count: int = stats.get("ability_projectile_count", 3)
+	var dmg_mult: float = stats.get("ability_damage_mult", 0.75)
+	var spread: float = stats.get("ability_spread", 0.3)
+	var base_dir: Vector2 = (target_pos - global_position).normalized()
+	var base_angle: float = base_dir.angle()
+	for i in range(count):
+		# Spread projectiles evenly across the spread arc
+		var offset: float = (float(i) - float(count - 1) * 0.5) * spread
+		var proj_angle: float = base_angle + offset
+		var proj_dir: Vector2 = Vector2(cos(proj_angle), sin(proj_angle))
+		var proj_target_pos: Vector2 = global_position + proj_dir * attack_range
+		# Find nearest enemy near that trajectory for targeting
+		var best_target: Node2D = _find_enemy_near_line(global_position, proj_target_pos, 50.0)
+		if is_instance_valid(best_target):
+			var proj := preload("res://scripts/rts_stage/rts_projectile.gd").new()
+			proj.setup(global_position, best_target, damage * dmg_mult, faction_id)
+			get_parent().add_child(proj)
+		else:
+			# Fire projectile at the spread position (create a dummy target position)
+			_fire_spread_projectile(proj_target_pos, damage * dmg_mult)
+	_last_combat_time = 0.0
+
+func _fire_spread_projectile(target_pos: Vector2, dmg: float) -> void:
+	## Fire a projectile toward a position (no tracking target).
+	var proj := preload("res://scripts/rts_stage/rts_projectile.gd").new()
+	# Create a temporary marker at target position for the projectile
+	var marker := Node2D.new()
+	marker.global_position = target_pos
+	get_parent().add_child(marker)
+	proj.setup(global_position, marker, dmg, faction_id)
+	get_parent().add_child(proj)
+	# Clean up marker after a delay
+	get_tree().create_timer(3.0).timeout.connect(func():
+		if is_instance_valid(marker):
+			marker.queue_free()
+	)
+
+func _find_enemy_near_line(from: Vector2, to: Vector2, max_dist: float) -> Node2D:
+	## Find the nearest enemy unit close to a line segment.
+	var best: Node2D = null
+	var best_d: float = max_dist
+	var line_dir: Vector2 = (to - from).normalized()
+	var line_len: float = from.distance_to(to)
+	for unit in get_tree().get_nodes_in_group("rts_units"):
+		if not is_instance_valid(unit) or unit == self:
+			continue
+		if "faction_id" in unit and unit.faction_id == faction_id:
+			continue
+		# Project unit position onto line
+		var to_unit: Vector2 = unit.global_position - from
+		var proj: float = to_unit.dot(line_dir)
+		if proj < 0 or proj > line_len:
+			continue
+		var closest_on_line: Vector2 = from + line_dir * proj
+		var dist: float = unit.global_position.distance_to(closest_on_line)
+		if dist < best_d:
+			best_d = dist
+			best = unit
+	return best
+
+func _execute_burst_gather() -> void:
+	## Set burst gathering for ability_duration seconds, multiplying gather amount.
+	var stats: Dictionary = UnitStats.get_stats(unit_type)
+	_is_burst_gathering = true
+	_ability_active = true
+	_ability_timer = stats.get("ability_duration", 5.0)
+
+func apply_stun(duration: float) -> void:
+	## Apply stun state for the given duration.
+	_is_stunned = true
+	_stun_timer = maxf(_stun_timer, duration)  # Don't shorten existing stun
+	velocity = Vector2.ZERO
+
+# === VETERANCY ===
+
+func grant_xp(amount: int) -> void:
+	## Add XP and check for level-up.
+	_xp += amount
+	# Check all thresholds
+	var new_level: int = 0
+	for i in range(VET_THRESHOLDS.size()):
+		if _xp >= VET_THRESHOLDS[i]:
+			new_level = i
+	if new_level > _vet_level:
+		_vet_level = new_level
+		_apply_veterancy()
+
+func _apply_veterancy() -> void:
+	## Recalculate stats based on vet level.
+	if _vet_level <= 0 or _vet_level >= VET_HP_BONUS.size():
+		return
+	var hp_bonus: float = VET_HP_BONUS[_vet_level]
+	var dmg_bonus: float = VET_DMG_BONUS[_vet_level]
+	var spd_bonus: float = VET_SPD_BONUS[_vet_level]
+	var old_max: float = max_health
+	max_health = _base_max_health * (1.0 + hp_bonus)
+	# Heal the difference so units don't lose HP% on level-up
+	health += max_health - old_max
+	health = minf(health, max_health)
+	damage = _base_damage * (1.0 + dmg_bonus)
+	speed = _base_speed * (1.0 + spd_bonus)
+	attack_cooldown = _base_attack_cooldown  # CD bonus applied at ability use, not base attacks
+	if _nav_agent:
+		_nav_agent.max_speed = speed

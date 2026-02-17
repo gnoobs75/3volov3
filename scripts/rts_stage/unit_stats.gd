@@ -22,6 +22,10 @@ const UNIT_DATA: Dictionary = {
 		"supply_cost": 1,
 		"can_build": true,
 		"can_gather": true,
+		"ability_name": "Burst Gather",
+		"ability_cooldown": 30.0,
+		"ability_duration": 5.0,
+		"ability_gather_mult": 3.0,
 	},
 	UnitType.FIGHTER: {
 		"name": "Warrior",
@@ -41,6 +45,11 @@ const UNIT_DATA: Dictionary = {
 		"can_build": false,
 		"can_gather": false,
 		"charge_bonus": 1.5,  # +50% damage on first hit after moving
+		"ability_name": "Charge",
+		"ability_cooldown": 12.0,
+		"ability_range": 150.0,
+		"ability_damage_mult": 2.5,
+		"ability_stun": 0.5,
 	},
 	UnitType.DEFENDER: {
 		"name": "Tank",
@@ -60,6 +69,11 @@ const UNIT_DATA: Dictionary = {
 		"can_build": false,
 		"can_gather": false,
 		"taunt_radius": 80.0,  # Enemies prefer attacking this unit
+		"ability_name": "Fortify",
+		"ability_cooldown": 20.0,
+		"ability_duration": 5.0,
+		"ability_armor_bonus": 8.0,
+		"ability_taunt_radius": 120.0,
 	},
 	UnitType.SCOUT: {
 		"name": "Scout",
@@ -78,6 +92,10 @@ const UNIT_DATA: Dictionary = {
 		"supply_cost": 1,
 		"can_build": false,
 		"can_gather": false,
+		"ability_name": "Emit Spores",
+		"ability_cooldown": 15.0,
+		"ability_reveal_radius": 400.0,
+		"ability_reveal_duration": 8.0,
 	},
 	UnitType.RANGED: {
 		"name": "Spitter",
@@ -98,6 +116,11 @@ const UNIT_DATA: Dictionary = {
 		"can_gather": false,
 		"min_range": 40.0,  # Can't fire at melee range
 		"projectile_speed": 300.0,
+		"ability_name": "Acid Volley",
+		"ability_cooldown": 18.0,
+		"ability_projectile_count": 3,
+		"ability_damage_mult": 0.75,
+		"ability_spread": 0.3,
 	},
 }
 
@@ -112,3 +135,6 @@ static func get_unit_name(unit_type: int) -> String:
 static func get_cost(unit_type: int) -> Dictionary:
 	var stats: Dictionary = get_stats(unit_type)
 	return {"biomass": stats.get("cost_biomass", 0), "genes": stats.get("cost_genes", 0)}
+
+static func get_ability_name(unit_type: int) -> String:
+	return get_stats(unit_type).get("ability_name", "")

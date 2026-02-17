@@ -7,12 +7,17 @@ var current_mode: CommandMode = CommandMode.NORMAL
 var _patrol_first_point: Vector2 = Vector2.ZERO
 var _waiting_patrol_second: bool = false
 var _build_type: int = -1
+var _current_formation: int = RtsFormation.FormationType.SPREAD
 
 signal command_issued(command: String, target_pos: Vector2)
 signal build_mode_entered(building_type: int)
 signal build_mode_exited()
+signal formation_changed(formation_type: int)
 
 func issue_move(units: Array, target_pos: Vector2) -> void:
+	if _current_formation != RtsFormation.FormationType.SPREAD and units.size() >= 3:
+		issue_move_formation(units, target_pos)
+		return
 	for unit in units:
 		if is_instance_valid(unit) and unit.has_method("command_move"):
 			unit.command_move(target_pos)
@@ -66,6 +71,12 @@ func issue_stop(units: Array) -> void:
 		if is_instance_valid(unit) and unit.has_method("command_stop"):
 			unit.command_stop()
 
+func issue_ability(units: Array, target_pos: Vector2) -> void:
+	for unit in units:
+		if is_instance_valid(unit) and unit.has_method("use_ability"):
+			unit.use_ability(target_pos)
+	command_issued.emit("ability", target_pos)
+
 func issue_set_rally_point(building: Node2D, pos: Vector2) -> void:
 	if is_instance_valid(building) and building.has_method("set_rally_point"):
 		building.set_rally_point(pos)
@@ -105,3 +116,40 @@ func handle_patrol_click(pos: Vector2, units: Array) -> bool:
 
 func get_build_type() -> int:
 	return _build_type
+
+# === FORMATION ===
+
+func cycle_formation() -> int:
+	_current_formation = (_current_formation + 1) % 4
+	formation_changed.emit(_current_formation)
+	return _current_formation
+
+func get_formation() -> int:
+	return _current_formation
+
+func issue_move_formation(units: Array, target_pos: Vector2) -> void:
+	## Calculates formation positions and issues individual move commands.
+	if units.is_empty():
+		return
+	# Calculate average position of selected units for direction
+	var avg_pos: Vector2 = Vector2.ZERO
+	var valid_count: int = 0
+	for unit in units:
+		if is_instance_valid(unit):
+			avg_pos += unit.global_position
+			valid_count += 1
+	if valid_count == 0:
+		return
+	avg_pos /= float(valid_count)
+	var direction: Vector2 = (target_pos - avg_pos).normalized()
+	if direction.length() < 0.01:
+		direction = Vector2(1, 0)
+	var positions: Array = RtsFormation.calculate_positions(units, target_pos, direction, _current_formation)
+	for i in range(units.size()):
+		if is_instance_valid(units[i]) and units[i].has_method("command_move"):
+			if i < positions.size():
+				units[i].command_move(positions[i])
+			else:
+				units[i].command_move(target_pos)
+	AudioManager.play_rts_command()
+	command_issued.emit("move", target_pos)

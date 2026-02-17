@@ -315,6 +315,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			elif event.keycode == KEY_S:
 				_command_sys.issue_stop(_selection_mgr.selected_units)
 				get_viewport().set_input_as_handled()
+			elif event.keycode == KEY_V:
+				# Ability hotkey — use selected units' abilities at mouse position
+				var world_pos: Vector2 = _get_world_mouse_pos()
+				_command_sys.issue_ability(_selection_mgr.selected_units, world_pos)
+				get_viewport().set_input_as_handled()
 			elif event.keycode == KEY_B:
 				if _selection_mgr.has_selected_workers():
 					# Build menu handled by HUD
