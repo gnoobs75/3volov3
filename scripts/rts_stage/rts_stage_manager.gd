@@ -370,6 +370,9 @@ func get_threat_detector() -> Node:
 func get_terrain_zones() -> Node2D:
 	return _terrain_zones
 
+func get_victory_manager() -> Node:
+	return _victory_manager
+
 func is_spectator_mode() -> bool:
 	return _spectator_mode
 

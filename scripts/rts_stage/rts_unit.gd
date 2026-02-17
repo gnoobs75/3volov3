@@ -235,10 +235,13 @@ func _physics_process(delta: float) -> void:
 	# Auto-cast abilities when enabled
 	_check_auto_cast()
 
-	# Update ghost trail positions for speed upgrade visual
-	_trail_positions.append(global_position)
-	if _trail_positions.size() > 3:
-		_trail_positions = _trail_positions.slice(-3)
+	# Update ghost trail positions for speed upgrade visual (only when moving)
+	if state == State.MOVE or state == State.PATROL or state == State.FLEE:
+		_trail_positions.append(global_position)
+		if _trail_positions.size() > 3:
+			_trail_positions = _trail_positions.slice(-3)
+	elif not _trail_positions.is_empty():
+		_trail_positions.clear()
 
 	queue_redraw()
 
@@ -387,6 +390,11 @@ func _process_return_resources(_delta: float) -> void:
 			if rm:
 				rm.add_biomass(faction_id, carried_biomass)
 				rm.add_genes(faction_id, carried_genes)
+				# Track resources gathered for stats (player faction only)
+				if faction_id == 0 and stage.has_method("get_victory_manager"):
+					var vm: Node = stage.get_victory_manager()
+					if vm and "stats_resources_gathered" in vm:
+						vm.stats_resources_gathered += carried_biomass + carried_genes
 		carried_biomass = 0
 		carried_genes = 0
 		# Return to gather source

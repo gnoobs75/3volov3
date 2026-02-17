@@ -370,12 +370,11 @@ func _handle_cmd_button(idx: int) -> void:
 		"rally":
 			pass  # Rally requires right-click on map
 		"cancel_queue":
-			# Cancel last item in production queue of selected building
+			# Cancel last item in production queue with 75% refund
 			if units.size() == 1 and is_instance_valid(units[0]):
 				var building: Node2D = units[0]
-				if building.is_in_group("rts_buildings") and "_production_queue" in building:
-					if not building._production_queue.is_empty():
-						building._production_queue.pop_back()
+				if building.is_in_group("rts_buildings") and building.has_method("cancel_last_queue_item"):
+					building.cancel_last_queue_item()
 		"produce":
 			# Production button — slot idx maps to can_produce index stored in meta
 			var produce_idx: int = cmds[idx].get("produce_idx", -1)

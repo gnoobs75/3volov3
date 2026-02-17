@@ -46,4 +46,9 @@ func _find_action_center() -> Vector2:
 		if score > best_score:
 			best_score = score
 			best_pos = u.global_position
-	return best_pos if best_score > 0.5 else units[randi() % units.size()].global_position
+	if best_score > 0.5:
+		return best_pos
+	var fallback: Node2D = units[randi() % units.size()]
+	if is_instance_valid(fallback):
+		return fallback.global_position
+	return Vector2.ZERO

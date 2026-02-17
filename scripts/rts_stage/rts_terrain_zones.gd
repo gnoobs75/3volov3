@@ -34,7 +34,9 @@ func get_elevation_bonus(attacker_pos: Vector2, target_pos: Vector2) -> float:
 
 func _process(delta: float) -> void:
 	_time += delta
-	queue_redraw()
+	# Only redraw every 5 frames (terrain zones are mostly static)
+	if Engine.get_process_frames() % 5 == 0:
+		queue_redraw()
 
 func _draw() -> void:
 	# Draw elevation zones as subtle raised platforms
