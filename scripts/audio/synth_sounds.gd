@@ -1654,3 +1654,19 @@ static func gen_rts_unit_attack_cry(unit_type: int) -> PackedFloat32Array:
 				var phase: float = t * freq
 				buf[i] = (square(phase) * 0.25 + sine(phase * 1.5) * 0.3 + noise() * 0.2) * env * 0.5
 	return buf
+
+## Short bright ping for map/minimap notifications
+static func gen_map_ping() -> PackedFloat32Array:
+	var dur: float = 0.15
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = exp(-t * 20.0)  # Quick decay
+		var freq: float = lerpf(800.0, 1200.0, t / dur)  # Ascending sweep
+		phase += freq / SAMPLE_RATE
+		var s: float = sine(phase) * 0.6 + sine(phase * 2.0) * 0.15  # Bright overtone
+		buf[i] = s * env * 0.5
+	return buf

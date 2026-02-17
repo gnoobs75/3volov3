@@ -35,6 +35,7 @@ func select_units(units: Array) -> void:
 	if not selected_units.is_empty():
 		selection_changed.emit(selected_units)
 		AudioManager.play_rts_select()
+		AudioManager.play_rts_group_voice(selected_units)
 
 func _deselect_all() -> void:
 	for unit in selected_units:

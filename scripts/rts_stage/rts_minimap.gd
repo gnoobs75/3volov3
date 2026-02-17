@@ -50,6 +50,7 @@ func add_player_ping(world_pos: Vector2, ping_type: int = 2) -> void:
 	# Also forward to HUD for screen-space ping display
 	if _hud and _hud.has_method("add_map_ping"):
 		_hud.add_map_ping(world_pos, ping_type)
+	AudioManager.play_map_ping()
 
 func _process(delta: float) -> void:
 	_time += delta

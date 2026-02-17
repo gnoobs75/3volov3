@@ -150,6 +150,7 @@ var _buf_ability_burst_gather: PackedFloat32Array
 var _buf_veterancy_star: PackedFloat32Array
 var _buf_formation_click: PackedFloat32Array
 var _buf_queue_ping: PackedFloat32Array
+var _buf_map_ping: PackedFloat32Array
 
 # RTS unit voice buffers (indexed by unit_type 0-4)
 var _buf_rts_voice_select: Array = []  # Array of PackedFloat32Array
@@ -298,6 +299,7 @@ func _ready() -> void:
 	_buf_veterancy_star = SynthSounds.gen_veterancy_star()
 	_buf_formation_click = SynthSounds.gen_formation_click()
 	_buf_queue_ping = SynthSounds.gen_queue_ping()
+	_buf_map_ping = SynthSounds.gen_map_ping()
 
 	# Pre-generate RTS unit voice buffers (5 types x 3 categories)
 	_buf_rts_voice_select.resize(5)
@@ -964,6 +966,22 @@ func play_rts_unit_voice(unit_type: int, voice_type: String) -> void:
 		_: return
 	_play_buffer(buf, -5.0)
 	_rts_voice_cooldown = 0.3
+
+## Play a single voice for a group selection (picks one random unit)
+func play_rts_group_voice(units: Array) -> void:
+	if units.is_empty():
+		return
+	if _rts_voice_cooldown > 0.0:
+		return
+	var unit: Node2D = units[randi() % units.size()]
+	if not is_instance_valid(unit) or not "unit_type" in unit:
+		return
+	var buf: PackedFloat32Array = _buf_rts_voice_select[clampi(unit.unit_type, 0, 4)]
+	_play_buffer(buf, -5.0)
+	_rts_voice_cooldown = 0.3
+
+func play_map_ping() -> void:
+	_play_buffer(_buf_map_ping, -4.0)
 
 # RTS sound generators (simple procedural)
 func _gen_rts_select() -> PackedFloat32Array:
