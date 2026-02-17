@@ -1039,6 +1039,84 @@ func _draw_stun_indicator() -> void:
 		var pos: Vector2 = Vector2(cos(angle) * orbit_r, stun_y + sin(angle) * orbit_r * 0.4)
 		_draw_star(pos, 2.0, 4, Color(1.0, 1.0, 0.3, 0.8))
 
+func _draw_upgrade_indicators() -> void:
+	## Draw subtle visual indicators for tech tree upgrades on this unit.
+	if not _tech_tree:
+		return
+	var fc: Color = FactionData.get_faction_color(faction_id)
+	# Armor upgrade: thin hexagonal outline
+	if _tech_tree.has_method("get_armor_bonus") and _tech_tree.get_armor_bonus(faction_id) > 0:
+		var hex_r: float = _cell_radius + 4.0
+		var hex_color: Color = Color(fc.r, fc.g, fc.b, 0.3)
+		for i in range(6):
+			var a1: float = TAU * float(i) / 6.0 - PI * 0.5
+			var a2: float = TAU * float(i + 1) / 6.0 - PI * 0.5
+			var p1: Vector2 = Vector2(cos(a1) * hex_r, sin(a1) * hex_r)
+			var p2: Vector2 = Vector2(cos(a2) * hex_r, sin(a2) * hex_r)
+			draw_line(p1, p2, hex_color, 1.0)
+	# Damage upgrade: small upward chevron above unit
+	if _tech_tree.has_method("get_damage_bonus") and _tech_tree.get_damage_bonus(faction_id) > 0:
+		var chev_y: float = -_cell_radius - 14.0
+		var chev_color: Color = Color(1.0, 0.3, 0.2, 0.4)
+		var chev_size: float = 3.0
+		draw_line(Vector2(-chev_size, chev_y + chev_size), Vector2(0, chev_y), chev_color, 1.5)
+		draw_line(Vector2(chev_size, chev_y + chev_size), Vector2(0, chev_y), chev_color, 1.5)
+	# Speed upgrade: ghost trail circles when moving
+	if _tech_tree.has_method("get_speed_mult") and _tech_tree.get_speed_mult(faction_id) > 1.0:
+		if state == State.MOVE or state == State.PATROL or state == State.ATTACK:
+			var alphas: Array = [0.15, 0.10, 0.05]
+			var trail_color: Color = Color(fc.r, fc.g, fc.b)
+			for i in range(_trail_positions.size()):
+				var trail_pos: Vector2 = _trail_positions[i] - global_position
+				if trail_pos.length() < 1.0:
+					continue
+				var alpha: float = alphas[i] if i < alphas.size() else 0.05
+				draw_circle(trail_pos, _cell_radius * 0.6, Color(trail_color.r, trail_color.g, trail_color.b, alpha))
+
+func _draw_patrol_route() -> void:
+	## Draw dashed line between patrol points with diamond markers and direction arrow.
+	var local_a: Vector2 = _patrol_point_a - global_position
+	var local_b: Vector2 = _patrol_point_b - global_position
+	var patrol_color: Color = Color(0.5, 0.8, 1.0, 0.3)
+	_draw_dashed_line(local_a, local_b, patrol_color, 6.0, 4.0)
+	var diamond_size: float = 4.0
+	_draw_diamond(local_a, diamond_size, patrol_color)
+	_draw_diamond(local_b, diamond_size, patrol_color)
+	var mid: Vector2 = (local_a + local_b) * 0.5
+	var dir: Vector2 = (local_b - local_a).normalized()
+	var perp: Vector2 = dir.rotated(PI * 0.5)
+	var arrow_size: float = 5.0
+	var arrow_tip: Vector2 = mid + dir * arrow_size
+	var arrow_l: Vector2 = mid - dir * arrow_size * 0.5 + perp * arrow_size * 0.4
+	var arrow_r: Vector2 = mid - dir * arrow_size * 0.5 - perp * arrow_size * 0.4
+	draw_colored_polygon(PackedVector2Array([arrow_tip, arrow_l, arrow_r]), Color(0.5, 0.8, 1.0, 0.25))
+
+func _draw_dashed_line(from_pos: Vector2, to_pos: Vector2, color: Color, dash_len: float, gap_len: float) -> void:
+	## Draw a dashed line between two local-space positions.
+	var total_dir: Vector2 = to_pos - from_pos
+	var total_len: float = total_dir.length()
+	if total_len < 1.0:
+		return
+	var dir: Vector2 = total_dir / total_len
+	var segment_len: float = dash_len + gap_len
+	var dist: float = 0.0
+	while dist < total_len:
+		var seg_start: Vector2 = from_pos + dir * dist
+		var seg_end_dist: float = minf(dist + dash_len, total_len)
+		var seg_end: Vector2 = from_pos + dir * seg_end_dist
+		draw_line(seg_start, seg_end, color, 1.5)
+		dist += segment_len
+
+func _draw_diamond(center: Vector2, size: float, color: Color) -> void:
+	## Draw a small diamond shape at the given position.
+	var pts := PackedVector2Array([
+		center + Vector2(0, -size),
+		center + Vector2(size, 0),
+		center + Vector2(0, size),
+		center + Vector2(-size, 0),
+	])
+	draw_colored_polygon(pts, color)
+
 # === ABILITIES ===
 
 func can_use_ability() -> bool:
