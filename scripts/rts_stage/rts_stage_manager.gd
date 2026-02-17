@@ -23,6 +23,8 @@ var _command_vfx: Node2D = null
 var _pause_menu: Control = null
 var _tutorial: Control = null
 var _contextual_tips: Control = null
+var _damage_numbers: Node2D = null
+var _production_tab: Control = null
 
 var _time: float = 0.0
 var _game_started: bool = false
@@ -144,11 +146,23 @@ func _ready() -> void:
 	if _tutorial:
 		_contextual_tips.visible = false
 
+	# Production tab (F1 toggle)
+	_production_tab = preload("res://scripts/rts_stage/rts_production_tab.gd").new()
+	_production_tab.name = "ProductionTab"
+	_hud_layer.add_child(_production_tab)
+	_production_tab.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_production_tab.setup(self)
+
 	# Command VFX layer (world-space)
 	_command_vfx = preload("res://scripts/rts_stage/rts_command_vfx.gd").new()
 	_command_vfx.name = "CommandVFX"
 	_command_vfx.z_index = 5
 	add_child(_command_vfx)
+
+	# Damage numbers (world-space, above units)
+	_damage_numbers = preload("res://scripts/rts_stage/rts_damage_numbers.gd").new()
+	_damage_numbers.name = "DamageNumbers"
+	add_child(_damage_numbers)
 
 	# 7. Initialize systems
 	_faction_manager.setup_factions()
@@ -163,6 +177,7 @@ func _ready() -> void:
 	_victory_manager.game_lost.connect(_on_game_lost)
 	_victory_manager.faction_eliminated_announcement.connect(_on_faction_eliminated)
 	_combat_system.unit_killed.connect(_on_unit_killed)
+	_combat_system.unit_damaged.connect(_on_unit_damaged)
 	_faction_manager.faction_eliminated.connect(_on_faction_eliminated_check)
 	_command_system.command_issued.connect(_on_command_issued)
 
@@ -368,6 +383,10 @@ func _on_unit_killed(unit: Node2D, _killer: Node2D) -> void:
 	# Minimap attack ping when player unit is killed
 	if fid == 0 and is_instance_valid(unit) and _minimap and _minimap.has_method("add_attack_ping"):
 		_minimap.add_attack_ping(unit.global_position)
+
+func _on_unit_damaged(unit: Node2D, damage: float, _attacker: Node2D) -> void:
+	if _damage_numbers and is_instance_valid(unit):
+		_damage_numbers.add_damage(unit.global_position + Vector2(0, -20), int(damage))
 
 func _on_building_destroyed(building: Node2D) -> void:
 	var fid: int = building.faction_id if "faction_id" in building else 0

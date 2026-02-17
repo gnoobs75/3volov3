@@ -1,15 +1,19 @@
 extends Control
 ## Circular minimap showing faction-colored dots for units/buildings, resources.
-## Click to pan camera.
+## Click to pan camera. Alt+click to ping.
 
 var _stage: Node = null
 var _camera: Camera2D = null
 var _time: float = 0.0
 
-# Attack alert pings
+# Attack alert pings (red, enemy kills)
 var _alert_pings: Array = []  # [{pos, time}]
 const ALERT_PING_LIFE: float = 3.0
 var _alert_cooldown: float = 0.0
+
+# Player communication pings (green, Alt+click)
+var _player_pings: Array = []  # [{pos, time}]
+const PLAYER_PING_LIFE: float = 4.0
 
 const MINIMAP_RADIUS: float = 85.0
 const MINIMAP_CENTER: Vector2 = Vector2(95, 0)  # Offset from bottom-left
@@ -25,15 +29,27 @@ func add_attack_ping(world_pos: Vector2) -> void:
 	if _alert_pings.size() > 5:
 		_alert_pings.pop_front()
 
+func add_player_ping(world_pos: Vector2) -> void:
+	_player_pings.append({"pos": world_pos, "time": 0.0})
+	if _player_pings.size() > 5:
+		_player_pings.pop_front()
+
 func _process(delta: float) -> void:
 	_time += delta
 	_alert_cooldown = maxf(_alert_cooldown - delta, 0.0)
-	# Update pings
+	# Update attack pings
 	var i: int = _alert_pings.size() - 1
 	while i >= 0:
 		_alert_pings[i]["time"] += delta
 		if _alert_pings[i]["time"] >= ALERT_PING_LIFE:
 			_alert_pings.remove_at(i)
+		i -= 1
+	# Update player pings
+	i = _player_pings.size() - 1
+	while i >= 0:
+		_player_pings[i]["time"] += delta
+		if _player_pings[i]["time"] >= PLAYER_PING_LIFE:
+			_player_pings.remove_at(i)
 		i -= 1
 	queue_redraw()
 
@@ -58,8 +74,13 @@ func _input(event: InputEvent) -> void:
 		var dist: float = event.position.distance_to(center)
 		if dist < MINIMAP_RADIUS:
 			var world_pos: Vector2 = _minimap_to_world(event.position)
-			if _camera and _camera.has_method("focus_position"):
-				_camera.focus_position(world_pos)
+			if event.alt_pressed:
+				# Alt+click: player ping
+				add_player_ping(world_pos)
+			else:
+				# Normal click: pan camera
+				if _camera and _camera.has_method("focus_position"):
+					_camera.focus_position(world_pos)
 			get_viewport().set_input_as_handled()
 
 func _draw() -> void:
@@ -73,7 +94,16 @@ func _draw() -> void:
 	# Map boundary ring
 	draw_arc(center, MINIMAP_RADIUS - 1, 0, TAU, 48, Color(0.3, 0.5, 0.7, 0.2), 1.0)
 
-	# Resources
+	# Obstacles (dark grey patches, drawn first as background)
+	for obs in get_tree().get_nodes_in_group("rts_obstacles"):
+		if not is_instance_valid(obs):
+			continue
+		var mp: Vector2 = _world_to_minimap(obs.global_position)
+		if mp.distance_to(center) > MINIMAP_RADIUS:
+			continue
+		draw_circle(mp, 2.0, Color(0.2, 0.2, 0.2, 0.5))
+
+	# Resources (yellow dots for resource nodes, colored for titans)
 	for res in get_tree().get_nodes_in_group("rts_resources"):
 		if not is_instance_valid(res):
 			continue
@@ -83,7 +113,7 @@ func _draw() -> void:
 		if mp.distance_to(center) > MINIMAP_RADIUS:
 			continue
 		var is_titan: bool = res.is_in_group("titan_corpses")
-		var rc: Color = Color(0.5, 0.35, 0.15) if is_titan else Color(0.2, 0.6, 0.3)
+		var rc: Color = Color(0.5, 0.35, 0.15) if is_titan else Color(0.85, 0.75, 0.2)
 		draw_circle(mp, 2.5 if is_titan else 1.5, rc)
 
 	# Buildings
@@ -114,23 +144,48 @@ func _draw() -> void:
 		else:
 			draw_circle(mp, 1.5, fc)
 
-	# Attack alert pings
+	# Attack alert pings (red)
 	for ping in _alert_pings:
 		var mp: Vector2 = _world_to_minimap(ping["pos"])
 		if mp.distance_to(center) > MINIMAP_RADIUS:
 			continue
+		var ping_alpha: float = 1.0 - (ping["time"] / ALERT_PING_LIFE)
 		var pt: float = ping["time"] / ALERT_PING_LIFE
-		var ping_alpha: float = 1.0 - pt
 		var ping_r: float = 3.0 + pt * 8.0
 		draw_arc(mp, ping_r, 0, TAU, 12, Color(1.0, 0.3, 0.2, ping_alpha * 0.7), 1.5)
 		if pt < 0.5:
 			draw_circle(mp, 2.0, Color(1.0, 0.3, 0.2, ping_alpha))
 
-	# Camera viewport indicator
-	if _camera:
-		var cam_pos: Vector2 = _world_to_minimap(_camera.global_position)
-		var vp_size: Vector2 = get_viewport_rect().size
-		var zoom: float = _camera.zoom.x if _camera.zoom.x > 0 else 1.0
-		var view_w: float = (vp_size.x / zoom) / MAP_RADIUS * MINIMAP_RADIUS
-		var view_h: float = (vp_size.y / zoom) / MAP_RADIUS * MINIMAP_RADIUS
-		draw_rect(Rect2(cam_pos.x - view_w * 0.5, cam_pos.y - view_h * 0.5, view_w, view_h), Color(1.0, 1.0, 1.0, 0.3), false, 1.0)
+	# Player communication pings (green)
+	for ping in _player_pings:
+		var mp: Vector2 = _world_to_minimap(ping["pos"])
+		if mp.distance_to(center) > MINIMAP_RADIUS:
+			continue
+		var ping_alpha: float = 1.0 - (ping["time"] / PLAYER_PING_LIFE)
+		var pt: float = ping["time"] / PLAYER_PING_LIFE
+		var ping_r: float = 3.0 + pt * 10.0
+		draw_arc(mp, ping_r, 0, TAU, 12, Color(0.2, 1.0, 0.4, ping_alpha * 0.7), 1.5)
+		if pt < 0.5:
+			draw_circle(mp, 2.0, Color(0.2, 1.0, 0.4, ping_alpha))
+
+	# Camera viewport rectangle (drawn last, on top)
+	_draw_camera_rect()
+
+func _draw_camera_rect() -> void:
+	if not _camera:
+		return
+	var vp_size: Vector2 = get_viewport_rect().size
+	var zoom: float = _camera.zoom.x if _camera.zoom.x > 0 else 1.0
+	var half_w: float = (vp_size.x / zoom) * 0.5
+	var half_h: float = (vp_size.y / zoom) * 0.5
+	var cam_pos: Vector2 = _camera.global_position
+	# Convert 4 corners from world to minimap coords
+	var tl: Vector2 = _world_to_minimap(cam_pos + Vector2(-half_w, -half_h))
+	var tr: Vector2 = _world_to_minimap(cam_pos + Vector2(half_w, -half_h))
+	var br: Vector2 = _world_to_minimap(cam_pos + Vector2(half_w, half_h))
+	var bl: Vector2 = _world_to_minimap(cam_pos + Vector2(-half_w, half_h))
+	var rect_color: Color = Color(1.0, 1.0, 1.0, 0.6)
+	draw_line(tl, tr, rect_color, 1.0)
+	draw_line(tr, br, rect_color, 1.0)
+	draw_line(br, bl, rect_color, 1.0)
+	draw_line(bl, tl, rect_color, 1.0)
