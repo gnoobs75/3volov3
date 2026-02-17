@@ -29,6 +29,10 @@ var _production_tab: Control = null
 var _map_events: Node = null
 var _tech_tree: Node = null
 var _threat_detector: Node = null
+var _stats_screen: Node = null  # CanvasLayer for post-game stats
+var _terrain_zones: Node2D = null
+var _spectator: Node = null
+var _spectator_mode: bool = false
 
 var _time: float = 0.0
 var _game_started: bool = false
@@ -192,6 +196,11 @@ func _ready() -> void:
 	add_child(_threat_detector)
 	_threat_detector.setup(self)
 
+	# Stats screen (post-game overlay)
+	_stats_screen = preload("res://scripts/rts_stage/rts_stats_screen.gd").new()
+	_stats_screen.name = "StatsScreen"
+	add_child(_stats_screen)
+
 	# 7. Initialize systems
 	_faction_manager.setup_factions()
 	_resource_manager.setup(4)
@@ -199,7 +208,9 @@ func _ready() -> void:
 	_input_handler.setup(_selection_manager, _command_system, _camera, self)
 	_hud.setup(self, _selection_manager, _command_system)
 	_hud.set_threat_detector(_threat_detector)
+	_hud.set_victory_manager(_victory_manager)
 	_minimap.setup(self, _camera)
+	_minimap.set_hud(_hud)
 	_selection_panel.setup(_selection_manager)
 
 	# 8. Connect signals
@@ -354,6 +365,7 @@ func place_building(building_type: int, pos: Vector2) -> void:
 		return
 	var template: CreatureTemplate = _faction_manager.get_template(0)
 	var building: Node2D = _create_building(0, building_type, pos, template, false)
+	_victory_manager.stats_buildings_built += 1
 	# Send nearest selected worker to build
 	var workers: Array = _selection_manager.get_selected_workers()
 	if not workers.is_empty():
@@ -443,6 +455,8 @@ func _on_unit_damaged(unit: Node2D, damage: float, _attacker: Node2D) -> void:
 
 func _on_building_destroyed(building: Node2D) -> void:
 	var fid: int = building.faction_id if "faction_id" in building else 0
+	if fid == 0:
+		_victory_manager.stats_buildings_lost += 1
 	call_deferred("_check_faction_elimination", fid)
 
 func _check_faction_elimination(fid: int) -> void:
@@ -468,12 +482,16 @@ func _on_faction_eliminated(fid: int, fname: String) -> void:
 
 func _on_game_won() -> void:
 	_game_over_shown = true
-	if _overlay and _overlay.has_method("show_victory"):
+	if _stats_screen and _stats_screen.has_method("show_stats"):
+		_stats_screen.show_stats("VICTORY", _victory_manager.get_stats_summary(), _victory_manager.get_game_time())
+	elif _overlay and _overlay.has_method("show_victory"):
 		_overlay.show_victory(_victory_manager.get_game_time())
 
 func _on_game_lost() -> void:
 	_game_over_shown = true
-	if _overlay and _overlay.has_method("show_defeat"):
+	if _stats_screen and _stats_screen.has_method("show_stats"):
+		_stats_screen.show_stats("DEFEAT", _victory_manager.get_stats_summary(), _victory_manager.get_game_time())
+	elif _overlay and _overlay.has_method("show_defeat"):
 		_overlay.show_defeat(_victory_manager.get_game_time())
 
 func _on_tutorial_completed() -> void:

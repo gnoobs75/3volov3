@@ -84,11 +84,12 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 				_handle_right_click(event.shift_pressed)
 
 func _handle_double_click() -> void:
-	## Select all player units of the same type as the unit under cursor (on screen)
+	## Select all player units/buildings of the same type as the one under cursor (on screen)
 	if not _selection_mgr or not _camera:
 		return
-	# Find unit under cursor
 	var world_pos: Vector2 = _get_world_mouse_pos()
+
+	# Check units first
 	var best_unit: Node2D = null
 	var best_dist: float = 25.0
 	for unit in get_tree().get_nodes_in_group("rts_units"):
@@ -102,6 +103,22 @@ func _handle_double_click() -> void:
 			best_unit = unit
 	if best_unit and "unit_type" in best_unit:
 		_selection_mgr.select_all_of_type(best_unit.unit_type, _camera)
+		return
+
+	# Check buildings if no unit found
+	var best_building: Node2D = null
+	var best_building_dist: float = 40.0
+	for building in get_tree().get_nodes_in_group("rts_buildings"):
+		if not is_instance_valid(building):
+			continue
+		if "faction_id" in building and building.faction_id != 0:
+			continue
+		var dist: float = world_pos.distance_to(building.global_position)
+		if dist < best_building_dist:
+			best_building_dist = dist
+			best_building = building
+	if best_building and "building_type" in best_building:
+		_selection_mgr.select_all_buildings_of_type(best_building.building_type, _camera)
 
 func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and _command_sys.current_mode == _command_sys.CommandMode.NORMAL:
@@ -111,9 +128,12 @@ func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
 			_drag_rect = _selection_mgr.get_drag_rect()
 			queue_redraw()
 
-	# Update build ghost position
+	# Update build ghost position (grid snap unless Shift held)
 	if _build_ghost and is_instance_valid(_build_ghost):
-		_build_ghost.global_position = _get_world_mouse_pos()
+		var ghost_pos: Vector2 = _get_world_mouse_pos()
+		if not Input.is_key_pressed(KEY_SHIFT):
+			ghost_pos = Vector2(roundf(ghost_pos.x / 40.0) * 40.0, roundf(ghost_pos.y / 40.0) * 40.0)
+		_build_ghost.global_position = ghost_pos
 
 func _try_select_at_mouse(add_to_selection: bool) -> void:
 	var world_pos: Vector2 = _get_world_mouse_pos()
@@ -133,6 +153,23 @@ func _try_select_at_mouse(add_to_selection: bool) -> void:
 
 	if best_unit:
 		_selection_mgr.select_unit(best_unit, add_to_selection)
+		return
+
+	# Check player buildings if no unit found
+	var best_building: Node2D = null
+	var best_building_dist: float = 40.0  # Larger click radius for buildings
+	for building in get_tree().get_nodes_in_group("rts_buildings"):
+		if not is_instance_valid(building):
+			continue
+		if "faction_id" in building and building.faction_id != 0:
+			continue
+		var dist: float = world_pos.distance_to(building.global_position)
+		if dist < best_building_dist:
+			best_building_dist = dist
+			best_building = building
+
+	if best_building:
+		_selection_mgr.select_unit(best_building, add_to_selection)
 	elif not add_to_selection:
 		_selection_mgr.deselect_all()
 
@@ -176,6 +213,16 @@ func _handle_right_click(shift_held: bool = false) -> void:
 			continue
 		if world_pos.distance_to(building.global_position) < 40.0:
 			# Own building clicked
+			# Repair: if workers selected and building is damaged, send workers to repair
+			if _selection_mgr.has_selected_workers() and "health" in building and "max_health" in building and building.health < building.max_health:
+				var repair_workers: Array = _selection_mgr.get_selected_workers()
+				if shift_held:
+					for worker in repair_workers:
+						if is_instance_valid(worker) and worker.has_method("queue_command"):
+							worker.queue_command({"type": "repair", "target_node": building})
+				else:
+					_command_sys.issue_repair(repair_workers, building)
+				return
 			if "is_depot" in building and building.is_depot and _selection_mgr.has_selected_workers():
 				# Send selected workers to deposit at this depot
 				var workers: Array = _selection_mgr.get_selected_workers()
@@ -222,6 +269,17 @@ func _handle_right_click(shift_held: bool = false) -> void:
 					_command_sys.issue_gather(workers, res)
 				AudioManager.play_rts_command()
 				return
+
+	# If selection contains buildings, set rally point on all selected buildings
+	var selected_buildings: Array = _selection_mgr.selected_units.filter(func(u):
+		return is_instance_valid(u) and u.is_in_group("rts_buildings")
+	)
+	if not selected_buildings.is_empty():
+		for bld in selected_buildings:
+			if bld.has_method("set_rally_point"):
+				bld.set_rally_point(world_pos)
+		AudioManager.play_rts_command()
+		return
 
 	# Default: move
 	if _command_sys.current_mode == _command_sys.CommandMode.ATTACK_MOVE:
@@ -295,18 +353,33 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 
+		# Comma key (,) — find and select next idle military unit
+		if event.keycode == KEY_COMMA:
+			_selection_mgr.select_idle_military()
+			# Center camera on selected unit
+			if not _selection_mgr.selected_units.is_empty():
+				var sel: Node2D = _selection_mgr.selected_units[0]
+				if is_instance_valid(sel) and _camera and _camera.has_method("focus_position"):
+					_camera.focus_position(sel.global_position)
+			get_viewport().set_input_as_handled()
+			return
+
 		# Ctrl+A — select all military (non-worker) units
 		if event.keycode == KEY_A and event.ctrl_pressed:
 			_selection_mgr.select_all_military()
 			get_viewport().set_input_as_handled()
 			return
 
-		# Control groups (Ctrl+1-5 to assign, 1-5 to recall)
+		# Control groups (Ctrl+1-5 assign, Shift+1-5 add, Alt+1-5 steal, 1-5 recall)
 		var group_keys: Array = [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5]
 		for i in range(group_keys.size()):
 			if event.keycode == group_keys[i]:
 				if event.ctrl_pressed:
 					_selection_mgr.assign_control_group(i + 1)
+				elif event.shift_pressed:
+					_selection_mgr.add_to_control_group(i + 1)
+				elif event.alt_pressed:
+					_selection_mgr.steal_control_group(i + 1)
 				else:
 					_selection_mgr.recall_control_group(i + 1)
 				get_viewport().set_input_as_handled()
@@ -332,11 +405,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 
-		# Building hotkeys (Q/W/E/R/T) — only when build menu is contextually valid
-		var build_keys: Array = [KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T]
+		# Building hotkeys (Q/W/E/R/T/Y) — only when build menu is contextually valid
+		var build_keys: Array = [KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T, KEY_Y]
 		for bi in range(build_keys.size()):
 			if event.keycode == build_keys[bi]:
-				var bt: int = [BuildingStats.BuildingType.SPAWNING_POOL, BuildingStats.BuildingType.EVOLUTION_CHAMBER, BuildingStats.BuildingType.MEMBRANE_TOWER, BuildingStats.BuildingType.BIO_WALL, BuildingStats.BuildingType.NUTRIENT_PROCESSOR][bi]
+				var bt: int = [BuildingStats.BuildingType.SPAWNING_POOL, BuildingStats.BuildingType.EVOLUTION_CHAMBER, BuildingStats.BuildingType.MEMBRANE_TOWER, BuildingStats.BuildingType.BIO_WALL, BuildingStats.BuildingType.NUTRIENT_PROCESSOR, BuildingStats.BuildingType.SUPPLY_DEPOT][bi]
 				enter_build_mode(bt)
 				get_viewport().set_input_as_handled()
 				return

@@ -65,6 +65,18 @@ func _draw() -> void:
 	var color: Color = Color(0.2, 0.9, 0.3, 0.3) if _is_valid else Color(0.9, 0.2, 0.2, 0.3)
 	var border_color: Color = Color(0.2, 0.9, 0.3, 0.6) if _is_valid else Color(0.9, 0.2, 0.2, 0.6)
 
+	# Grid lines (5x5 area around cursor, faint) — only when grid snap is active (Shift not held)
+	if not Input.is_key_pressed(KEY_SHIFT):
+		var grid_size: float = 40.0
+		var grid_color: Color = Color(0.5, 0.8, 0.5, 0.08)
+		# Offset: since position is snapped, grid lines align with the snapped grid
+		for gx in range(-2, 3):
+			var lx: float = float(gx) * grid_size
+			draw_line(Vector2(lx, -2.0 * grid_size), Vector2(lx, 2.0 * grid_size), grid_color, 1.0)
+		for gy in range(-2, 3):
+			var ly: float = float(gy) * grid_size
+			draw_line(Vector2(-2.0 * grid_size, ly), Vector2(2.0 * grid_size, ly), grid_color, 1.0)
+
 	# Tower range circle for Membrane Tower
 	if building_type == BuildingStats.BuildingType.MEMBRANE_TOWER:
 		var stats: Dictionary = BuildingStats.get_stats(building_type)

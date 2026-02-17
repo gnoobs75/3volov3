@@ -9,6 +9,7 @@ signal research_complete(building: Node2D, upgrade_id: int, is_building_upgrade:
 var faction_id: int = 0
 var building_type: int = BuildingStats.BuildingType.BIO_WALL
 var creature_template: CreatureTemplate = null
+var is_selected: bool = false
 
 # Stats
 var health: float = 400.0
@@ -50,6 +51,11 @@ var _is_researching: bool = false
 var _current_research_type: String = ""  # "unit" or "building"
 var _building_upgrade_id: int = -1  # BuildingUpgradeId applied to this building, -1 = none
 var _tech_tree: Node = null
+
+# Repair
+var _being_repaired: bool = false
+var _repair_fade: float = 0.0
+var _last_damage_time: float = 999.0
 
 # Visual
 var _time: float = 0.0
@@ -113,8 +119,16 @@ func add_construction(amount: float) -> void:
 func take_damage(amount: float, _attacker: Node2D = null) -> void:
 	health -= amount
 	_hurt_flash = 1.0
+	_last_damage_time = 0.0
 	if health <= 0:
 		_die()
+
+func take_repair(amount: float) -> void:
+	if health >= max_health:
+		return
+	health = minf(health + amount, max_health)
+	_being_repaired = true
+	_repair_fade = 0.5
 
 func _die() -> void:
 	destroyed.emit(self)
@@ -163,9 +177,44 @@ func get_production_progress() -> float:
 func get_queue_size() -> int:
 	return _production_queue.size()
 
+func cancel_queue_item(index: int) -> void:
+	## Cancel a production queue item at index, refunding 75% of cost.
+	if index < 0 or index >= _production_queue.size():
+		return
+	var utype: int = _production_queue[index]
+	_production_queue.remove_at(index)
+	# Refund 75% of cost
+	var cost: Dictionary = UnitStats.get_cost(utype)
+	var biomass_refund: int = int(cost.get("biomass", 0) * 0.75)
+	var genes_refund: int = int(cost.get("genes", 0) * 0.75)
+	var stage: Node = get_tree().get_first_node_in_group("rts_stage")
+	if stage and stage.has_method("get_resource_manager"):
+		var rm: Node = stage.get_resource_manager()
+		if rm:
+			rm.add_biomass(faction_id, biomass_refund)
+			rm.add_genes(faction_id, genes_refund)
+	# If we canceled the currently-producing item, reset progress and start next
+	if index == 0:
+		_production_timer = 0.0
+		_start_production()
+
+func cancel_last_queue_item() -> void:
+	## Convenience: cancel the last item in the production queue.
+	if not _production_queue.is_empty():
+		cancel_queue_item(_production_queue.size() - 1)
+
 func _process(delta: float) -> void:
 	_time += delta
 	_hurt_flash = maxf(_hurt_flash - delta * 3.0, 0.0)
+	# Repair fade timer
+	if _repair_fade > 0:
+		_repair_fade -= delta
+		if _repair_fade <= 0:
+			_being_repaired = false
+	# Auto-repair: passive 2 HP/sec after 10s without damage
+	_last_damage_time += delta
+	if _is_constructed and _last_damage_time > 10.0 and health < max_health:
+		health = minf(health + 2.0 * delta, max_health)
 	# Research
 	if _is_constructed:
 		_process_research(delta)
@@ -251,6 +300,19 @@ func _draw() -> void:
 	# Glow
 	draw_circle(Vector2.ZERO, size_radius * 1.5, Color(gc.r, gc.g, gc.b, 0.04))
 
+	# Selection ring (animated dashed arc)
+	if is_selected and faction_id == 0:
+		var sel_r: float = size_radius + 4.0
+		var sel_color: Color = Color(0.2, 1.0, 0.3, 0.8)
+		var dash_count: int = 8
+		var dash_arc: float = TAU / float(dash_count) * 0.6
+		var gap_arc: float = TAU / float(dash_count) * 0.4
+		var ring_offset: float = _time * 1.5
+		for di in range(dash_count):
+			var start_a: float = ring_offset + float(di) * (dash_arc + gap_arc)
+			draw_arc(Vector2.ZERO, sel_r, start_a, start_a + dash_arc, 6, sel_color, 1.5)
+		draw_arc(Vector2.ZERO, sel_r - 1.0, 0, TAU, 16, Color(0.2, 1.0, 0.3, 0.15), 3.0)
+
 	match building_type:
 		BuildingStats.BuildingType.SPAWNING_POOL:
 			_draw_spawning_pool(mc, gc)
@@ -262,6 +324,8 @@ func _draw() -> void:
 			_draw_bio_wall(mc, gc)
 		BuildingStats.BuildingType.NUTRIENT_PROCESSOR:
 			_draw_nutrient_processor(mc, gc)
+		BuildingStats.BuildingType.SUPPLY_DEPOT:
+			_draw_supply_depot(mc, gc)
 
 	# Health bar
 	_draw_health_bar()
@@ -278,9 +342,13 @@ func _draw() -> void:
 	if _building_upgrade_id >= 0:
 		_draw_upgrade_indicator(gc)
 
-	# Rally point
-	if has_rally_point and faction_id == 0:
+	# Rally point (only when selected)
+	if has_rally_point and faction_id == 0 and is_selected:
 		_draw_rally_point()
+
+	# Repair sparkle effect
+	if _being_repaired or _repair_fade > 0:
+		_draw_repair_sparkles()
 
 func _draw_spawning_pool(mc: Color, gc: Color) -> void:
 	# Large pulsing pool
@@ -410,20 +478,21 @@ func _draw_production_bar() -> void:
 	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w * pct, bar_h), Color(0.3, 0.6, 1.0, 0.7))
 
 func _draw_rally_point() -> void:
-	## Draws a rally point flag with dotted line from building
+	## Draws a rally point flag with dashed line from building (faction color)
 	var rp_local: Vector2 = rally_point - global_position
-	var flag_color: Color = Color(0.2, 1.0, 0.4, 0.7)
+	var fc: Color = FactionData.get_faction_color(faction_id)
+	var flag_color: Color = Color(fc.r, fc.g, fc.b, 0.7)
 
-	# Dotted line from building center to rally point
+	# Dashed line from building center to rally point (8px dash, 4px gap)
 	var line_len: float = rp_local.length()
 	var dir: Vector2 = rp_local.normalized() if line_len > 0 else Vector2.RIGHT
-	var dash_len: float = 6.0
+	var dash_len: float = 8.0
 	var gap_len: float = 4.0
 	var d: float = 0.0
 	while d < line_len:
 		var seg_start: Vector2 = dir * d
 		var seg_end: Vector2 = dir * minf(d + dash_len, line_len)
-		draw_line(seg_start, seg_end, Color(flag_color.r, flag_color.g, flag_color.b, 0.4), 1.0)
+		draw_line(seg_start, seg_end, Color(fc.r, fc.g, fc.b, 0.4), 1.0)
 		d += dash_len + gap_len
 
 	# Flag pole (vertical line)
@@ -431,15 +500,31 @@ func _draw_rally_point() -> void:
 	var pole_top: Vector2 = rp_local + Vector2(0, -14.0)
 	draw_line(pole_base, pole_top, flag_color, 1.5)
 
-	# Flag triangle
+	# Animated flag triangle (wave effect)
+	var wave: float = sin(_time * 3.0) * 2.0
 	var flag_pts := PackedVector2Array()
 	flag_pts.append(pole_top)
-	flag_pts.append(pole_top + Vector2(8.0, 3.0))
+	flag_pts.append(pole_top + Vector2(8.0 + wave, 3.0))
 	flag_pts.append(pole_top + Vector2(0, 6.0))
 	draw_colored_polygon(flag_pts, flag_color)
 
 	# Small base circle
 	draw_circle(pole_base, 2.0, flag_color)
+
+func _draw_repair_sparkles() -> void:
+	## Draw green sparkle particles around building when being repaired
+	var sparkle_alpha: float = 1.0 if _being_repaired else maxf(_repair_fade * 2.0, 0.0)
+	var sparkle_color: Color = Color(0.3, 1.0, 0.4, 0.6 * sparkle_alpha)
+	for i in range(6):
+		var angle: float = _time * 2.5 + TAU * float(i) / 6.0
+		var radius: float = size_radius * (0.6 + 0.3 * sin(_time * 4.0 + float(i) * 1.3))
+		var pos: Vector2 = Vector2(cos(angle) * radius, sin(angle) * radius)
+		# Sparkle: small cross
+		var spark_size: float = 2.0 + sin(_time * 6.0 + float(i)) * 1.0
+		draw_line(pos - Vector2(spark_size, 0), pos + Vector2(spark_size, 0), sparkle_color, 1.0)
+		draw_line(pos - Vector2(0, spark_size), pos + Vector2(0, spark_size), sparkle_color, 1.0)
+		# Small glow dot
+		draw_circle(pos, 1.5, Color(0.3, 1.0, 0.4, 0.3 * sparkle_alpha))
 
 # === RESEARCH ===
 
@@ -447,10 +532,12 @@ func set_tech_tree(tree: Node) -> void:
 	_tech_tree = tree
 
 func queue_research(upgrade_id: int, is_building_upgrade: bool = false) -> bool:
-	## Queue a research item. Returns true if successfully queued.
+	## Queue a research item. Returns true if successfully queued. Max 3 in queue.
 	if not _is_constructed:
 		return false
 	if not _tech_tree:
+		return false
+	if _research_queue.size() >= 3:
 		return false
 
 	var data: Dictionary = {}
@@ -597,6 +684,42 @@ func _draw_research_bar() -> void:
 	if pct > 0.02 and pct < 0.99:
 		var edge_x: float = -bar_w * 0.5 + bar_w * pct
 		draw_circle(Vector2(edge_x, bar_y + bar_h * 0.5), 2.5, Color(0.6, 0.3, 1.0, 0.3))
+
+func _draw_supply_depot(mc: Color, gc: Color) -> void:
+	# Rounded organic sac shape — wider than tall (ellipse)
+	var pulse: float = 1.0 + 0.03 * sin(_time * 1.2)
+	var rx: float = size_radius * 1.2 * pulse
+	var ry: float = size_radius * 0.8 * pulse
+	var sac_pts := PackedVector2Array()
+	for i in range(24):
+		var angle: float = TAU * float(i) / 24.0
+		sac_pts.append(Vector2(cos(angle) * rx, sin(angle) * ry))
+	var sac_color: Color = Color(0.4, 0.2, 0.6, 0.8)
+	draw_colored_polygon(sac_pts, Color(sac_color.r * mc.r * 2.0, sac_color.g * mc.g * 2.0, sac_color.b * mc.b * 2.0, 0.75))
+	# Inner cavity (darker)
+	draw_circle(Vector2.ZERO, size_radius * 0.5, Color(sac_color.r * 0.4, sac_color.g * 0.3, sac_color.b * 0.5, 0.6))
+	# Pulsing veins across surface (3 sine-based line paths)
+	var vein_color: Color = Color(gc.r * 0.6, gc.g * 0.3, gc.b * 0.8, 0.4 + 0.15 * sin(_time * 2.5))
+	for vi in range(3):
+		var vein_pts := PackedVector2Array()
+		var base_y: float = -ry * 0.5 + ry * float(vi) / 2.0
+		for j in range(10):
+			var t: float = float(j) / 9.0
+			var vx: float = (t - 0.5) * rx * 1.8
+			var vy: float = base_y + sin(t * PI * 2.0 + _time * 1.5 + float(vi) * 1.2) * 5.0
+			vein_pts.append(Vector2(vx, vy))
+		for j in range(vein_pts.size() - 1):
+			draw_line(vein_pts[j], vein_pts[j + 1], vein_color, 1.5)
+	# Supply count label when selected
+	if is_selected and faction_id == 0:
+		var font: Font = ThemeDB.fallback_font
+		var stage: Node = get_tree().get_first_node_in_group("rts_stage")
+		if stage and stage.has_method("get_faction_manager"):
+			var fm: Node = stage.get_faction_manager()
+			var used: int = fm.get_supply_used(faction_id)
+			var cap: int = fm.get_supply_cap(faction_id)
+			var supply_text: String = "Supply: %d/%d" % [used, cap]
+			draw_string(font, Vector2(-30, -size_radius - 16), supply_text, HORIZONTAL_ALIGNMENT_CENTER, 80, 9, Color(0.7, 0.5, 1.0, 0.9))
 
 func _draw_upgrade_indicator(gc: Color) -> void:
 	## Small chevron/star indicator showing this building is upgraded
