@@ -6,6 +6,7 @@ var faction_id: int = 0
 var _is_valid: bool = true
 var _size_radius: float = 30.0
 var _time: float = 0.0
+var _rotation_angle: float = 0.0
 
 func setup(p_building_type: int, p_faction_id: int) -> void:
 	building_type = p_building_type
@@ -61,6 +62,14 @@ func _check_validity() -> void:
 func is_valid_placement() -> bool:
 	return _is_valid
 
+func rotate_ghost() -> void:
+	_rotation_angle += PI / 4.0
+	if _rotation_angle >= TAU:
+		_rotation_angle -= TAU
+
+func get_rotation_angle() -> float:
+	return _rotation_angle
+
 func _draw() -> void:
 	var color: Color = Color(0.2, 0.9, 0.3, 0.3) if _is_valid else Color(0.9, 0.2, 0.2, 0.3)
 	var border_color: Color = Color(0.2, 0.9, 0.3, 0.6) if _is_valid else Color(0.9, 0.2, 0.2, 0.6)
@@ -95,6 +104,18 @@ func _draw() -> void:
 	draw_circle(Vector2.ZERO, _size_radius, color)
 	draw_arc(Vector2.ZERO, _size_radius, 0, TAU, 32, border_color, 2.0)
 
+	# Rotation indicator — decorative spines showing current rotation
+	if _rotation_angle != 0.0:
+		var spine_color: Color = Color(border_color.r, border_color.g, border_color.b, 0.5)
+		for i in range(4):
+			var sa: float = _rotation_angle + TAU * float(i) / 4.0
+			var inner: Vector2 = Vector2(cos(sa), sin(sa)) * _size_radius * 0.6
+			var outer: Vector2 = Vector2(cos(sa), sin(sa)) * _size_radius
+			draw_line(inner, outer, spine_color, 1.5)
+	# Forward direction tick (always visible to show rotation)
+	var fwd: Vector2 = Vector2(cos(_rotation_angle - PI * 0.5), sin(_rotation_angle - PI * 0.5))
+	draw_line(fwd * _size_radius, fwd * (_size_radius + 6.0), border_color, 2.0)
+
 	# Pulsing indicator
 	var pulse: float = 0.5 + 0.5 * sin(_time * 3.0)
 	draw_arc(Vector2.ZERO, _size_radius + 4.0 + pulse * 3.0, 0, TAU, 32, Color(border_color.r, border_color.g, border_color.b, 0.2 * pulse), 1.0)
@@ -109,3 +130,11 @@ func _draw() -> void:
 	var cost_str: String = "%dB / %dG" % [cost.get("biomass", 0), cost.get("genes", 0)]
 	var cs: Vector2 = font.get_string_size(cost_str, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_TINY)
 	draw_string(font, Vector2(-cs.x * 0.5, _size_radius + 30.0), cost_str, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(border_color.r, border_color.g, border_color.b, 0.7))
+	# Supply preview
+	var stats_for_supply: Dictionary = BuildingStats.get_stats(building_type)
+	var supply_val: int = stats_for_supply.get("supply_provided", 0)
+	if supply_val > 0:
+		var supply_str: String = "+%d supply" % supply_val
+		var supply_color: Color = Color(0.7, 0.5, 1.0, 0.8) if _is_valid else Color(0.9, 0.4, 0.4, 0.6)
+		var ss: Vector2 = font.get_string_size(supply_str, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_TINY)
+		draw_string(font, Vector2(-ss.x * 0.5, _size_radius + 42.0), supply_str, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, supply_color)
