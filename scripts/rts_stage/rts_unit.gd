@@ -51,6 +51,9 @@ const MAX_QUEUE: int = 8
 # Tech tree reference (set by stage manager)
 var _tech_tree: Node = null
 
+# Terrain zones reference (set by stage manager)
+var _terrain_zones: Node = null
+
 # Stutter-step kiting (ranged units)
 var _kite_timer: float = 0.0
 
@@ -607,6 +610,9 @@ func _perform_attack() -> void:
 	# Berserker enzymes: 2x damage below 30% HP
 	if _tech_tree and _tech_tree.has_method("get_berserker_mult") and health < max_health * 0.3:
 		actual_damage *= _tech_tree.get_berserker_mult(faction_id)
+	# Terrain elevation bonus
+	if _terrain_zones and is_instance_valid(_terrain_zones) and _terrain_zones.has_method("get_elevation_bonus"):
+		actual_damage *= _terrain_zones.get_elevation_bonus(global_position, _attack_target.global_position)
 	# Fighter charge bonus
 	if unit_type == UnitStats.UnitType.FIGHTER and _charge_moved:
 		actual_damage *= UnitStats.get_stats(unit_type).get("charge_bonus", 1.0)

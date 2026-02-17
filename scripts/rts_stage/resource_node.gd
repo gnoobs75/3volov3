@@ -106,31 +106,67 @@ func _draw() -> void:
 	var base_radius: float = 5.0 + 9.0 * clampf(float(max_biomass) / 200.0, 0.3, 1.0)
 	var radius: float = base_radius * (0.3 + 0.7 * fill)
 
-	# Outer pulsing glow ring (oscillating alpha 0.05-0.15)
+	# Outer pulsing glow ring (oscillating alpha 0.05-0.15), dimmer when depleted
 	var glow_alpha: float = 0.05 + 0.10 * (0.5 + 0.5 * sin(_time * 1.5 + _pulse_offset))
+	glow_alpha *= fill  # Dim glow as resource depletes
 	var glow_radius: float = radius * 3.0 * pulse
 	draw_arc(Vector2.ZERO, glow_radius, 0, TAU, 32, Color(0.2, 0.8, 0.4, glow_alpha), 2.0)
 	draw_arc(Vector2.ZERO, glow_radius * 0.85, 0, TAU, 32, Color(0.15, 0.7, 0.35, glow_alpha * 0.5), 1.0)
 
-	# Inner soft glow
-	draw_circle(Vector2.ZERO, radius * 2.5 * pulse, Color(0.2, 0.8, 0.4, 0.06))
+	# Inner soft glow (also dimmer when depleted)
+	draw_circle(Vector2.ZERO, radius * 2.5 * pulse, Color(0.2, 0.8, 0.4, 0.06 * fill))
 
-	# Main blob
+	# Depletion color shift: vibrant green -> pale gray-green below 50%
+	var blob_color: Color = Color(0.15, 0.6, 0.3)
+	if fill < 0.5:
+		var depletion_t: float = 1.0 - fill * 2.0  # 0 at fill=0.5, 1 at fill=0
+		blob_color = blob_color.lerp(Color(0.3, 0.4, 0.3), depletion_t)
+
+	# Flickering alpha when nearly depleted (fill < 0.1)
+	var blob_alpha: float = 0.7 * fill + 0.3
+	if fill < 0.1:
+		var flicker: float = 0.5 + 0.5 * sin(_time * 8.0)
+		blob_alpha *= flicker
+
+	# Main blob with crumbling effect when low
 	var pts := PackedVector2Array()
 	for i in range(8):
 		var angle: float = TAU * float(i) / 8.0
 		var r: float = radius * pulse + sin(_time * 3.0 + i * 0.8) * 1.5
+		# Crumbling jitter when fill < 0.3
+		if fill < 0.3:
+			var crumble_strength: float = 1.0 - fill / 0.3
+			r += sin(_time * 5.0 + float(i) * 1.7) * 3.0 * crumble_strength
 		pts.append(Vector2(cos(angle) * r, sin(angle) * r))
-	draw_colored_polygon(pts, Color(0.15, 0.6, 0.3, 0.7 * fill + 0.3))
+	draw_colored_polygon(pts, Color(blob_color.r, blob_color.g, blob_color.b, blob_alpha))
+
+	# Dissipation particles when nearly depleted (fill < 0.1)
+	if fill < 0.1:
+		for di in range(3):
+			var dp_phase: float = _time * 1.2 + float(di) * 2.1 + _pulse_offset
+			var dp_x: float = sin(dp_phase * 0.7 + float(di)) * radius * 0.6
+			var dp_y: float = -fmod(dp_phase * 8.0, radius * 4.0)
+			var dp_alpha: float = clampf(1.0 - absf(dp_y) / (radius * 4.0), 0.0, 0.3)
+			draw_circle(Vector2(dp_x, dp_y), 1.0, Color(0.4, 0.7, 0.4, dp_alpha))
 
 	# Sparkle (desynced per node)
 	var sp_t: float = _time * 1.5 + _pulse_offset
 	var sparkle_pos: Vector2 = Vector2(cos(sp_t) * 3.0, sin(sp_t * 1.3) * 3.0)
-	var sparkle_alpha: float = 0.3 + 0.3 * sin(sp_t * 2.0)
+	var sparkle_alpha: float = (0.3 + 0.3 * sin(sp_t * 2.0)) * fill  # Dim sparkle when depleted
 	draw_circle(sparkle_pos, 1.5, Color(0.4, 1.0, 0.6, sparkle_alpha))
 	# Second sparkle at offset angle
 	var sp2: Vector2 = Vector2(cos(sp_t + PI) * 5.0, sin(sp_t * 0.8 + PI) * 5.0)
 	draw_circle(sp2, 1.0, Color(0.5, 1.0, 0.7, sparkle_alpha * 0.5))
+
+	# Remaining amount text when worker is nearby gathering and fill < 0.8
+	if fill < 0.8:
+		var nearest_worker: Node2D = _find_nearest_gathering_worker()
+		if nearest_worker:
+			var amount_text: String = "%d/%d" % [biomass_remaining, max_biomass]
+			var font: Font = ThemeDB.fallback_font
+			if font:
+				var text_pos: Vector2 = Vector2(-12.0, radius + 12.0)
+				draw_string(font, text_pos, amount_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 8, Color(0.6, 0.9, 0.7, 0.6))
 
 	# Gather particle streams
 	for p in _gather_particles:
