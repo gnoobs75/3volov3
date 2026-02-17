@@ -287,6 +287,8 @@ func _create_building(fid: int, btype: int, pos: Vector2, template: CreatureTemp
 	building.setup(fid, btype, template, pre_built)
 	building.destroyed.connect(_on_building_destroyed)
 	building.unit_produced.connect(_on_unit_produced)
+	if _tech_tree:
+		building.set_tech_tree(_tech_tree)
 	add_child(building)
 	return building
 
@@ -296,6 +298,8 @@ func _spawn_unit(fid: int, utype: int, pos: Vector2, template: CreatureTemplate)
 	unit.global_position = pos
 	add_child(unit)
 	unit.setup(fid, utype, template)
+	if _tech_tree:
+		unit._tech_tree = _tech_tree
 	unit.died.connect(_on_unit_died)
 	return unit
 

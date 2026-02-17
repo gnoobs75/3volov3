@@ -495,14 +495,11 @@ func _try_research_upgrade() -> void:
 		return
 	# Pick random available upgrade
 	var pick: int = available[randi() % available.size()]
-	var data: Dictionary = _tech_tree.get_upgrade_data(pick) if _tech_tree.has_method("get_upgrade_data") else {}
-	if data.is_empty():
-		return
-	if _try_spend(data.get("cost_biomass", 0), data.get("cost_genes", 0)):
-		for b in get_tree().get_nodes_in_group("faction_%d" % faction_id):
-			if b is StaticBody2D and "building_type" in b and b.building_type == BuildingStats.BuildingType.EVOLUTION_CHAMBER:
-				if b.has_method("is_complete") and b.is_complete() and b.has_method("queue_research"):
-					b.queue_research(pick)
+	# Let the building handle resource spending via queue_research()
+	for b in get_tree().get_nodes_in_group("faction_%d" % faction_id):
+		if b is StaticBody2D and "building_type" in b and b.building_type == BuildingStats.BuildingType.EVOLUTION_CHAMBER:
+			if b.has_method("is_complete") and b.is_complete() and b.has_method("queue_research"):
+				if b.queue_research(pick):
 					break
 
 # === ABILITY USAGE ===

@@ -47,6 +47,9 @@ var control_group: int = -1
 var _command_queue: Array = []
 const MAX_QUEUE: int = 8
 
+# Tech tree reference (set by stage manager)
+var _tech_tree: Node = null
+
 # Abilities
 var _ability_cooldown_timer: float = 0.0
 var _ability_cooldown_max: float = 0.0
@@ -181,8 +184,14 @@ func _physics_process(delta: float) -> void:
 			queue_redraw()
 			return  # Skip state processing while stunned
 
-	# Combat timer for veterancy
+	# Combat timer for veterancy + out-of-combat regen
 	_last_combat_time += delta
+	if _last_combat_time > 5.0 and health < max_health:
+		var regen: float = 0.0
+		if _tech_tree and _tech_tree.has_method("get_regen_rate"):
+			regen = _tech_tree.get_regen_rate(faction_id)
+		if regen > 0:
+			health = minf(health + regen * delta, max_health)
 
 	match state:
 		State.IDLE:
@@ -494,6 +503,12 @@ func _perform_attack() -> void:
 		return
 	_last_combat_time = 0.0
 	var actual_damage: float = damage
+	# Tech tree damage bonus
+	if _tech_tree and _tech_tree.has_method("get_damage_bonus"):
+		actual_damage += _tech_tree.get_damage_bonus(faction_id)
+	# Berserker enzymes: 2x damage below 30% HP
+	if _tech_tree and _tech_tree.has_method("get_berserker_mult") and health < max_health * 0.3:
+		actual_damage *= _tech_tree.get_berserker_mult(faction_id)
 	# Fighter charge bonus
 	if unit_type == UnitStats.UnitType.FIGHTER and _charge_moved:
 		actual_damage *= UnitStats.get_stats(unit_type).get("charge_bonus", 1.0)
@@ -528,11 +543,17 @@ func _fire_projectile(target: Node2D) -> void:
 	get_parent().add_child(proj)
 
 func take_damage(amount: float, _attacker: Node2D = null) -> void:
-	# Fortify armor bonus
+	# Tech tree armor + fortify bonus
 	var effective_amount: float = amount
+	var total_armor: float = armor
+	if _tech_tree and _tech_tree.has_method("get_armor_bonus"):
+		total_armor += _tech_tree.get_armor_bonus(faction_id)
+	if _tech_tree and _tech_tree.has_method("get_hive_armor"):
+		var nearby: int = _count_nearby_allies(80.0)
+		total_armor += _tech_tree.get_hive_armor(faction_id, nearby)
 	if _is_fortified:
-		var bonus_armor: float = UnitStats.get_stats(unit_type).get("ability_armor_bonus", 0.0)
-		effective_amount = maxf(amount - bonus_armor, 1.0)
+		total_armor += UnitStats.get_stats(unit_type).get("ability_armor_bonus", 0.0)
+	effective_amount = maxf(amount - total_armor, 1.0)
 	health -= effective_amount
 	_hurt_flash = 1.0
 	_last_combat_time = 0.0
@@ -544,6 +565,14 @@ func take_damage(amount: float, _attacker: Node2D = null) -> void:
 	elif state == State.IDLE and is_instance_valid(_attacker):
 		# Auto-retaliate
 		command_attack(_attacker)
+
+func _count_nearby_allies(radius: float) -> int:
+	var count: int = 0
+	for u in get_tree().get_nodes_in_group("faction_%d" % faction_id):
+		if u != self and is_instance_valid(u) and u is CharacterBody2D:
+			if u.global_position.distance_squared_to(global_position) < radius * radius:
+				count += 1
+	return count
 
 func _die() -> void:
 	if is_instance_valid(_gather_target) and _gather_target.has_method("remove_worker"):
@@ -1085,6 +1114,9 @@ func _apply_veterancy() -> void:
 	health = minf(health, max_health)
 	damage = _base_damage * (1.0 + dmg_bonus)
 	speed = _base_speed * (1.0 + spd_bonus)
+	# Tech tree speed multiplier
+	if _tech_tree and _tech_tree.has_method("get_speed_mult"):
+		speed *= _tech_tree.get_speed_mult(faction_id)
 	attack_cooldown = _base_attack_cooldown  # CD bonus applied at ability use, not base attacks
 	if _nav_agent:
 		_nav_agent.max_speed = speed
