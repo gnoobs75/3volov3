@@ -138,6 +138,19 @@ var _buf_rts_attack: PackedFloat32Array
 var _buf_rts_unit_death: PackedFloat32Array
 var _buf_rts_gather: PackedFloat32Array
 
+# RTS stage extended sound buffers
+var _buf_upgrade_complete: PackedFloat32Array
+var _buf_tech_unlock: PackedFloat32Array
+var _buf_threat_alert: PackedFloat32Array
+var _buf_ability_charge: PackedFloat32Array
+var _buf_ability_fortify: PackedFloat32Array
+var _buf_ability_spores: PackedFloat32Array
+var _buf_ability_acid: PackedFloat32Array
+var _buf_ability_burst_gather: PackedFloat32Array
+var _buf_veterancy_star: PackedFloat32Array
+var _buf_formation_click: PackedFloat32Array
+var _buf_queue_ping: PackedFloat32Array
+
 # Cell stage ambient
 var _cell_ambient_player: AudioStreamPlayer = null
 
@@ -266,6 +279,19 @@ func _ready() -> void:
 	_buf_rts_attack = _gen_rts_attack()
 	_buf_rts_unit_death = _gen_rts_unit_death()
 	_buf_rts_gather = _gen_rts_gather()
+
+	# Pre-generate RTS extended sounds
+	_buf_upgrade_complete = SynthSounds.gen_upgrade_complete()
+	_buf_tech_unlock = SynthSounds.gen_tech_unlock()
+	_buf_threat_alert = SynthSounds.gen_threat_alert()
+	_buf_ability_charge = SynthSounds.gen_ability_charge()
+	_buf_ability_fortify = SynthSounds.gen_ability_fortify()
+	_buf_ability_spores = SynthSounds.gen_ability_spores()
+	_buf_ability_acid = SynthSounds.gen_ability_acid()
+	_buf_ability_burst_gather = SynthSounds.gen_ability_burst_gather()
+	_buf_veterancy_star = SynthSounds.gen_veterancy_star()
+	_buf_formation_click = SynthSounds.gen_formation_click()
+	_buf_queue_ping = SynthSounds.gen_queue_ping()
 
 	# Setup music players for file-based music
 	_setup_music_players()
@@ -876,6 +902,38 @@ func play_rts_unit_death() -> void:
 
 func play_rts_gather() -> void:
 	_play_buffer(_buf_rts_gather, -8.0)
+
+## === RTS EXTENDED SOUNDS ===
+
+func play_upgrade_complete() -> void:
+	_play_buffer(_buf_upgrade_complete, -2.0)
+
+func play_tech_unlock() -> void:
+	_play_buffer(_buf_tech_unlock, -1.0)
+
+func play_threat_alert() -> void:
+	_play_buffer(_buf_threat_alert, -2.0)
+
+func play_ability(ability_name: String) -> void:
+	var key: String = "ability_" + ability_name.to_lower().replace(" ", "_")
+	var buf_map: Dictionary = {
+		"ability_charge": _buf_ability_charge,
+		"ability_fortify": _buf_ability_fortify,
+		"ability_spores": _buf_ability_spores,
+		"ability_acid": _buf_ability_acid,
+		"ability_burst_gather": _buf_ability_burst_gather,
+	}
+	if key in buf_map:
+		_play_buffer(buf_map[key], -3.0)
+
+func play_veterancy_star() -> void:
+	_play_buffer(_buf_veterancy_star, -3.0)
+
+func play_formation_click() -> void:
+	_play_buffer(_buf_formation_click, -5.0)
+
+func play_queue_ping() -> void:
+	_play_buffer(_buf_queue_ping, -6.0)
 
 # RTS sound generators (simple procedural)
 func _gen_rts_select() -> PackedFloat32Array:

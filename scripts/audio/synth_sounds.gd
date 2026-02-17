@@ -1288,3 +1288,232 @@ static func gen_flashlight_click() -> PackedFloat32Array:
 			s += noise() * 0.1 * env
 		buf[i] = s * env * 0.6
 	return buf
+
+## === RTS STAGE SOUNDS ===
+
+## Upgrade complete: rising crystalline chime
+static func gen_upgrade_complete() -> PackedFloat32Array:
+	var dur: float = 0.6
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase1: float = 0.0
+	var phase2: float = 0.0
+	var phase3: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.02, 0.1, 0.5, 0.2, dur)
+		# Two ascending sine tones
+		var freq1: float = lerpf(600.0, 1200.0, t / dur)
+		var freq2: float = lerpf(900.0, 1800.0, t / dur)
+		phase1 += freq1 / SAMPLE_RATE
+		phase2 += freq2 / SAMPLE_RATE
+		# Triangle overtone for shimmer
+		phase3 += (freq1 * 3.0) / SAMPLE_RATE
+		var s: float = sine(phase1) * 0.35 + sine(phase2) * 0.2 + triangle(phase3) * 0.1
+		buf[i] = s * env * 0.5
+	return buf
+
+## Tech unlock: deep harmonic + bright overtone
+static func gen_tech_unlock() -> PackedFloat32Array:
+	var dur: float = 0.8
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase1: float = 0.0
+	var phase2: float = 0.0
+	var phase3: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = adsr(t, 0.01, 0.08, 0.5, 0.3, dur)
+		# Deep base harmonics
+		phase1 += 80.0 / SAMPLE_RATE
+		phase2 += 160.0 / SAMPLE_RATE
+		# Bright chirp overtone rising
+		var chirp_freq: float = lerpf(1600.0, 2400.0, t / dur)
+		phase3 += chirp_freq / SAMPLE_RATE
+		var chirp_env: float = adsr(t, 0.01, 0.15, 0.3, 0.2, dur)
+		var s: float = sine(phase1) * 0.35 + sine(phase2) * 0.2 + sine(phase3) * 0.12 * chirp_env
+		# Impact transient
+		s += noise() * 0.3 * exp(-t * 20.0)
+		buf[i] = s * env * 0.5
+	return buf
+
+## Threat alert: low organic rumble with rising urgency
+static func gen_threat_alert() -> PackedFloat32Array:
+	var dur: float = 0.8
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Swelling envelope for urgency
+		var env: float = adsr(t, 0.1, 0.1, 0.7, 0.2, dur) * (0.5 + 0.5 * (t / dur))
+		# Rumble frequency slowly rises
+		var freq: float = lerpf(50.0, 80.0, t / dur)
+		phase += freq / SAMPLE_RATE
+		var s: float = sine(phase) * 0.4
+		# Noise layer for organic texture
+		s += noise() * 0.12 * env
+		# Sub-bass throb
+		s += sine(phase * 0.5) * 0.15
+		buf[i] = s * env * 0.5
+	return buf
+
+## Ability charge: quick whoosh
+static func gen_ability_charge() -> PackedFloat32Array:
+	var dur: float = 0.3
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Very fast attack, exponential decay
+		var env: float = exp(-t * 10.0) * 0.6
+		# Noise sweep modulated by rising sine for filtered feel
+		var sweep_freq: float = lerpf(200.0, 2000.0, t / dur)
+		phase += sweep_freq / SAMPLE_RATE
+		var s: float = noise() * 0.4 * (0.5 + 0.5 * sine(phase))
+		# Brief bright transient
+		s += sine(phase * 2.0) * 0.15 * exp(-t * 20.0)
+		buf[i] = s * env
+	return buf
+
+## Ability fortify: deep thud
+static func gen_ability_fortify() -> PackedFloat32Array:
+	var dur: float = 0.2
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Exponential decay
+		var env: float = exp(-t * 20.0) * 0.7
+		# 60Hz sine impact
+		phase += 60.0 / SAMPLE_RATE
+		var s: float = sine(phase) * 0.5 * env
+		# Noise burst
+		s += noise() * 0.3 * exp(-t * 30.0)
+		buf[i] = s * 0.6
+	return buf
+
+## Ability spores: airy release
+static func gen_ability_spores() -> PackedFloat32Array:
+	var dur: float = 0.4
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Slow attack, gentle fade
+		var env: float = adsr(t, 0.1, 0.08, 0.4, 0.15, dur)
+		# White noise filtered by low-freq sine
+		phase += 120.0 / SAMPLE_RATE
+		var filter_mod: float = 0.3 + 0.7 * absf(sine(phase))
+		var s: float = noise() * filter_mod * 0.35
+		# Breathy organic tone
+		s += sine(phase * 3.0) * 0.06 * env
+		buf[i] = s * env * 0.4
+	return buf
+
+## Ability acid: sizzle burst
+static func gen_ability_acid() -> PackedFloat32Array:
+	var dur: float = 0.25
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Fast attack, moderate decay
+		var env: float = adsr(t, 0.005, 0.04, 0.3, 0.1, dur)
+		# High-frequency noise + 3000Hz sine
+		phase += 3000.0 / SAMPLE_RATE
+		var s: float = noise() * 0.3 * env + sine(phase) * 0.2
+		# Crackling texture via rapid random modulation
+		s *= 0.6 + 0.4 * noise()
+		buf[i] = s * env * 0.5
+	return buf
+
+## Ability burst gather: squelch
+static func gen_ability_burst_gather() -> PackedFloat32Array:
+	var dur: float = 0.3
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Quick attack, bubbly sustain, fast release
+		var env: float = adsr(t, 0.02, 0.05, 0.5, 0.1, dur)
+		# Low 80Hz bubbling with ~15Hz amplitude modulation
+		phase += 80.0 / SAMPLE_RATE
+		var am: float = 0.5 + 0.5 * sin(t * 15.0 * TAU)
+		var s: float = sine(phase) * 0.4 * am
+		# Wet noise layer
+		s += noise() * 0.15 * env
+		buf[i] = s * env * 0.5
+	return buf
+
+## Veterancy star: ascending triple-note (C-E-G)
+static func gen_veterancy_star() -> PackedFloat32Array:
+	var dur: float = 0.4
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	# C5=523, E5=659, G5=784 Hz, each ~0.12s with slight overlap
+	var notes: Array = [523.0, 659.0, 784.0]
+	var note_dur: float = 0.12
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var s: float = 0.0
+		for n_idx in range(3):
+			var note_start: float = n_idx * note_dur
+			if t >= note_start:
+				var nt: float = t - note_start
+				var remaining: float = dur - note_start
+				var note_env: float = adsr(nt, 0.01, 0.03, 0.6, remaining * 0.5, remaining)
+				# Bright sine + triangle mix
+				s += sine(notes[n_idx] * nt) * 0.25 * note_env
+				s += triangle(notes[n_idx] * nt * 2.0) * 0.08 * note_env
+		buf[i] = s * 0.5
+	return buf
+
+## Formation click: organic click
+static func gen_formation_click() -> PackedFloat32Array:
+	var dur: float = 0.1
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var s: float = 0.0
+		# Sharp transient noise burst (5ms)
+		if t < 0.005:
+			s += noise() * 0.7
+		# Brief organic resonance at 300Hz
+		if t < 0.06:
+			phase += 300.0 / SAMPLE_RATE
+			s += sine(phase) * 0.4 * exp(-t * 40.0)
+		buf[i] = s * 0.5
+	return buf
+
+## Queue ping: soft high-pitched ping
+static func gen_queue_ping() -> PackedFloat32Array:
+	var dur: float = 0.15
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		# Fast attack, exponential decay
+		var env: float = exp(-t * 20.0)
+		phase += 1800.0 / SAMPLE_RATE
+		buf[i] = sine(phase) * env * 0.2
+	return buf

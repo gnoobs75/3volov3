@@ -21,6 +21,9 @@ var _has_nutrient_processor: bool = false
 var _attack_rally_point: Vector2 = Vector2.ZERO
 var _army_group: Array = []
 
+# Tech tree integration
+var _tech_tree: Node = null
+
 # Grace period — AI won't attack during this window
 var _grace_period: float = 0.0
 var _grace_active: bool = false
@@ -203,12 +206,20 @@ func _do_expansion() -> void:
 	# Build towers near base
 	if _buildings_built < cfg["expansion_buildings"] and randf() < cfg["tower_chance"]:
 		_try_build(BuildingStats.BuildingType.MEMBRANE_TOWER)
+	# Try to research upgrades (30% chance)
+	if randf() < 0.3:
+		_try_research_upgrade()
 
 func _do_aggression() -> void:
 	var cfg: Dictionary = _get_cfg()
 	# Keep producing
 	_produce_combat_units_by_personality()
 	_assign_idle_workers_to_gather()
+	# Try to research upgrades (50% chance)
+	if randf() < 0.5:
+		_try_research_upgrade()
+	# Try to use unit abilities
+	_try_use_abilities()
 	# Don't attack during grace period
 	if _grace_active:
 		return
@@ -291,11 +302,17 @@ func _do_defense() -> void:
 		_try_build(BuildingStats.BuildingType.MEMBRANE_TOWER)
 	# Keep producing
 	_produce_combat_units_by_personality()
+	# Try to use unit abilities (defensive)
+	_try_use_abilities()
 
 func _do_endgame() -> void:
 	var cfg: Dictionary = _get_cfg()
 	# All-in: send everything at remaining enemy
 	_produce_combat_units_by_personality()
+	# Research every decision in endgame
+	_try_research_upgrade()
+	# Try to use unit abilities
+	_try_use_abilities()
 	if _grace_active:
 		return
 	var army: Array = _get_combat_units()
@@ -450,3 +467,118 @@ func _get_alive_enemies() -> int:
 	if not _stage or not _stage.has_method("get_faction_manager"):
 		return 3
 	return _stage.get_faction_manager().get_alive_enemy_factions().size()
+
+# === TECH TREE INTEGRATION ===
+
+func set_tech_tree(tree: Node) -> void:
+	_tech_tree = tree
+
+func _try_spend(biomass_cost: int, genes_cost: int) -> bool:
+	if not _stage or not _stage.has_method("get_resource_manager"):
+		return false
+	var rm: Node = _stage.get_resource_manager()
+	return rm.spend(faction_id, biomass_cost, genes_cost)
+
+func _try_research_upgrade() -> void:
+	if not _tech_tree or not _tech_tree.has_method("get_available_upgrades"):
+		return
+	var available: Array = _tech_tree.get_available_upgrades(faction_id)
+	if available.is_empty():
+		# Try to unlock next tier
+		if _tech_tree.has_method("get_faction_tier"):
+			var current_tier: int = _tech_tree.get_faction_tier(faction_id)
+			if current_tier < 3 and _tech_tree.has_method("can_unlock_tier") and _tech_tree.can_unlock_tier(faction_id, current_tier + 1):
+				var tier_costs: Dictionary = {2: {"biomass": 200, "genes": 50}, 3: {"biomass": 400, "genes": 100}}
+				var cost: Dictionary = tier_costs.get(current_tier + 1, {})
+				if _try_spend(cost.get("biomass", 0), cost.get("genes", 0)):
+					_tech_tree.unlock_tier(faction_id, current_tier + 1)
+		return
+	# Pick random available upgrade
+	var pick: int = available[randi() % available.size()]
+	var data: Dictionary = _tech_tree.get_upgrade_data(pick) if _tech_tree.has_method("get_upgrade_data") else {}
+	if data.is_empty():
+		return
+	if _try_spend(data.get("cost_biomass", 0), data.get("cost_genes", 0)):
+		for b in get_tree().get_nodes_in_group("faction_%d" % faction_id):
+			if b is StaticBody2D and "building_type" in b and b.building_type == BuildingStats.BuildingType.EVOLUTION_CHAMBER:
+				if b.has_method("is_complete") and b.is_complete() and b.has_method("queue_research"):
+					b.queue_research(pick)
+					break
+
+# === ABILITY USAGE ===
+
+func _try_use_abilities() -> void:
+	if difficulty == Difficulty.NOOB:
+		return
+	var chance: float = [0.0, 0.2, 0.5, 0.8, 1.0][difficulty]
+	if randf() > chance:
+		return
+	for unit in get_tree().get_nodes_in_group("faction_%d" % faction_id):
+		if not (unit is CharacterBody2D) or not is_instance_valid(unit):
+			continue
+		if not unit.has_method("can_use_ability") or not unit.has_method("use_ability"):
+			continue
+		if not unit.can_use_ability():
+			continue
+		if not "unit_type" in unit:
+			continue
+		match unit.unit_type:
+			UnitStats.UnitType.FIGHTER:
+				# Charge if target is far away
+				if "_attack_target" in unit and is_instance_valid(unit._attack_target):
+					if unit.global_position.distance_to(unit._attack_target.global_position) > 100.0:
+						unit.use_ability(unit._attack_target.global_position)
+			UnitStats.UnitType.DEFENDER:
+				# Fortify when low HP and enemies nearby
+				if "health" in unit and "max_health" in unit and unit.health < unit.max_health * 0.5:
+					unit.use_ability(Vector2.ZERO)
+			UnitStats.UnitType.SCOUT:
+				# Spores when exploring
+				unit.use_ability(Vector2.ZERO)
+			UnitStats.UnitType.RANGED:
+				# Acid volley when attacking
+				if "_attack_target" in unit and is_instance_valid(unit._attack_target):
+					unit.use_ability(Vector2.ZERO)
+			UnitStats.UnitType.WORKER:
+				# Burst gather (HARD+ only)
+				if difficulty >= Difficulty.HARD and "state" in unit and unit.state == 3:  # GATHER
+					unit.use_ability(Vector2.ZERO)
+
+# === MAP EVENT REACTIONS ===
+
+func on_map_event(event_type: int, event_pos: Vector2) -> void:
+	match event_type:
+		0:  # NUTRIENT_BLOOM
+			if difficulty >= Difficulty.MEDIUM:
+				# Send 2 workers to harvest
+				var workers: Array = _get_idle_workers()
+				var sent: int = 0
+				for w in workers:
+					if sent >= 2:
+						break
+					if is_instance_valid(w) and w.has_method("command_move"):
+						w.command_move(event_pos + Vector2(randf_range(-30, 30), randf_range(-30, 30)))
+						sent += 1
+		1:  # TOXIC_TIDE
+			if difficulty >= Difficulty.EASY:
+				# Move units away
+				for unit in get_tree().get_nodes_in_group("faction_%d" % faction_id):
+					if unit is CharacterBody2D and is_instance_valid(unit):
+						if unit.global_position.distance_to(event_pos) < 600.0:
+							var away: Vector2 = (unit.global_position - event_pos).normalized() * 300.0
+							if unit.has_method("command_move"):
+								unit.command_move(unit.global_position + away)
+		2:  # EVOLUTIONARY_SURGE
+			if difficulty >= Difficulty.HARD:
+				_do_aggression()  # Push attack timing
+		3:  # PETRI_QUAKE
+			pass  # Buildings auto-repair handled elsewhere
+
+func _get_idle_workers() -> Array:
+	var workers: Array = []
+	for unit in get_tree().get_nodes_in_group("faction_%d" % faction_id):
+		if unit is CharacterBody2D and is_instance_valid(unit):
+			if "unit_type" in unit and unit.unit_type == UnitStats.UnitType.WORKER:
+				if "state" in unit and unit.state == 0:  # IDLE
+					workers.append(unit)
+	return workers
