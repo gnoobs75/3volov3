@@ -24,8 +24,11 @@ var _pause_menu: Control = null
 var _tutorial: Control = null
 var _contextual_tips: Control = null
 var _damage_numbers: Node2D = null
+var _selection_panel: Control = null
 var _production_tab: Control = null
 var _map_events: Node = null
+var _tech_tree: Node = null
+var _threat_detector: Node = null
 
 var _time: float = 0.0
 var _game_started: bool = false
@@ -103,6 +106,12 @@ func _ready() -> void:
 	_hud_layer.add_child(_hud)
 	_hud.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+	# Selection panel (bottom-left info + control groups bar)
+	_selection_panel = preload("res://scripts/rts_stage/rts_selection_panel.gd").new()
+	_selection_panel.name = "SelectionPanel"
+	_hud_layer.add_child(_selection_panel)
+	_selection_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
 	_minimap = preload("res://scripts/rts_stage/rts_minimap.gd").new()
 	_minimap.name = "Minimap"
 	_hud_layer.add_child(_minimap)
@@ -171,13 +180,27 @@ func _ready() -> void:
 	add_child(_map_events)
 	_map_events.setup(self)
 
+	# Tech tree system
+	_tech_tree = preload("res://scripts/rts_stage/rts_tech_tree.gd").new()
+	_tech_tree.name = "TechTree"
+	add_child(_tech_tree)
+	_tech_tree.setup(4)  # 4 factions
+
+	# Threat detector
+	_threat_detector = preload("res://scripts/rts_stage/rts_threat_detector.gd").new()
+	_threat_detector.name = "ThreatDetector"
+	add_child(_threat_detector)
+	_threat_detector.setup(self)
+
 	# 7. Initialize systems
 	_faction_manager.setup_factions()
 	_resource_manager.setup(4)
 	_victory_manager.setup(self)
 	_input_handler.setup(_selection_manager, _command_system, _camera, self)
 	_hud.setup(self, _selection_manager, _command_system)
+	_hud.set_threat_detector(_threat_detector)
 	_minimap.setup(self, _camera)
+	_selection_panel.setup(_selection_manager)
 
 	# 8. Connect signals
 	_victory_manager.game_won.connect(_on_game_won)
@@ -187,6 +210,12 @@ func _ready() -> void:
 	_combat_system.unit_damaged.connect(_on_unit_damaged)
 	_faction_manager.faction_eliminated.connect(_on_faction_eliminated_check)
 	_command_system.command_issued.connect(_on_command_issued)
+
+	# Map event signals
+	_map_events.event_started.connect(_on_map_event_started)
+
+	# Threat detector signals
+	_threat_detector.threat_detected.connect(_on_threat_detected)
 
 	# 9. Spawn resources on map (including NPC dangers)
 	_petri_dish.spawn_resources()
@@ -206,6 +235,10 @@ func _ready() -> void:
 		ai.setup(fid, self, ai_difficulty)
 		add_child(ai)
 		_ai_directors.append(ai)
+
+	# Pass tech tree to AI directors
+	for ai_ref in _ai_directors:
+		ai_ref.set_tech_tree(_tech_tree)
 
 	# 12. Set AI grace period if tutorial is active
 	if _tutorial:
@@ -290,6 +323,12 @@ func get_input_handler() -> Control:
 
 func get_map_events() -> Node:
 	return _map_events
+
+func get_tech_tree() -> Node:
+	return _tech_tree
+
+func get_threat_detector() -> Node:
+	return _threat_detector
 
 func toggle_intel_overlay() -> void:
 	if _intel_overlay and _intel_overlay.has_method("toggle"):
@@ -443,6 +482,27 @@ func _on_tutorial_completed() -> void:
 func _notify_tutorial(method: String) -> void:
 	if _tutorial and is_instance_valid(_tutorial) and _tutorial.has_method(method):
 		_tutorial.call(method)
+
+func _on_map_event_started(event_type: int, event_pos: Vector2, _event_name: String) -> void:
+	# Notify HUD for announcement
+	if _hud and _hud.has_method("show_event_announcement"):
+		var event_names: Array = ["Nutrient Bloom", "Toxic Tide", "Evolutionary Surge", "Petri Quake", "Migration"]
+		var event_colors: Array = [Color(0.3, 1.0, 0.4), Color(0.8, 0.2, 0.9), Color(1.0, 0.8, 0.2), Color(0.7, 0.3, 0.2), Color(0.5, 0.7, 1.0)]
+		var idx: int = clampi(event_type, 0, 4)
+		_hud.show_event_announcement(event_names[idx], event_colors[idx])
+	# Notify AI directors
+	for ai in _ai_directors:
+		if is_instance_valid(ai) and ai.has_method("on_map_event"):
+			ai.on_map_event(event_type, event_pos)
+	# Minimap ping at event location
+	if _minimap and _minimap.has_method("add_attack_ping"):
+		_minimap.add_attack_ping(event_pos)
+
+func _on_threat_detected(threat_pos: Vector2, _threat_count: int) -> void:
+	AudioManager.play_threat_alert()
+	# Minimap ping at threat location
+	if _minimap and _minimap.has_method("add_attack_ping"):
+		_minimap.add_attack_ping(threat_pos)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:

@@ -20,19 +20,33 @@ func _process(delta: float) -> void:
 
 func _check_validity() -> void:
 	_is_valid = true
-	# Check map bounds
+	# Check map edge (must be > 100u from edge)
+	var map_radius: float = 8000.0
+	if global_position.length() > map_radius - 100.0:
+		_is_valid = false
+		return
+	# Check map bounds (fallback)
 	var map: Node2D = get_tree().get_first_node_in_group("rts_map") if get_tree() else null
 	if map and map.has_method("is_within_bounds"):
 		if not map.is_within_bounds(global_position):
 			_is_valid = false
 			return
-	# Check overlap with existing buildings
+	# Check overlap with existing buildings (minimum 60u separation)
 	for building in get_tree().get_nodes_in_group("rts_buildings"):
 		if not is_instance_valid(building):
 			continue
 		var dist: float = global_position.distance_to(building.global_position)
 		var other_radius: float = building.size_radius if "size_radius" in building else 30.0
-		if dist < _size_radius + other_radius + 5.0:
+		var min_dist: float = maxf(_size_radius + other_radius + 5.0, 60.0)
+		if dist < min_dist:
+			_is_valid = false
+			return
+	# Check overlap with resource nodes
+	for res in get_tree().get_nodes_in_group("rts_resources"):
+		if not is_instance_valid(res):
+			continue
+		var dist: float = global_position.distance_to(res.global_position)
+		if dist < _size_radius + 25.0:
 			_is_valid = false
 			return
 	# Check overlap with obstacles
@@ -50,6 +64,20 @@ func is_valid_placement() -> bool:
 func _draw() -> void:
 	var color: Color = Color(0.2, 0.9, 0.3, 0.3) if _is_valid else Color(0.9, 0.2, 0.2, 0.3)
 	var border_color: Color = Color(0.2, 0.9, 0.3, 0.6) if _is_valid else Color(0.9, 0.2, 0.2, 0.6)
+
+	# Tower range circle for Membrane Tower
+	if building_type == BuildingStats.BuildingType.MEMBRANE_TOWER:
+		var stats: Dictionary = BuildingStats.get_stats(building_type)
+		var tower_range: float = stats.get("attack_range", 0.0)
+		if tower_range > 0:
+			var range_color: Color = Color(border_color.r, border_color.g, border_color.b, 0.08)
+			draw_circle(Vector2.ZERO, tower_range, range_color)
+			# Dashed range ring
+			var dash_count: int = 24
+			var dash_arc: float = TAU / float(dash_count) * 0.5
+			for di in range(dash_count):
+				var a_start: float = float(di) * TAU / float(dash_count) + _time * 0.3
+				draw_arc(Vector2.ZERO, tower_range, a_start, a_start + dash_arc, 4, Color(border_color.r, border_color.g, border_color.b, 0.15), 1.0)
 
 	# Building shape preview
 	draw_circle(Vector2.ZERO, _size_radius, color)

@@ -285,6 +285,11 @@ func _draw() -> void:
 func _draw_spawning_pool(mc: Color, gc: Color) -> void:
 	# Large pulsing pool
 	var pulse: float = 1.0 + 0.05 * sin(_time * 1.5)
+	# Hatchery upgrade: extra outer glow ring
+	if _building_upgrade_id == 0:  # HATCHERY
+		var glow_pulse: float = 0.08 + 0.04 * sin(_time * 2.5)
+		draw_circle(Vector2.ZERO, size_radius * 1.8, Color(gc.r, gc.g, gc.b, glow_pulse))
+		draw_arc(Vector2.ZERO, size_radius * 1.4, 0, TAU, 24, Color(gc.r, gc.g, gc.b, 0.15 + 0.05 * sin(_time * 3.0)), 2.0)
 	# Outer membrane
 	var pts := PackedVector2Array()
 	for i in range(20):
@@ -294,9 +299,10 @@ func _draw_spawning_pool(mc: Color, gc: Color) -> void:
 	draw_colored_polygon(pts, Color(mc.r * 0.6, mc.g * 0.6, mc.b * 0.6, 0.8))
 	# Inner pool
 	draw_circle(Vector2.ZERO, size_radius * 0.6, Color(mc.r * 0.3, mc.g * 0.3, mc.b * 0.3, 0.9))
-	# Bubbles
-	for i in range(3):
-		var ba: float = _time * 0.5 + TAU * float(i) / 3.0
+	# Bubbles (more bubbles when upgraded)
+	var bubble_count: int = 5 if _building_upgrade_id == 0 else 3
+	for i in range(bubble_count):
+		var ba: float = _time * 0.5 + TAU * float(i) / float(bubble_count)
 		var bp: Vector2 = Vector2(cos(ba) * 12.0, sin(ba) * 12.0)
 		draw_circle(bp, 3.0, Color(gc.r, gc.g, gc.b, 0.3))
 
@@ -317,22 +323,37 @@ func _draw_evolution_chamber(mc: Color, gc: Color) -> void:
 		draw_circle(Vector2(x2, y), 2.0, Color(gc.r, gc.g, gc.b, 0.4))
 
 func _draw_membrane_tower(mc: Color, gc: Color) -> void:
+	# Spine Tower upgrade: spike decorations around circle
+	if _building_upgrade_id == 1:  # SPINE_TOWER
+		var spike_count: int = 8
+		for si in range(spike_count):
+			var sa: float = TAU * float(si) / float(spike_count) + _time * 0.3
+			var base_l: Vector2 = Vector2(cos(sa - 0.15), sin(sa - 0.15)) * size_radius
+			var base_r: Vector2 = Vector2(cos(sa + 0.15), sin(sa + 0.15)) * size_radius
+			var tip: Vector2 = Vector2(cos(sa), sin(sa)) * (size_radius + 10.0 + 2.0 * sin(_time * 4.0 + float(si)))
+			var spike_pts := PackedVector2Array()
+			spike_pts.append(base_l)
+			spike_pts.append(tip)
+			spike_pts.append(base_r)
+			draw_colored_polygon(spike_pts, Color(mc.r * 0.9, mc.g * 0.4, mc.b * 0.4, 0.7))
 	# Tall tower shape with concentric rings
 	draw_circle(Vector2.ZERO, size_radius, Color(mc.r * 0.7, mc.g * 0.5, mc.b * 0.5, 0.8))
 	draw_arc(Vector2.ZERO, size_radius * 0.7, 0, TAU, 16, Color(mc.r * 0.5, mc.g * 0.3, mc.b * 0.3, 0.4), 1.5)
 	# Eye on top (uses smoothed direction)
-	draw_circle(Vector2.ZERO, 6.0, Color.WHITE)
-	draw_circle(Vector2.ZERO, 6.5, Color(gc.r, gc.g, gc.b, 0.3 + 0.1 * sin(_time * 2.0)))
-	draw_circle(_tower_eye_dir, 3.0, Color(0.9, 0.2, 0.2))
+	var eye_size: float = 7.5 if _building_upgrade_id == 1 else 6.0
+	draw_circle(Vector2.ZERO, eye_size, Color.WHITE)
+	draw_circle(Vector2.ZERO, eye_size + 0.5, Color(gc.r, gc.g, gc.b, 0.3 + 0.1 * sin(_time * 2.0)))
+	draw_circle(_tower_eye_dir, eye_size * 0.5, Color(0.9, 0.2, 0.2))
 	# Pupil highlight
 	draw_circle(_tower_eye_dir + Vector2(-0.5, -0.5), 1.0, Color(1.0, 0.5, 0.5, 0.6))
-	# Range indicator (dashed)
+	# Range indicator (dashed) — wider when upgraded
 	if attack_range > 0:
-		var dash_count: int = 16
+		var dash_count: int = 20 if _building_upgrade_id == 1 else 16
 		var dash_arc: float = TAU / float(dash_count) * 0.5
+		var range_alpha: float = 0.09 if _building_upgrade_id == 1 else 0.06
 		for di in range(dash_count):
 			var a_start: float = float(di) * TAU / float(dash_count) + _time * 0.2
-			draw_arc(Vector2.ZERO, attack_range, a_start, a_start + dash_arc, 4, Color(mc.r, mc.g, mc.b, 0.06), 1.0)
+			draw_arc(Vector2.ZERO, attack_range, a_start, a_start + dash_arc, 4, Color(mc.r, mc.g, mc.b, range_alpha), 1.0)
 
 func _draw_bio_wall(mc: Color, _gc: Color) -> void:
 	# Thick wall segment
@@ -348,15 +369,26 @@ func _draw_bio_wall(mc: Color, _gc: Color) -> void:
 		draw_line(Vector2(x, -size_radius * 0.5), Vector2(x, size_radius * 0.5), Color(mc.r * 0.3, mc.g * 0.3, mc.b * 0.2, 0.4), 1.5)
 
 func _draw_nutrient_processor(mc: Color, gc: Color) -> void:
+	# Refinery upgrade: processing glow circle
+	if _building_upgrade_id == 2:  # REFINERY
+		var glow_pulse: float = 0.08 + 0.05 * sin(_time * 4.0)
+		draw_circle(Vector2.ZERO, size_radius * 1.6, Color(gc.r, gc.g, gc.b, glow_pulse))
 	# Circular processor with vanes
 	draw_circle(Vector2.ZERO, size_radius, Color(mc.r * 0.5, mc.g * 0.6, mc.b * 0.4, 0.8))
-	# Rotating vanes
-	for i in range(4):
-		var angle: float = _time * 0.5 + TAU * float(i) / 4.0
+	# Rotating vanes (faster when upgraded)
+	var vane_speed: float = 1.5 if _building_upgrade_id == 2 else 0.5
+	var vane_count: int = 6 if _building_upgrade_id == 2 else 4
+	for i in range(vane_count):
+		var angle: float = _time * vane_speed + TAU * float(i) / float(vane_count)
 		var start: Vector2 = Vector2(cos(angle), sin(angle)) * 5.0
 		var end: Vector2 = Vector2(cos(angle), sin(angle)) * (size_radius * 0.8)
 		draw_line(start, end, Color(gc.r, gc.g, gc.b, 0.5), 2.0)
-	draw_circle(Vector2.ZERO, 5.0, Color(gc.r, gc.g, gc.b, 0.6))
+	# Center hub (larger when upgraded)
+	var hub_r: float = 7.0 if _building_upgrade_id == 2 else 5.0
+	draw_circle(Vector2.ZERO, hub_r, Color(gc.r, gc.g, gc.b, 0.6))
+	# Refinery: inner processing ring
+	if _building_upgrade_id == 2:
+		draw_arc(Vector2.ZERO, size_radius * 0.5, _time * 3.0, _time * 3.0 + PI * 1.2, 12, Color(gc.r, gc.g, gc.b, 0.25), 1.5)
 
 func _draw_health_bar() -> void:
 	if health >= max_health:

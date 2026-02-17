@@ -551,12 +551,36 @@ func _die() -> void:
 	died.emit(self)
 	queue_free()
 
+func _find_best_target(enemies: Array) -> Node2D:
+	## Score enemies by priority: attacking me > lowest HP > nearest.
+	var best: Node2D = null
+	var best_score: float = -1.0
+	for enemy in enemies:
+		if not is_instance_valid(enemy):
+			continue
+		var score: float = 0.0
+		# Priority: enemy is attacking me
+		if enemy.has_meta("attack_target") and enemy.get_meta("attack_target") == self:
+			score += 1000.0
+		elif "_attack_target" in enemy and is_instance_valid(enemy._attack_target) and enemy._attack_target == self:
+			score += 1000.0
+		# Priority: low HP ratio
+		if "health" in enemy and "max_health" in enemy and enemy.max_health > 0:
+			score += (1.0 - enemy.health / enemy.max_health) * 100.0
+		# Priority: proximity (closer = higher score)
+		var dist: float = global_position.distance_to(enemy.global_position)
+		if detection_range > 0:
+			score += (1.0 - dist / detection_range) * 50.0
+		if score > best_score:
+			best_score = score
+			best = enemy
+	return best
+
 func _check_auto_retaliate() -> void:
 	if state == State.ATTACK and is_instance_valid(_attack_target):
 		return
-	var nearest: Node2D = null
-	var nearest_dist: float = detection_range
-	# Check for defender taunt — prefer attacking defenders within 80 units
+	var enemies_in_range: Array = []
+	# Check for defender taunt -- prefer attacking defenders within 80 units
 	var taunting_defender: Node2D = null
 	var taunt_dist: float = 80.0
 	for unit in get_tree().get_nodes_in_group("rts_units"):
@@ -569,13 +593,14 @@ func _check_auto_retaliate() -> void:
 		if "unit_type" in unit and unit.unit_type == UnitStats.UnitType.DEFENDER and dist < taunt_dist:
 			taunt_dist = dist
 			taunting_defender = unit
-		if dist < nearest_dist:
-			nearest_dist = dist
-			nearest = unit
+		if dist < detection_range:
+			enemies_in_range.append(unit)
 	if taunting_defender:
 		command_attack(taunting_defender)
-	elif nearest:
-		command_attack(nearest)
+	elif not enemies_in_range.is_empty():
+		var best: Node2D = _find_best_target(enemies_in_range)
+		if best:
+			command_attack(best)
 
 func _navigate_to_nearest_depot() -> void:
 	var nearest_depot: Node2D = null
