@@ -109,6 +109,9 @@ func recall_control_group(group_num: int) -> void:
 		return
 	select_units(group)
 
+func get_control_group(group_num: int) -> Array:
+	return _control_groups.get(group_num, [])
+
 # === HELPERS ===
 
 func get_selected_workers() -> Array:
