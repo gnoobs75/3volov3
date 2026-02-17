@@ -90,9 +90,10 @@ func _get_cell_alpha(gx: int, gy: int) -> float:
 	var state: int = _grid[gx][gy]
 	if state == FogState.VISIBLE:
 		return 0.0
-	var base_alpha: float = 0.85 if state == FogState.UNEXPLORED else 0.4
-	# Check if any adjacent cell is VISIBLE — if so, reduce alpha for gradient edge
+	var base_alpha: float = 0.85 if state == FogState.UNEXPLORED else 0.55
+	# Check adjacent cells for gradient edges between fog states
 	var has_visible_neighbor: bool = false
+	var has_explored_neighbor: bool = false
 	for dx in [-1, 0, 1]:
 		for dy in [-1, 0, 1]:
 			if dx == 0 and dy == 0:
@@ -100,13 +101,15 @@ func _get_cell_alpha(gx: int, gy: int) -> float:
 			var nx: int = gx + dx
 			var ny: int = gy + dy
 			if nx >= 0 and nx < _grid_size and ny >= 0 and ny < _grid_size:
-				if _grid[nx][ny] == FogState.VISIBLE:
+				var ns: int = _grid[nx][ny]
+				if ns == FogState.VISIBLE:
 					has_visible_neighbor = true
-					break
-		if has_visible_neighbor:
-			break
+				elif ns == FogState.EXPLORED:
+					has_explored_neighbor = true
 	if has_visible_neighbor:
-		return base_alpha * 0.5  # Softer edge
+		return base_alpha * 0.5  # Softer edge near visible areas
+	if state == FogState.UNEXPLORED and has_explored_neighbor:
+		return base_alpha * 0.8  # Slight gradient between unexplored and explored
 	return base_alpha
 
 func _draw() -> void:
@@ -137,4 +140,10 @@ func _draw() -> void:
 			var world_x: float = (gx - _offset) * CELL_SIZE
 			var world_y: float = (gy - _offset) * CELL_SIZE
 			var alpha: float = _get_cell_alpha(gx, gy)
-			draw_rect(Rect2(world_x, world_y, CELL_SIZE, CELL_SIZE), Color(0.0, 0.0, 0.0, alpha))
+			var fog_color: Color
+			if state == FogState.EXPLORED:
+				# Desaturated dark overlay — terrain visible but greyed out
+				fog_color = Color(0.04, 0.04, 0.08, alpha)
+			else:
+				fog_color = Color(0.0, 0.0, 0.0, alpha)
+			draw_rect(Rect2(world_x, world_y, CELL_SIZE, CELL_SIZE), fog_color)
