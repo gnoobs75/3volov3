@@ -224,6 +224,24 @@ func _on_draw() -> void:
 				var line_color: Color = Color(UIConstants.STAT_GREEN.r, UIConstants.STAT_GREEN.g, UIConstants.STAT_GREEN.b, 0.8 * stat_fade)
 				_draw_control.draw_line(p0, p1, line_color, 1.5, true)
 
+	# Match history summary (above continue button)
+	if stat_fade > 0.3:
+		var rts_stats: Dictionary = GameManager.get_rts_stats()
+		var wins: int = rts_stats.get("total_wins", 0)
+		var losses: int = rts_stats.get("total_losses", 0)
+		var history_text: String = "Match History: %d W / %d L" % [wins, losses]
+		var best: float = rts_stats.get("best_time", 0.0)
+		if best > 0.0:
+			var bm: int = int(best) / 60
+			var bs: int = int(best) % 60
+			history_text += "  |  Best: %02d:%02d" % [bm, bs]
+		var ht_size: Vector2 = mono.get_string_size(history_text, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_CAPTION)
+		var ht_x: float = panel_x + (panel_w - ht_size.x) * 0.5
+		var ht_y: float = panel_y + panel_h - 80.0
+		_draw_control.draw_string(mono, Vector2(ht_x, ht_y), history_text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION,
+			Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.7 * stat_fade))
+
 	# Continue button
 	var btn_rect: Rect2 = _get_continue_rect(vp)
 	var btn_bg: Color = Color(0.12, 0.26, 0.42, 0.95) if _continue_hovered else Color(0.08, 0.14, 0.26, 0.9)

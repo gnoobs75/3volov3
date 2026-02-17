@@ -260,9 +260,10 @@ func _ready() -> void:
 		add_child(ai)
 		_ai_directors.append(ai)
 
-	# Pass tech tree to AI directors
+	# Pass tech tree to AI directors and connect taunt signals
 	for ai_ref in _ai_directors:
 		ai_ref.set_tech_tree(_tech_tree)
+		ai_ref.ai_taunt.connect(_on_ai_taunt)
 
 	# 12. Set AI grace period if tutorial is active
 	if _tutorial and not _spectator_mode:
@@ -389,13 +390,24 @@ func set_ai_difficulty(diff: int) -> void:
 
 # === BUILDING PLACEMENT ===
 
-func place_building(building_type: int, pos: Vector2) -> void:
+func place_building(building_type: int, pos: Vector2, p_rotation: float = -1.0) -> void:
 	## Place a player building (faction 0)
 	var cost: Dictionary = BuildingStats.get_cost(building_type)
 	if not _resource_manager.spend(0, cost.get("biomass", 0), cost.get("genes", 0)):
 		return
+	# Grab rotation from build ghost if not explicitly provided
+	var rot: float = p_rotation
+	if rot < 0.0:
+		# Check for active build ghost to read rotation
+		for child in get_children():
+			if child.has_method("get_rotation_angle"):
+				rot = child.get_rotation_angle()
+				break
+		if rot < 0.0:
+			rot = 0.0
 	var template: CreatureTemplate = _faction_manager.get_template(0)
 	var building: Node2D = _create_building(0, building_type, pos, template, false)
+	building.build_rotation = rot
 	_victory_manager.stats_buildings_built += 1
 	# Send nearest selected worker to build
 	var workers: Array = _selection_manager.get_selected_workers()
@@ -513,6 +525,7 @@ func _on_faction_eliminated(fid: int, fname: String) -> void:
 
 func _on_game_won() -> void:
 	_game_over_shown = true
+	_record_match_result(true)
 	if _stats_screen and _stats_screen.has_method("show_stats"):
 		_stats_screen.show_stats("VICTORY", _victory_manager.get_stats_summary(), _victory_manager.get_game_time())
 	elif _overlay and _overlay.has_method("show_victory"):
@@ -520,10 +533,21 @@ func _on_game_won() -> void:
 
 func _on_game_lost() -> void:
 	_game_over_shown = true
+	_record_match_result(false)
 	if _stats_screen and _stats_screen.has_method("show_stats"):
 		_stats_screen.show_stats("DEFEAT", _victory_manager.get_stats_summary(), _victory_manager.get_game_time())
 	elif _overlay and _overlay.has_method("show_defeat"):
 		_overlay.show_defeat(_victory_manager.get_game_time())
+
+func _record_match_result(won: bool) -> void:
+	var stats: Dictionary = _victory_manager.get_stats_summary()
+	GameManager.record_rts_match({
+		"won": won,
+		"difficulty": ai_difficulty,
+		"game_time": _victory_manager.get_game_time(),
+		"units_produced": stats.get("units_produced", 0),
+		"enemies_killed": stats.get("enemies_killed", 0),
+	})
 
 func _on_tutorial_completed() -> void:
 	GameManager.rts_tutorial_shown = true
@@ -550,6 +574,12 @@ func _on_map_event_started(event_type: int, event_pos: Vector2, _event_name: Str
 	# Minimap ping at event location
 	if _minimap and _minimap.has_method("add_attack_ping"):
 		_minimap.add_attack_ping(event_pos)
+
+func _on_ai_taunt(fid: int, message: String) -> void:
+	if _hud and _hud.has_method("show_event_announcement"):
+		var faction_name: String = FactionData.get_faction_name(fid)
+		var faction_color: Color = FactionData.get_faction_color(fid)
+		_hud.show_event_announcement("[%s] %s" % [faction_name, message], faction_color)
 
 func _on_threat_detected(threat_pos: Vector2, _threat_count: int) -> void:
 	AudioManager.play_threat_alert()

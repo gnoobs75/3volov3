@@ -1,6 +1,8 @@
 extends Node
 ## Per-faction AI controller. Manages build orders, unit production, and attack/defense decisions.
 
+signal ai_taunt(faction_id: int, message: String)
+
 enum AIPhase { OPENING, EXPANSION, AGGRESSION, DEFENSE, ENDGAME }
 enum Difficulty { NOOB, EASY, MEDIUM, HARD, SWEATY }
 
@@ -11,6 +13,62 @@ var _decision_timer: float = 0.0
 var _threat_map: RefCounted = null
 var _stage: Node = null
 var _time: float = 0.0
+
+# AI taunts
+var _taunt_timer: float = 0.0
+const TAUNT_INTERVAL: float = 120.0  # Every 2 minutes
+var _taunt_messages: Dictionary = {
+	AIPhase.OPENING: [
+		"We are awakening...",
+		"Your colony will be absorbed.",
+		"The substrate trembles beneath us.",
+		"Our cells divide. Our hunger grows.",
+		"We sense your weakness, little colony.",
+		"Soon we will spread across this dish.",
+		"Do you feel us stirring?",
+		"Every moment, we grow stronger.",
+	],
+	AIPhase.EXPANSION: [
+		"Our tendrils reach further.",
+		"We claim these nutrients as our own.",
+		"Your borders shrink while ours expand.",
+		"This petri dish belongs to us.",
+		"Build your walls. They will not hold.",
+		"We are everywhere. We are patient.",
+		"Your workers look so... fragile.",
+		"Our colony swells with purpose.",
+	],
+	AIPhase.AGGRESSION: [
+		"Your defenses crumble!",
+		"We feast on your workers!",
+		"Submit now and be consumed painlessly.",
+		"Our swarm descends upon you!",
+		"Flee, little colony. Run while you can.",
+		"We will dissolve your membranes!",
+		"Your structures weaken. We smell fear.",
+		"Resistance only delays the inevitable.",
+	],
+	AIPhase.DEFENSE: [
+		"You cannot break us.",
+		"We endure.",
+		"Strike all you want. We regenerate.",
+		"Our walls are living tissue. They heal.",
+		"A temporary setback. Nothing more.",
+		"You mistake our patience for weakness.",
+		"We have weathered worse than you.",
+		"Press your attack. We dare you.",
+	],
+	AIPhase.ENDGAME: [
+		"This ends now!",
+		"Submit or be consumed!",
+		"There is no escape from this dish.",
+		"Only one colony survives. It will be us.",
+		"Your final moments have arrived.",
+		"We are the apex organism!",
+		"Brace yourself for extinction.",
+		"The petri dish will remember only us.",
+	],
+}
 
 # AI state tracking
 var _workers_built: int = 0
@@ -124,6 +182,11 @@ func _process(delta: float) -> void:
 		if _rally_timer >= RALLY_TIMEOUT:
 			_rally_in_progress = false
 			_execute_attack()
+	# AI taunts
+	_taunt_timer += delta
+	if _taunt_timer >= TAUNT_INTERVAL:
+		_taunt_timer = 0.0
+		_emit_taunt()
 
 func _make_decision() -> void:
 	var cfg: Dictionary = _get_cfg()
@@ -581,3 +644,13 @@ func _get_idle_workers() -> Array:
 				if "state" in unit and unit.state == 0:  # IDLE
 					workers.append(unit)
 	return workers
+
+# === AI TAUNTS ===
+
+func _emit_taunt() -> void:
+	## Pick a random phase-appropriate taunt and emit it.
+	var messages: Array = _taunt_messages.get(_phase, [])
+	if messages.is_empty():
+		return
+	var msg: String = messages[randi() % messages.size()]
+	ai_taunt.emit(faction_id, msg)

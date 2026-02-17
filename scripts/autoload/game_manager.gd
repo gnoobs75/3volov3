@@ -80,6 +80,10 @@ var unlocked_traits: Array[String] = []  # trait IDs: "pulse_wave", "acid_spit",
 var trait_tiers: Dictionary = {}  # trait_id -> int (1-3)
 var equipped_trait: String = ""  # Currently selected trait for use
 
+# --- RTS Match History & Keybinds ---
+var rts_match_history: Array = []  # Last 10 match results
+var rts_keybinds: Dictionary = {}  # Empty = use defaults; future UI will populate
+
 var safe_zone_active: bool = true  # No enemies until player collects a few items
 const MAX_VIAL: int = 10
 const SAFE_ZONE_THRESHOLD: int = 3  # Collections before enemies appear
@@ -122,6 +126,7 @@ func _ready() -> void:
 	_migrate_placements_if_needed()
 	_migrate_body_shape()
 	_migrate_eyes()
+	_load_rts_stats()
 
 func go_to_intro() -> void:
 	current_stage = Stage.INTRO
@@ -635,3 +640,72 @@ func reset_stats() -> void:
 		inventory[key] = []
 	# Keep: evolution level, mutations, sensory upgrades, gene_fragments,
 	# forged_mutations, mutation_upgrades, unlocked_traits, trait_tiers — all persist
+
+# --- RTS Match History & Stats Persistence ---
+
+func record_rts_match(result: Dictionary) -> void:
+	## Record a completed RTS match. Trims history to last 10 entries.
+	var entry: Dictionary = {
+		"won": result.get("won", false),
+		"difficulty": result.get("difficulty", 2),
+		"game_time": result.get("game_time", 0.0),
+		"units_produced": result.get("units_produced", 0),
+		"enemies_killed": result.get("enemies_killed", 0),
+		"date": Time.get_datetime_string_from_system(),
+	}
+	rts_match_history.append(entry)
+	if rts_match_history.size() > 10:
+		rts_match_history = rts_match_history.slice(rts_match_history.size() - 10)
+	_save_rts_stats()
+
+func get_rts_stats() -> Dictionary:
+	## Aggregate stats across all recorded matches.
+	var total_wins: int = 0
+	var total_losses: int = 0
+	var best_time: float = INF
+	var total_kills: int = 0
+	for match_entry in rts_match_history:
+		if match_entry.get("won", false):
+			total_wins += 1
+			var gt: float = match_entry.get("game_time", INF)
+			if gt < best_time:
+				best_time = gt
+		else:
+			total_losses += 1
+		total_kills += match_entry.get("enemies_killed", 0)
+	if best_time == INF:
+		best_time = 0.0
+	return {
+		"total_wins": total_wins,
+		"total_losses": total_losses,
+		"best_time": best_time,
+		"total_kills": total_kills,
+		"matches": rts_match_history.duplicate(),
+	}
+
+func get_keybind(action: String, default_key: int) -> int:
+	## Stub: returns custom keybind or default. Infrastructure for future keybind UI.
+	return rts_keybinds.get(action, default_key)
+
+func _save_rts_stats() -> void:
+	var data: Dictionary = {
+		"match_history": rts_match_history,
+		"keybinds": rts_keybinds,
+	}
+	var file := FileAccess.open("user://rts_stats.json", FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(data))
+		file.close()
+
+func _load_rts_stats() -> void:
+	if not FileAccess.file_exists("user://rts_stats.json"):
+		return
+	var file := FileAccess.open("user://rts_stats.json", FileAccess.READ)
+	if not file:
+		return
+	var text: String = file.get_as_text()
+	file.close()
+	var parsed = JSON.parse_string(text)
+	if parsed is Dictionary:
+		rts_match_history = parsed.get("match_history", [])
+		rts_keybinds = parsed.get("keybinds", {})
