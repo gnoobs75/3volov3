@@ -11,6 +11,9 @@ var _build_ghost: Node2D = null
 var _drag_rect_visible: bool = false
 var _drag_rect: Rect2 = Rect2()
 
+# Camera bookmarks (Ctrl+F5..F8 to save, F5..F8 to recall)
+var _camera_bookmarks: Dictionary = {}  # KEY_F5..F8 -> Vector2
+
 # Formation notification
 var _formation_notification: String = ""
 var _formation_notify_timer: float = 0.0
@@ -74,6 +77,12 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 			else:
 				# Single click select
 				_try_select_at_mouse(event.shift_pressed)
+
+	# Scroll wheel during build mode — rotate build ghost
+	elif event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		if _build_ghost and is_instance_valid(_build_ghost) and _build_ghost.has_method("rotate_ghost"):
+			_build_ghost.rotate_ghost()
+			return
 
 	elif event.button_index == MOUSE_BUTTON_RIGHT:
 		if event.pressed:
@@ -367,6 +376,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 
+		# Ctrl+Shift+A — select ALL player units (including workers)
+		if event.keycode == KEY_A and event.ctrl_pressed and event.shift_pressed:
+			_selection_mgr.select_all_on_screen(_camera)
+			get_viewport().set_input_as_handled()
+			return
+
 		# Ctrl+A — select all military (non-worker) units
 		if event.keycode == KEY_A and event.ctrl_pressed:
 			_selection_mgr.select_all_military()
@@ -408,13 +423,30 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 
+		# Camera bookmarks: Ctrl+F5..F8 save, F5..F8 recall
+		var bookmark_keys: Array = [KEY_F5, KEY_F6, KEY_F7, KEY_F8]
+		for bk in range(bookmark_keys.size()):
+			if event.keycode == bookmark_keys[bk]:
+				if event.ctrl_pressed:
+					# Save current camera position as bookmark
+					if _camera:
+						_camera_bookmarks[bookmark_keys[bk]] = _camera.global_position
+					get_viewport().set_input_as_handled()
+					return
+				else:
+					# Recall saved bookmark
+					if bookmark_keys[bk] in _camera_bookmarks and _camera and _camera.has_method("focus_position"):
+						_camera.focus_position(_camera_bookmarks[bookmark_keys[bk]])
+					get_viewport().set_input_as_handled()
+					return
+
 		# Building hotkeys (Q/W/E/R/T/Y) — only when build menu is contextually valid
 		# Skip in spectator mode
 		if _stage and _stage.has_method("is_spectator_mode") and _stage.is_spectator_mode():
 			return
 		var build_keys: Array = [KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T, KEY_Y]
 		for bi in range(build_keys.size()):
-			if event.keycode == build_keys[bi]:
+			if event.keycode == build_keys[bi] and not event.ctrl_pressed:
 				var bt: int = [BuildingStats.BuildingType.SPAWNING_POOL, BuildingStats.BuildingType.EVOLUTION_CHAMBER, BuildingStats.BuildingType.MEMBRANE_TOWER, BuildingStats.BuildingType.BIO_WALL, BuildingStats.BuildingType.NUTRIENT_PROCESSOR, BuildingStats.BuildingType.SUPPLY_DEPOT][bi]
 				enter_build_mode(bt)
 				get_viewport().set_input_as_handled()
@@ -429,6 +461,41 @@ func _unhandled_input(event: InputEvent) -> void:
 				var new_formation: int = _command_sys.cycle_formation()
 				_formation_notification = "Formation: %s" % RtsFormation.get_formation_name(new_formation)
 				_formation_notify_timer = FORMATION_NOTIFY_DURATION
+			get_viewport().set_input_as_handled()
+			return
+
+		# G key — cycle unit stance (Aggressive=0 → Defensive=1 → Passive=2)
+		if event.keycode == KEY_G:
+			for unit in _selection_mgr.selected_units:
+				if is_instance_valid(unit) and "stance" in unit:
+					unit.stance = (unit.stance + 1) % 3
+			get_viewport().set_input_as_handled()
+			return
+
+		# Ctrl+R or Backspace — retreat selected units
+		if event.keycode == KEY_BACKSPACE or (event.keycode == KEY_R and event.ctrl_pressed):
+			if _stage and _stage.has_method("is_spectator_mode") and _stage.is_spectator_mode():
+				return
+			if _command_sys.has_method("issue_retreat"):
+				_command_sys.issue_retreat(_selection_mgr.selected_units)
+			else:
+				# Fallback: set each unit to FLEE state (7)
+				for unit in _selection_mgr.selected_units:
+					if is_instance_valid(unit) and "state" in unit:
+						unit.state = 7  # FLEE
+			get_viewport().set_input_as_handled()
+			return
+
+		# Delete — salvage selected building
+		if event.keycode == KEY_DELETE:
+			if _stage and _stage.has_method("is_spectator_mode") and _stage.is_spectator_mode():
+				return
+			if _selection_mgr.selected_units.size() == 1:
+				var sel: Node = _selection_mgr.selected_units[0]
+				if is_instance_valid(sel) and sel.is_in_group("rts_buildings"):
+					if sel.has_method("salvage"):
+						sel.salvage()
+						_selection_mgr.deselect_all()
 			get_viewport().set_input_as_handled()
 			return
 
