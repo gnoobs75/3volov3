@@ -1,6 +1,7 @@
 extends Node2D
 ## Large "gold mine" harvest zone — dead titan body.
 ## Provides both biomass and gene fragments. Max 4 simultaneous workers.
+## Also gives a one-shot gene bonus when first harvested by any unit.
 
 signal depleted(node: Node2D)
 
@@ -13,11 +14,16 @@ var current_workers: int = 0
 var _time: float = 0.0
 var _bone_angles: Array[float] = []
 
+# One-shot gene reward for first harvester
+var _gene_reward: int = 25
+var _harvested: bool = false
+
 # Tendril state
 var _tendril_phases: Array[float] = []
 const NUM_TENDRILS: int = 4
 
 func _ready() -> void:
+	add_to_group("harvestable")
 	# Generate bone/rib decoration angles
 	for i in range(6):
 		_bone_angles.append(TAU * float(i) / 6.0 + randf_range(-0.2, 0.2))
@@ -58,6 +64,17 @@ func harvest(amount: int) -> Dictionary:
 	queue_redraw()
 	return {"biomass": bio_actual, "genes": gene_actual}
 
+func harvest_gene_reward() -> int:
+	## One-shot gene bonus — returns gene_reward on first call, 0 thereafter.
+	if _harvested:
+		return 0
+	_harvested = true
+	queue_redraw()
+	return _gene_reward
+
+func is_gene_harvested() -> bool:
+	return _harvested
+
 func is_depleted() -> bool:
 	return biomass_remaining <= 0 and genes_remaining <= 0
 
@@ -80,21 +97,25 @@ func _draw() -> void:
 	if not _is_on_screen():
 		return
 	var fill: float = float(biomass_remaining + genes_remaining) / float(max_biomass + max_genes)
+
+	# Desaturation/dimming multiplier when gene reward has been harvested
+	var dim: float = 0.5 if _harvested else 1.0
+
 	if fill <= 0:
 		# Draw depleted husk
-		draw_circle(Vector2.ZERO, 30.0, Color(0.1, 0.08, 0.06, 0.3))
+		draw_circle(Vector2.ZERO, 30.0, Color(0.1, 0.08, 0.06, 0.3 * dim))
 		return
 
 	# Resource aura ring — shrinks as resources deplete
 	var aura_radius: float = 90.0 * fill + 20.0
 	var aura_pulse: float = 0.5 + 0.5 * sin(_time * 0.8)
-	var aura_alpha: float = (0.04 + 0.04 * aura_pulse) * fill
+	var aura_alpha: float = (0.04 + 0.04 * aura_pulse) * fill * dim
 	draw_arc(Vector2.ZERO, aura_radius, 0, TAU, 48, Color(0.6, 0.35, 0.1, aura_alpha), 2.5)
 	draw_arc(Vector2.ZERO, aura_radius + 4.0, 0, TAU, 48, Color(0.5, 0.3, 0.1, aura_alpha * 0.4), 1.0)
 
 	# Large dramatic pulsing glow
 	var glow_pulse: float = 1.0 + 0.1 * sin(_time * 1.2)
-	var glow_alpha: float = 0.06 + 0.06 * sin(_time * 0.9)
+	var glow_alpha: float = (0.06 + 0.06 * sin(_time * 0.9)) * dim
 	draw_circle(Vector2.ZERO, 80.0 * glow_pulse, Color(0.6, 0.35, 0.15, glow_alpha * fill))
 	draw_circle(Vector2.ZERO, 55.0 * glow_pulse, Color(0.5, 0.3, 0.1, glow_alpha * 0.7 * fill))
 
@@ -113,13 +134,13 @@ func _draw() -> void:
 			# Perpendicular displacement for organic wave
 			var perp: Vector2 = Vector2(-sin(seg_angle), cos(seg_angle))
 			seg_pt += perp * wave
-			var seg_alpha: float = (0.3 - seg_t * 0.2) * fill
+			var seg_alpha: float = (0.3 - seg_t * 0.2) * fill * dim
 			var seg_width: float = (2.5 - seg_t * 1.5) * (0.5 + fill * 0.5)
 			draw_line(prev_pt, seg_pt, Color(0.45, 0.25, 0.12, seg_alpha), maxf(seg_width, 0.5))
 			prev_pt = seg_pt
 
 	# Outer glow (original)
-	draw_circle(Vector2.ZERO, 70.0, Color(0.5, 0.3, 0.1, 0.04))
+	draw_circle(Vector2.ZERO, 70.0, Color(0.5, 0.3, 0.1, 0.04 * dim))
 
 	# Main body (irregular blob)
 	var pts := PackedVector2Array()
@@ -128,13 +149,14 @@ func _draw() -> void:
 		var r: float = 35.0 + sin(angle * 3.0 + _time * 0.2) * 8.0 + sin(angle * 5.0) * 5.0
 		r *= (0.5 + fill * 0.5)
 		pts.append(Vector2(cos(angle) * r, sin(angle) * r))
-	draw_colored_polygon(pts, Color(0.35, 0.2, 0.1, 0.6 + fill * 0.4))
+	var body_alpha: float = (0.6 + fill * 0.4) * dim
+	draw_colored_polygon(pts, Color(0.35, 0.2, 0.1, body_alpha))
 
 	# Bone/rib structures
 	for ba in _bone_angles:
 		var start: Vector2 = Vector2(cos(ba), sin(ba)) * 10.0
 		var end: Vector2 = Vector2(cos(ba), sin(ba)) * (25.0 + fill * 10.0)
-		draw_line(start, end, Color(0.7, 0.65, 0.5, 0.5 * fill), 2.0)
+		draw_line(start, end, Color(0.7, 0.65, 0.5, 0.5 * fill * dim), 2.0)
 
 	# Gene fragment sparkles
 	if genes_remaining > 0:
@@ -142,10 +164,28 @@ func _draw() -> void:
 		for i in range(3):
 			var angle: float = _time * 0.5 + TAU * float(i) / 3.0
 			var sp: Vector2 = Vector2(cos(angle) * 15.0, sin(angle) * 15.0)
-			draw_circle(sp, 2.5, Color(0.8, 0.4, 1.0, 0.4 * gene_fill))
+			draw_circle(sp, 2.5, Color(0.8, 0.4, 1.0, 0.4 * gene_fill * dim))
+
+	# Gene reward icon — small double-helix indicator if not yet harvested
+	if not _harvested:
+		var icon_pulse: float = 0.6 + 0.4 * sin(_time * 2.5)
+		var icon_pos: Vector2 = Vector2(0, -45.0)
+		# Double helix strands
+		for strand in range(2):
+			var strand_offset: float = float(strand) * PI
+			var helix_pts := PackedVector2Array()
+			for hi in range(8):
+				var ht: float = float(hi) / 7.0
+				var hx: float = sin(ht * TAU * 1.5 + _time * 2.0 + strand_offset) * 4.0
+				var hy: float = (ht - 0.5) * 14.0
+				helix_pts.append(icon_pos + Vector2(hx, hy))
+			for hi in range(helix_pts.size() - 1):
+				draw_line(helix_pts[hi], helix_pts[hi + 1], Color(0.8, 0.4, 1.0, icon_pulse * 0.7), 1.5)
+		# Glow behind icon
+		draw_circle(icon_pos, 6.0, Color(0.7, 0.3, 0.9, 0.12 * icon_pulse))
 
 	# Resource amount indicator
 	var font: Font = UIConstants.get_mono_font()
 	var label: String = "%d / %d" % [biomass_remaining, genes_remaining]
 	var ls: Vector2 = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_TINY)
-	draw_string(font, Vector2(-ls.x * 0.5, 50.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(0.7, 0.6, 0.4, 0.6))
+	draw_string(font, Vector2(-ls.x * 0.5, 50.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(0.7, 0.6, 0.4, 0.6 * dim))

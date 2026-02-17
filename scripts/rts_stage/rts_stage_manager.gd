@@ -25,6 +25,7 @@ var _tutorial: Control = null
 var _contextual_tips: Control = null
 var _damage_numbers: Node2D = null
 var _production_tab: Control = null
+var _map_events: Node = null
 
 var _time: float = 0.0
 var _game_started: bool = false
@@ -164,6 +165,12 @@ func _ready() -> void:
 	_damage_numbers.name = "DamageNumbers"
 	add_child(_damage_numbers)
 
+	# Map events system
+	_map_events = preload("res://scripts/rts_stage/rts_map_events.gd").new()
+	_map_events.name = "MapEvents"
+	add_child(_map_events)
+	_map_events.setup(self)
+
 	# 7. Initialize systems
 	_faction_manager.setup_factions()
 	_resource_manager.setup(4)
@@ -280,6 +287,9 @@ func get_combat_system() -> Node:
 
 func get_input_handler() -> Control:
 	return _input_handler
+
+func get_map_events() -> Node:
+	return _map_events
 
 func toggle_intel_overlay() -> void:
 	if _intel_overlay and _intel_overlay.has_method("toggle"):

@@ -1,6 +1,7 @@
 extends CharacterBody2D
 ## Neutral hostile creature — patrols a small area and attacks any faction that comes near.
 ## Drops biomass on death. Used for NPC danger pockets across the map.
+## Supports roaming predator mode (waypoint patrol) and camp guard mode (tethered defense).
 
 signal died(unit: Node2D)
 
@@ -33,12 +34,23 @@ var _attack_target: Node2D = null
 var _attack_timer: float = 0.0
 var _leash_range: float = 400.0  # Max distance from home before returning
 
+# Roaming predator mode
+var _is_roaming: bool = false
+var _patrol_waypoints: Array = []
+var _current_waypoint: int = 0
+var _xp_reward: int = 1
+
+# Camp guard mode
+var _is_camp_guard: bool = false
+var _guard_position: Vector2 = Vector2.ZERO
+
 # Visual
 var _time: float = 0.0
 var _cell_radius: float = 10.0
 var _hurt_flash: float = 0.0
 var _body_color: Color = Color(0.7, 0.2, 0.15)
 var _glow_color: Color = Color(0.9, 0.3, 0.1)
+var _visual_scale: float = 1.0  # For roaming predators (1.5x size)
 
 # Navigation
 var _nav_agent: NavigationAgent2D = null
@@ -86,6 +98,27 @@ func setup(p_type: int, p_home: Vector2) -> void:
 	if _nav_agent:
 		_nav_agent.max_speed = speed
 
+func setup_roaming(waypoints: Array, xp_reward: int = 1) -> void:
+	## Enable roaming predator mode with circular waypoint patrol path.
+	_is_roaming = true
+	_patrol_waypoints = waypoints
+	_current_waypoint = 0
+	_xp_reward = xp_reward
+	_leash_range = 99999.0  # Roamers don't leash
+	if _patrol_waypoints.size() > 0:
+		_patrol_target = _patrol_waypoints[0]
+		_home_pos = _patrol_waypoints[0]
+
+func setup_camp_guard(guard_pos: Vector2) -> void:
+	## Enable camp guard mode — stays within 100u of guard position.
+	_is_camp_guard = true
+	_guard_position = guard_pos
+	_home_pos = guard_pos
+	_leash_range = 200.0  # Chase up to 200u but return to guard pos
+
+func get_xp_reward() -> int:
+	return _xp_reward
+
 func _physics_process(delta: float) -> void:
 	_time += delta
 	_attack_timer = maxf(_attack_timer - delta, 0.0)
@@ -102,14 +135,42 @@ func _physics_process(delta: float) -> void:
 	queue_redraw()
 
 func _process_patrol(_delta: float) -> void:
-	# Move toward patrol target
-	if _nav_agent.is_navigation_finished() or global_position.distance_to(_patrol_target) < 15.0:
-		_patrol_target = _home_pos + Vector2(randf_range(-_patrol_radius, _patrol_radius), randf_range(-_patrol_radius, _patrol_radius))
-		_nav_agent.target_position = _patrol_target
-	else:
+	if _is_roaming and _patrol_waypoints.size() > 0:
+		# Roaming predator — advance through waypoints
+		var wp: Vector2 = _patrol_waypoints[_current_waypoint]
+		if global_position.distance_to(wp) < 30.0:
+			_current_waypoint = (_current_waypoint + 1) % _patrol_waypoints.size()
+			wp = _patrol_waypoints[_current_waypoint]
+		_nav_agent.target_position = wp
 		var next_pos: Vector2 = _nav_agent.get_next_path_position()
 		var dir: Vector2 = (next_pos - global_position).normalized()
-		_nav_agent.velocity = dir * speed * 0.5  # Patrol at half speed
+		_nav_agent.velocity = dir * speed * 0.6
+		# Update home position to current waypoint for leash reference
+		_home_pos = wp
+	elif _is_camp_guard:
+		# Camp guard — patrol near guard position, stay within 100u
+		if global_position.distance_to(_guard_position) > 100.0:
+			# Too far from post, return
+			_nav_agent.target_position = _guard_position
+			var next_pos: Vector2 = _nav_agent.get_next_path_position()
+			var dir: Vector2 = (next_pos - global_position).normalized()
+			_nav_agent.velocity = dir * speed * 0.7
+		elif _nav_agent.is_navigation_finished() or global_position.distance_to(_patrol_target) < 15.0:
+			_patrol_target = _guard_position + Vector2(randf_range(-80, 80), randf_range(-80, 80))
+			_nav_agent.target_position = _patrol_target
+		else:
+			var next_pos: Vector2 = _nav_agent.get_next_path_position()
+			var dir: Vector2 = (next_pos - global_position).normalized()
+			_nav_agent.velocity = dir * speed * 0.5
+	else:
+		# Standard patrol — random wandering near home
+		if _nav_agent.is_navigation_finished() or global_position.distance_to(_patrol_target) < 15.0:
+			_patrol_target = _home_pos + Vector2(randf_range(-_patrol_radius, _patrol_radius), randf_range(-_patrol_radius, _patrol_radius))
+			_nav_agent.target_position = _patrol_target
+		else:
+			var next_pos: Vector2 = _nav_agent.get_next_path_position()
+			var dir: Vector2 = (next_pos - global_position).normalized()
+			_nav_agent.velocity = dir * speed * 0.5  # Patrol at half speed
 	# Check for enemies
 	var nearest: Node2D = _find_nearest_enemy()
 	if nearest:
@@ -121,8 +182,9 @@ func _process_chase(_delta: float) -> void:
 		_attack_target = null
 		_ai_state = AIState.RETURN
 		return
-	# Leash check
-	if global_position.distance_to(_home_pos) > _leash_range:
+	# Leash check (camp guards leash to guard position)
+	var leash_pos: Vector2 = _guard_position if _is_camp_guard else _home_pos
+	if global_position.distance_to(leash_pos) > _leash_range:
 		_attack_target = null
 		_ai_state = AIState.RETURN
 		return
@@ -140,8 +202,9 @@ func _process_attack(_delta: float) -> void:
 		_attack_target = null
 		_ai_state = AIState.RETURN
 		return
-	# Leash check
-	if global_position.distance_to(_home_pos) > _leash_range:
+	# Leash check (camp guards leash to guard position)
+	var leash_pos_atk: Vector2 = _guard_position if _is_camp_guard else _home_pos
+	if global_position.distance_to(leash_pos_atk) > _leash_range:
 		_attack_target = null
 		_ai_state = AIState.RETURN
 		return
@@ -155,10 +218,11 @@ func _process_attack(_delta: float) -> void:
 		_attack_timer = attack_cooldown
 
 func _process_return(_delta: float) -> void:
-	if global_position.distance_to(_home_pos) < 30.0:
+	var return_pos: Vector2 = _guard_position if _is_camp_guard else _home_pos
+	if global_position.distance_to(return_pos) < 30.0:
 		_ai_state = AIState.PATROL
 		return
-	_nav_agent.target_position = _home_pos
+	_nav_agent.target_position = return_pos
 	var next_pos: Vector2 = _nav_agent.get_next_path_position()
 	var dir: Vector2 = (next_pos - global_position).normalized()
 	_nav_agent.velocity = dir * speed
@@ -259,6 +323,10 @@ func _draw() -> void:
 	if not _is_on_screen():
 		return
 
+	# Apply visual scale for roaming predators
+	if _visual_scale != 1.0:
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2(_visual_scale, _visual_scale))
+
 	# Hurt flash
 	if _hurt_flash > 0:
 		draw_circle(Vector2.ZERO, _cell_radius * 1.5, Color(1.0, 0.2, 0.2, _hurt_flash * 0.3))
@@ -267,6 +335,11 @@ func _draw() -> void:
 	if _ai_state == AIState.CHASE or _ai_state == AIState.ATTACK:
 		var pulse: float = 0.5 + 0.5 * sin(_time * 4.0)
 		draw_circle(Vector2.ZERO, _cell_radius * 2.0, Color(_glow_color.r, _glow_color.g, _glow_color.b, 0.08 + 0.06 * pulse))
+
+	# Roaming predator aura
+	if _is_roaming:
+		var roam_pulse: float = 0.5 + 0.5 * sin(_time * 1.5)
+		draw_arc(Vector2.ZERO, _cell_radius * 2.5, 0, TAU, 16, Color(_glow_color.r, _glow_color.g, _glow_color.b, 0.1 + 0.05 * roam_pulse), 1.5)
 
 	# Body
 	match creature_type:
@@ -277,11 +350,15 @@ func _draw() -> void:
 		CreatureType.SPITTER:
 			_draw_spitter()
 
+	# Reset transform before health bar so it stays at proper screen size
+	if _visual_scale != 1.0:
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
 	# Health bar
 	if health < max_health:
 		var bar_w: float = _cell_radius * 2.0
 		var bar_h: float = 2.0
-		var bar_y: float = -_cell_radius - 5.0
+		var bar_y: float = -_cell_radius * _visual_scale - 5.0
 		var fill: float = clampf(health / max_health, 0.0, 1.0)
 		draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w, bar_h), Color(0.1, 0.1, 0.1, 0.7))
 		draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w * fill, bar_h), Color(0.9, 0.2, 0.2))

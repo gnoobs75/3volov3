@@ -148,6 +148,9 @@ func spawn_resources() -> void:
 	# 5. NPC danger pockets — clusters of hostile creatures at strategic mid-map positions
 	_spawn_npc_pockets(rng)
 
+	# 5b. Roaming predators — large NPCs on circular patrol paths at 50% radius
+	_spawn_roaming_predators()
+
 	# 6. Terrain obstacles
 	for i in range(NUM_OBSTACLES):
 		var angle: float = TAU * float(i) / NUM_OBSTACLES + randi() % 100 * 0.01
@@ -160,7 +163,7 @@ func spawn_resources() -> void:
 
 func _spawn_npc_pockets(rng: RandomNumberGenerator) -> void:
 	## Spawns isolated pockets of neutral hostile creatures at strategic locations.
-	## Each pocket has 2-4 creatures guarding a resource-rich area.
+	## Each pocket has 2-4 camp guard creatures defending a resource-rich area.
 	var NpcCreature := preload("res://scripts/rts_stage/npc_creature.gd")
 	# Place pockets in a ring between spawns and center, and along inter-faction borders
 	for pi in range(NUM_NPC_POCKETS):
@@ -190,6 +193,7 @@ func _spawn_npc_pockets(rng: RandomNumberGenerator) -> void:
 			creature.global_position = pocket_center + offset
 			add_child(creature)
 			creature.setup(ctype, pocket_center)
+			creature.setup_camp_guard(pocket_center)
 			creature.died.connect(_on_npc_died)
 			npc_creatures.append(creature)
 		# Place a rich resource node at the pocket center as reward
@@ -197,6 +201,43 @@ func _spawn_npc_pockets(rng: RandomNumberGenerator) -> void:
 		reward.global_position = pocket_center
 		add_child(reward)
 		resource_nodes.append(reward)
+
+func _spawn_roaming_predators() -> void:
+	## Spawns 4 large roaming predators at 50% map radius with circular patrol paths.
+	## Each patrols a 4-waypoint circuit (90 degrees apart). XP reward = 3, visually 1.5x size.
+	var NpcCreature := preload("res://scripts/rts_stage/npc_creature.gd")
+	var roam_dist: float = MAP_RADIUS * 0.5
+	var patrol_orbit: float = 600.0  # Distance between waypoints from roamer center
+
+	for ri in range(4):
+		var base_angle: float = TAU * float(ri) / 4.0 + PI / 4.0  # Offset 45 deg from faction spawns
+		var roam_center: Vector2 = Vector2(cos(base_angle), sin(base_angle)) * roam_dist
+
+		# Build 4 waypoints in a square pattern around the roam center
+		var waypoints: Array = []
+		for wi in range(4):
+			var wp_angle: float = TAU * float(wi) / 4.0
+			var wp_pos: Vector2 = roam_center + Vector2(cos(wp_angle), sin(wp_angle)) * patrol_orbit
+			waypoints.append(wp_pos)
+
+		# Create large brute-type roaming predator
+		var creature: CharacterBody2D = NpcCreature.new()
+		creature.name = "RoamingPredator_%d" % ri
+		creature.global_position = roam_center
+		add_child(creature)
+		creature.setup(NpcCreature.CreatureType.BRUTE, roam_center)
+		creature.setup_roaming(waypoints, 3)
+		# Make visually larger (1.5x)
+		creature._visual_scale = 1.5
+		# Buff stats for roaming predator
+		creature.health *= 1.5
+		creature.max_health = creature.health
+		creature.damage *= 1.3
+		creature.detection_range = 200.0
+		creature.drop_biomass = 80
+		creature.drop_genes = 15
+		creature.died.connect(_on_npc_died)
+		npc_creatures.append(creature)
 
 func _on_npc_died(_creature: Node2D) -> void:
 	npc_creatures.erase(_creature)
