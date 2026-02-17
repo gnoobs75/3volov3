@@ -77,6 +77,15 @@ func issue_ability(units: Array, target_pos: Vector2) -> void:
 			unit.use_ability(target_pos)
 	command_issued.emit("ability", target_pos)
 
+func issue_repair(units: Array, building: Node2D) -> void:
+	for unit in units:
+		if is_instance_valid(unit) and unit.has_method("command_repair"):
+			if "unit_type" in unit and unit.unit_type == UnitStats.UnitType.WORKER:
+				unit.command_repair(building)
+	AudioManager.play_rts_command()
+	if is_instance_valid(building):
+		command_issued.emit("repair", building.global_position)
+
 func issue_set_rally_point(building: Node2D, pos: Vector2) -> void:
 	if is_instance_valid(building) and building.has_method("set_rally_point"):
 		building.set_rally_point(pos)
@@ -149,7 +158,12 @@ func issue_move_formation(units: Array, target_pos: Vector2) -> void:
 		if is_instance_valid(units[i]) and units[i].has_method("command_move"):
 			if i < positions.size():
 				units[i].command_move(positions[i])
+				# Store formation slot for hold-formation-while-fighting
+				units[i]._formation_slot = positions[i]
+				units[i]._has_formation_slot = true
 			else:
 				units[i].command_move(target_pos)
+				units[i]._formation_slot = target_pos
+				units[i]._has_formation_slot = true
 	AudioManager.play_rts_command()
 	command_issued.emit("move", target_pos)

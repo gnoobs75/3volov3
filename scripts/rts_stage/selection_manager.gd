@@ -9,6 +9,7 @@ var _drag_start: Vector2 = Vector2.ZERO
 var _is_dragging: bool = false
 var _drag_rect: Rect2 = Rect2()
 var _idle_worker_index: int = 0
+var _idle_military_index: int = 0
 
 const DRAG_THRESHOLD: float = 8.0
 
@@ -21,6 +22,8 @@ func select_unit(unit: Node2D, add_to_selection: bool = false) -> void:
 			unit.is_selected = true
 	selection_changed.emit(selected_units)
 	AudioManager.play_rts_select()
+	if "unit_type" in unit and "faction_id" in unit and unit.faction_id == 0:
+		AudioManager.play_rts_unit_voice(unit.unit_type, "select")
 
 func select_units(units: Array) -> void:
 	_deselect_all()
@@ -109,6 +112,29 @@ func recall_control_group(group_num: int) -> void:
 		return
 	select_units(group)
 
+func add_to_control_group(group_num: int) -> void:
+	## Adds current selection to existing control group (union, no duplicates).
+	if selected_units.is_empty():
+		return
+	var existing: Array = _control_groups.get(group_num, [])
+	for unit in selected_units:
+		if is_instance_valid(unit) and unit not in existing:
+			existing.append(unit)
+	_control_groups[group_num] = existing
+
+func steal_control_group(group_num: int) -> void:
+	## Sets group to current selection and removes these units from ALL other groups.
+	if selected_units.is_empty():
+		return
+	_control_groups[group_num] = selected_units.duplicate()
+	# Remove these units from all other control groups
+	for key in _control_groups:
+		if key == group_num:
+			continue
+		var group: Array = _control_groups[key]
+		for unit in selected_units:
+			group.erase(unit)
+
 func get_control_group(group_num: int) -> Array:
 	return _control_groups.get(group_num, [])
 
@@ -188,6 +214,60 @@ func find_next_idle_worker() -> Node2D:
 	var result: Node2D = idle_workers[_idle_worker_index]
 	_idle_worker_index = (_idle_worker_index + 1) % idle_workers.size()
 	return result
+
+func find_next_idle_military() -> Node2D:
+	## Returns the next idle military unit (cycles through them), or null if none.
+	var idle_military: Array = []
+	for unit in get_tree().get_nodes_in_group("rts_units"):
+		if not is_instance_valid(unit):
+			continue
+		if "faction_id" in unit and unit.faction_id != 0:
+			continue
+		if "unit_type" in unit and unit.unit_type == UnitStats.UnitType.WORKER:
+			continue
+		if "state" in unit and unit.state == 0:  # IDLE=0
+			idle_military.append(unit)
+	if idle_military.is_empty():
+		return null
+	_idle_military_index = _idle_military_index % idle_military.size()
+	var result: Node2D = idle_military[_idle_military_index]
+	_idle_military_index = (_idle_military_index + 1) % idle_military.size()
+	return result
+
+func select_idle_military() -> void:
+	## Finds the next idle military unit, selects it and returns it for camera centering.
+	var unit: Node2D = find_next_idle_military()
+	if unit:
+		select_unit(unit, false)
+
+func select_all_buildings_of_type(building_type_val: int, camera: Camera2D) -> void:
+	## Selects all visible player buildings of given type on screen.
+	var matching: Array = []
+	var canvas_xform: Transform2D = Transform2D.IDENTITY
+	var vp_rect: Rect2 = Rect2()
+	var use_screen_filter: bool = false
+	if camera:
+		canvas_xform = camera.get_canvas_transform()
+		var vp: Viewport = camera.get_viewport()
+		if vp:
+			vp_rect = Rect2(Vector2.ZERO, vp.get_visible_rect().size)
+			use_screen_filter = true
+
+	for building in get_tree().get_nodes_in_group("rts_buildings"):
+		if not is_instance_valid(building):
+			continue
+		if "faction_id" in building and building.faction_id != 0:
+			continue
+		if "building_type" in building and building.building_type != building_type_val:
+			continue
+		if use_screen_filter:
+			var screen_pos: Vector2 = canvas_xform * building.global_position
+			if not vp_rect.has_point(screen_pos):
+				continue
+		matching.append(building)
+
+	if not matching.is_empty():
+		select_units(matching)
 
 func select_all_on_screen(camera: Camera2D) -> void:
 	## Selects all player units visible on screen.

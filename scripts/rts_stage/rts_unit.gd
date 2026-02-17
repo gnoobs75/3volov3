@@ -4,7 +4,7 @@ extends CharacterBody2D
 signal died(unit: Node2D)
 signal reached_target(unit: Node2D)
 
-enum State { IDLE, MOVE, ATTACK, GATHER, BUILD, PATROL, RETURN_RESOURCES, FLEE, HOLD }
+enum State { IDLE, MOVE, ATTACK, GATHER, BUILD, PATROL, RETURN_RESOURCES, FLEE, HOLD, REPAIR }
 
 var faction_id: int = 0
 var unit_type: int = UnitStats.UnitType.WORKER
@@ -33,6 +33,7 @@ var _target_position: Vector2 = Vector2.ZERO
 var _attack_target: Node2D = null
 var _gather_target: Node2D = null
 var _build_target: Node2D = null
+var _repair_target: Node2D = null
 var _patrol_point_a: Vector2 = Vector2.ZERO
 var _patrol_point_b: Vector2 = Vector2.ZERO
 var _patrol_going_to_b: bool = true
@@ -49,6 +50,19 @@ const MAX_QUEUE: int = 8
 
 # Tech tree reference (set by stage manager)
 var _tech_tree: Node = null
+
+# Stutter-step kiting (ranged units)
+var _kite_timer: float = 0.0
+
+# Auto-cast abilities
+var _auto_cast: bool = false
+
+# Formation hold
+var _formation_slot: Vector2 = Vector2.ZERO
+var _has_formation_slot: bool = false
+
+# Worker auto-return to gather after building
+var _last_gather_target: Node2D = null
 
 # Abilities
 var _ability_cooldown_timer: float = 0.0
@@ -81,6 +95,7 @@ var _membrane_points: PackedVector2Array
 var _blink_timer: float = 0.0
 var _hurt_flash: float = 0.0
 var _charge_moved: bool = false  # For fighter charge bonus
+var _trail_positions: Array = []  # Ghost trail for speed-upgraded units
 
 # Navigation
 var _nav_agent: NavigationAgent2D = null
@@ -155,6 +170,7 @@ func _init_membrane() -> void:
 func _physics_process(delta: float) -> void:
 	_time += delta
 	_attack_timer = maxf(_attack_timer - delta, 0.0)
+	_kite_timer = maxf(_kite_timer - delta, 0.0)
 	_hurt_flash = maxf(_hurt_flash - delta * 3.0, 0.0)
 	_blink_timer -= delta
 	if _blink_timer < 0:
@@ -210,6 +226,16 @@ func _physics_process(delta: float) -> void:
 			_process_return_resources(delta)
 		State.HOLD:
 			_process_hold(delta)
+		State.REPAIR:
+			_process_repair(delta)
+
+	# Auto-cast abilities when enabled
+	_check_auto_cast()
+
+	# Update ghost trail positions for speed upgrade visual
+	_trail_positions.append(global_position)
+	if _trail_positions.size() > 3:
+		_trail_positions = _trail_positions.slice(-3)
 
 	queue_redraw()
 
@@ -236,9 +262,23 @@ func _process_move(delta: float) -> void:
 func _process_attack(delta: float) -> void:
 	if not is_instance_valid(_attack_target):
 		_attack_target = null
-		state = State.IDLE
+		# Formation hold: return to formation slot instead of going IDLE
+		if _has_formation_slot:
+			command_move(_formation_slot)
+			_has_formation_slot = true  # Re-set since command_move clears it
+		else:
+			state = State.IDLE
 		return
 	var dist: float = global_position.distance_to(_attack_target.global_position)
+	# Formation hold: don't chase target beyond 80u from formation slot
+	if _has_formation_slot and dist > attack_range:
+		var dist_from_slot: float = global_position.distance_to(_formation_slot)
+		if dist_from_slot > 80.0:
+			# Too far from formation slot, return to it
+			_attack_target = null
+			command_move(_formation_slot)
+			_has_formation_slot = true  # Re-set since command_move clears it
+			return
 	if dist > attack_range:
 		# Move toward target
 		_nav_agent.target_position = _attack_target.global_position
@@ -247,11 +287,24 @@ func _process_attack(delta: float) -> void:
 		_nav_agent.velocity = dir * speed
 		_charge_moved = true
 	else:
+		# Stutter-step kiting for ranged units
+		if unit_type == UnitStats.UnitType.RANGED and _kite_timer > 0 and state != State.HOLD:
+			if dist < attack_range * 0.7:
+				# Target is getting close, kite away at 60% speed
+				var away_dir: Vector2 = (global_position - _attack_target.global_position).normalized()
+				var kite_pos: Vector2 = global_position + away_dir * 60.0
+				_nav_agent.target_position = kite_pos
+				var next_pos: Vector2 = _nav_agent.get_next_path_position()
+				_nav_agent.velocity = (next_pos - global_position).normalized() * speed * 0.6
+				return
 		# In range — attack
 		velocity = Vector2.ZERO
 		if _attack_timer <= 0:
 			_perform_attack()
 			_attack_timer = attack_cooldown
+			# Trigger stutter-step for ranged units after attacking
+			if unit_type == UnitStats.UnitType.RANGED and state != State.HOLD:
+				_kite_timer = 0.4
 
 func _process_gather(delta: float) -> void:
 	if not is_instance_valid(_gather_target) or _gather_target.is_depleted():
@@ -294,7 +347,7 @@ func _process_gather(delta: float) -> void:
 func _process_build(delta: float) -> void:
 	if not is_instance_valid(_build_target):
 		_build_target = null
-		state = State.IDLE
+		_try_auto_return_gather()
 		return
 	var dist: float = global_position.distance_to(_build_target.global_position)
 	if dist > 40.0:
@@ -307,7 +360,8 @@ func _process_build(delta: float) -> void:
 		if _build_target.has_method("add_construction"):
 			_build_target.add_construction(build_speed * delta)
 			if _build_target.has_method("is_complete") and _build_target.is_complete():
-				state = State.IDLE
+				_build_target = null
+				_try_auto_return_gather()
 
 func _process_patrol(_delta: float) -> void:
 	var target: Vector2 = _patrol_point_b if _patrol_going_to_b else _patrol_point_a
@@ -353,6 +407,28 @@ func _process_return_resources(_delta: float) -> void:
 func _process_hold(_delta: float) -> void:
 	# Hold position but still attack enemies in range
 	_check_auto_retaliate()
+
+func _process_repair(delta: float) -> void:
+	if not is_instance_valid(_repair_target) or not _repair_target.is_in_group("rts_buildings"):
+		_repair_target = null
+		state = State.IDLE
+		return
+	# Check if target is fully healed
+	if "health" in _repair_target and "max_health" in _repair_target:
+		if _repair_target.health >= _repair_target.max_health:
+			_repair_target = null
+			state = State.IDLE
+			return
+	var dist: float = global_position.distance_to(_repair_target.global_position)
+	if dist > 40.0:
+		_nav_agent.target_position = _repair_target.global_position
+		var next_pos: Vector2 = _nav_agent.get_next_path_position()
+		var dir: Vector2 = (next_pos - global_position).normalized()
+		_nav_agent.velocity = dir * speed
+	else:
+		velocity = Vector2.ZERO
+		if _repair_target.has_method("take_repair"):
+			_repair_target.take_repair(15.0 * delta)
 
 func _on_velocity_computed(safe_velocity: Vector2) -> void:
 	velocity = safe_velocity
@@ -403,27 +479,41 @@ func command_move(target_pos: Vector2) -> void:
 	_target_position = target_pos
 	_nav_agent.target_position = target_pos
 	_charge_moved = false
+	_has_formation_slot = false
+	if faction_id == 0:
+		AudioManager.play_rts_unit_voice(unit_type, "ack")
 
 func command_attack(target: Node2D) -> void:
 	state = State.ATTACK
 	_attack_target = target
 	_charge_moved = false
+	if faction_id == 0:
+		AudioManager.play_rts_unit_voice(unit_type, "attack")
 
 func command_gather(target: Node2D) -> void:
 	if carry_capacity <= 0:
 		return
 	state = State.GATHER
 	_gather_target = target
+	_last_gather_target = target
 	_gather_timer = 0.0
 	_last_resource_group = _get_resource_group(target)
 	if target.has_method("add_worker"):
 		target.add_worker()
+	if faction_id == 0:
+		AudioManager.play_rts_unit_voice(unit_type, "ack")
 
 func command_build(target: Node2D) -> void:
 	if build_speed <= 0:
 		return
 	state = State.BUILD
 	_build_target = target
+
+func command_repair(target: Node2D) -> void:
+	if unit_type != UnitStats.UnitType.WORKER:
+		return
+	_repair_target = target
+	state = State.REPAIR
 
 func command_patrol(point_a: Vector2, point_b: Vector2) -> void:
 	state = State.PATROL
@@ -441,6 +531,8 @@ func command_stop() -> void:
 	_attack_target = null
 	_gather_target = null
 	_build_target = null
+	_repair_target = null
+	_has_formation_slot = false
 	clear_command_queue()
 
 # === COMMAND QUEUE (shift-queue) ===
@@ -489,6 +581,12 @@ func _advance_queue() -> void:
 			var pa: Vector2 = cmd.get("patrol_a", global_position)
 			var pb: Vector2 = cmd.get("target_pos", global_position)
 			command_patrol(pa, pb)
+		"repair":
+			var target: Node2D = cmd.get("target_node", null)
+			if is_instance_valid(target):
+				command_repair(target)
+			else:
+				_advance_queue()
 		"hold":
 			command_hold()
 		"stop":
@@ -752,6 +850,13 @@ func _draw() -> void:
 	# 15. Command queue waypoints (shift-queue visualization)
 	if is_selected and not _command_queue.is_empty():
 		_draw_command_queue()
+
+	# 16. Tech tree upgrade visuals
+	_draw_upgrade_indicators()
+
+	# 17. Patrol route visualization (selected patrolling units)
+	if state == State.PATROL and is_selected:
+		_draw_patrol_route()
 
 func _draw_command_queue() -> void:
 	## Draw faint lines from current position through queued waypoints, with numbered dots.
@@ -1085,6 +1190,79 @@ func apply_stun(duration: float) -> void:
 	_is_stunned = true
 	_stun_timer = maxf(_stun_timer, duration)  # Don't shorten existing stun
 	velocity = Vector2.ZERO
+
+func toggle_auto_cast() -> void:
+	## Toggle automatic ability usage on/off.
+	_auto_cast = not _auto_cast
+
+func _check_auto_cast() -> void:
+	## Auto-use abilities when conditions are met.
+	if not _auto_cast or _ability_cooldown_timer > 0 or _is_stunned or _ability_cooldown_max <= 0:
+		return
+	if state != State.ATTACK and state != State.IDLE and state != State.GATHER:
+		return
+	# Gather nearby enemies for condition checks
+	var nearby_enemies: Array = []
+	for unit in get_tree().get_nodes_in_group("rts_units"):
+		if not is_instance_valid(unit) or unit == self:
+			continue
+		if "faction_id" in unit and unit.faction_id == faction_id:
+			continue
+		nearby_enemies.append(unit)
+	match unit_type:
+		UnitStats.UnitType.FIGHTER:
+			# Use charge if nearest enemy > 150u away
+			var nearest_enemy: Node2D = null
+			var nearest_dist: float = INF
+			for enemy in nearby_enemies:
+				var dist: float = global_position.distance_to(enemy.global_position)
+				if dist < nearest_dist:
+					nearest_dist = dist
+					nearest_enemy = enemy
+			if is_instance_valid(nearest_enemy) and nearest_dist > 150.0 and nearest_dist < detection_range:
+				use_ability(nearest_enemy.global_position)
+		UnitStats.UnitType.DEFENDER:
+			# Use fortify if 3+ enemies within 100u
+			var count: int = 0
+			for enemy in nearby_enemies:
+				if global_position.distance_to(enemy.global_position) < 100.0:
+					count += 1
+			if count >= 3:
+				use_ability(global_position)
+		UnitStats.UnitType.SCOUT:
+			# Use spores if 2+ enemies within 80u
+			var count: int = 0
+			for enemy in nearby_enemies:
+				if global_position.distance_to(enemy.global_position) < 80.0:
+					count += 1
+			if count >= 2:
+				use_ability(global_position)
+		UnitStats.UnitType.RANGED:
+			# Use acid volley if 3+ enemies clustered within 60u of each other
+			for enemy in nearby_enemies:
+				if global_position.distance_to(enemy.global_position) > attack_range * 1.5:
+					continue
+				# Count enemies within 60u of this enemy
+				var cluster_count: int = 1
+				for other in nearby_enemies:
+					if other == enemy:
+						continue
+					if enemy.global_position.distance_to(other.global_position) < 60.0:
+						cluster_count += 1
+				if cluster_count >= 3:
+					use_ability(enemy.global_position)
+					return
+		UnitStats.UnitType.WORKER:
+			# Use burst gather if currently gathering
+			if state == State.GATHER and is_instance_valid(_gather_target):
+				use_ability(global_position)
+
+func _try_auto_return_gather() -> void:
+	## After building completes, auto-return to last gather target if valid.
+	if is_instance_valid(_last_gather_target) and _last_gather_target.has_method("is_depleted") and not _last_gather_target.is_depleted():
+		command_gather(_last_gather_target)
+	else:
+		state = State.IDLE
 
 # === VETERANCY ===
 

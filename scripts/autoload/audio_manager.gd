@@ -151,6 +151,12 @@ var _buf_veterancy_star: PackedFloat32Array
 var _buf_formation_click: PackedFloat32Array
 var _buf_queue_ping: PackedFloat32Array
 
+# RTS unit voice buffers (indexed by unit_type 0-4)
+var _buf_rts_voice_select: Array = []  # Array of PackedFloat32Array
+var _buf_rts_voice_ack: Array = []
+var _buf_rts_voice_attack: Array = []
+var _rts_voice_cooldown: float = 0.0
+
 # Cell stage ambient
 var _cell_ambient_player: AudioStreamPlayer = null
 
@@ -293,6 +299,15 @@ func _ready() -> void:
 	_buf_formation_click = SynthSounds.gen_formation_click()
 	_buf_queue_ping = SynthSounds.gen_queue_ping()
 
+	# Pre-generate RTS unit voice buffers (5 types x 3 categories)
+	_buf_rts_voice_select.resize(5)
+	_buf_rts_voice_ack.resize(5)
+	_buf_rts_voice_attack.resize(5)
+	for i in range(5):
+		_buf_rts_voice_select[i] = SynthSounds.gen_rts_unit_select(i)
+		_buf_rts_voice_ack[i] = SynthSounds.gen_rts_unit_acknowledge(i)
+		_buf_rts_voice_attack[i] = SynthSounds.gen_rts_unit_attack_cry(i)
+
 	# Setup music players for file-based music
 	_setup_music_players()
 
@@ -351,6 +366,8 @@ func _process(delta: float) -> void:
 		_player_voice_cooldown -= delta
 	if _creature_voice_cooldown > 0:
 		_creature_voice_cooldown -= delta
+	if _rts_voice_cooldown > 0:
+		_rts_voice_cooldown -= delta
 
 func _update_crossfade(delta: float) -> void:
 	if not _is_crossfading:
@@ -934,6 +951,19 @@ func play_formation_click() -> void:
 
 func play_queue_ping() -> void:
 	_play_buffer(_buf_queue_ping, -6.0)
+
+## RTS unit voice with cooldown to prevent audio spam
+func play_rts_unit_voice(unit_type: int, voice_type: String) -> void:
+	if _rts_voice_cooldown > 0.0:
+		return
+	var buf: PackedFloat32Array
+	match voice_type:
+		"select": buf = _buf_rts_voice_select[clampi(unit_type, 0, 4)]
+		"ack": buf = _buf_rts_voice_ack[clampi(unit_type, 0, 4)]
+		"attack": buf = _buf_rts_voice_attack[clampi(unit_type, 0, 4)]
+		_: return
+	_play_buffer(buf, -5.0)
+	_rts_voice_cooldown = 0.3
 
 # RTS sound generators (simple procedural)
 func _gen_rts_select() -> PackedFloat32Array:
