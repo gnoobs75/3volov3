@@ -249,8 +249,11 @@ func _ready() -> void:
 	# 10. Setup starting bases for all 4 factions
 	_setup_starting_bases()
 
-	# 11. Create AI directors for factions 1-3
-	for fid in [1, 2, 3]:
+	# 11. Create AI directors
+	var ai_factions: Array = [1, 2, 3]
+	if _spectator_mode:
+		ai_factions = [0, 1, 2, 3]  # All factions are AI in spectator mode
+	for fid in ai_factions:
 		var ai := preload("res://scripts/rts_stage/ai_director.gd").new()
 		ai.name = "AIDirector_%d" % fid
 		ai.setup(fid, self, ai_difficulty)
@@ -262,12 +265,19 @@ func _ready() -> void:
 		ai_ref.set_tech_tree(_tech_tree)
 
 	# 12. Set AI grace period if tutorial is active
-	if _tutorial:
+	if _tutorial and not _spectator_mode:
 		for ai in _ai_directors:
 			ai.set_grace_period(180.0)  # 3 minutes
 
-	# 13. Focus camera on player spawn
-	_camera.focus_position(_petri_dish.spawn_positions[0])
+	# 13. Focus camera on player spawn / setup spectator camera
+	if _spectator_mode:
+		_spectator = preload("res://scripts/rts_stage/rts_spectator.gd").new()
+		_spectator.name = "Spectator"
+		add_child(_spectator)
+		_spectator.setup(_camera)
+		_camera.focus_position(Vector2.ZERO)  # Start centered
+	else:
+		_camera.focus_position(_petri_dish.spawn_positions[0])
 
 	_game_started = true
 
@@ -356,6 +366,12 @@ func get_tech_tree() -> Node:
 
 func get_threat_detector() -> Node:
 	return _threat_detector
+
+func get_terrain_zones() -> Node2D:
+	return _terrain_zones
+
+func is_spectator_mode() -> bool:
+	return _spectator_mode
 
 func toggle_intel_overlay() -> void:
 	if _intel_overlay and _intel_overlay.has_method("toggle"):

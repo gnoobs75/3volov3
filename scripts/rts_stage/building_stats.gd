@@ -2,7 +2,7 @@ class_name BuildingStats
 ## Static building type definitions for the RTS stage.
 ## 5 building types with costs, stats, and functionality.
 
-enum BuildingType { SPAWNING_POOL, EVOLUTION_CHAMBER, MEMBRANE_TOWER, BIO_WALL, NUTRIENT_PROCESSOR }
+enum BuildingType { SPAWNING_POOL, EVOLUTION_CHAMBER, MEMBRANE_TOWER, BIO_WALL, NUTRIENT_PROCESSOR, SUPPLY_DEPOT }
 
 const BUILDING_DATA: Dictionary = {
 	BuildingType.SPAWNING_POOL: {
@@ -82,6 +82,22 @@ const BUILDING_DATA: Dictionary = {
 		"is_production": false,
 		"can_produce": [],
 		"supply_provided": 5,
+		"is_main_base": false,
+		"attack_range": 0.0,
+		"attack_damage": 0,
+	},
+	BuildingType.SUPPLY_DEPOT: {
+		"name": "Supply Depot",
+		"hp": 150,
+		"armor": 2,
+		"cost_biomass": 75,
+		"cost_genes": 0,
+		"build_time": 12.0,
+		"size_radius": 28.0,
+		"is_depot": false,
+		"is_production": false,
+		"can_produce": [],
+		"supply_provided": 10,
 		"is_main_base": false,
 		"attack_range": 0.0,
 		"attack_damage": 0,

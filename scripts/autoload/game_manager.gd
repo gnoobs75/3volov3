@@ -33,6 +33,7 @@ var sensory_level: int = 0
 var tutorial_shown: bool = false
 var rts_tutorial_shown: bool = false
 var initial_customization_done: bool = false
+var rts_spectator_mode: bool = false
 
 # Creature visual customization (persists across deaths)
 var creature_customization: Dictionary = {

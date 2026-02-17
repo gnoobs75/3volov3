@@ -375,6 +375,8 @@ func _try_produce_unit(unit_type: int, produced_from: Array = []) -> void:
 		return
 	var fm: Node = _stage.get_faction_manager()
 	if not fm.can_afford_supply(faction_id, unit_type):
+		# At supply cap — try building a Supply Depot
+		_try_build(BuildingStats.BuildingType.SUPPLY_DEPOT)
 		return
 	var cfg: Dictionary = _get_cfg()
 	# Find production building

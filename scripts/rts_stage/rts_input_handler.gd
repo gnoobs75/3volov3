@@ -174,6 +174,9 @@ func _try_select_at_mouse(add_to_selection: bool) -> void:
 		_selection_mgr.deselect_all()
 
 func _handle_right_click(shift_held: bool = false) -> void:
+	# Block commands in spectator mode
+	if _stage and _stage.has_method("is_spectator_mode") and _stage.is_spectator_mode():
+		return
 	if _selection_mgr.selected_units.is_empty():
 		return
 
@@ -406,6 +409,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 
 		# Building hotkeys (Q/W/E/R/T/Y) — only when build menu is contextually valid
+		# Skip in spectator mode
+		if _stage and _stage.has_method("is_spectator_mode") and _stage.is_spectator_mode():
+			return
 		var build_keys: Array = [KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T, KEY_Y]
 		for bi in range(build_keys.size()):
 			if event.keycode == build_keys[bi]:
