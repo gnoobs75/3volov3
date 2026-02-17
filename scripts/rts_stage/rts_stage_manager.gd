@@ -234,6 +234,7 @@ func _ready() -> void:
 
 	# Map event signals
 	_map_events.event_started.connect(_on_map_event_started)
+	_map_events.event_started_minimap.connect(_on_map_event_minimap)
 
 	# Threat detector signals
 	_threat_detector.threat_detected.connect(_on_threat_detected)
@@ -361,6 +362,9 @@ func get_input_handler() -> Control:
 
 func get_map_events() -> Node:
 	return _map_events
+
+func get_command_vfx() -> Node2D:
+	return _command_vfx
 
 func get_tech_tree() -> Node:
 	return _tech_tree
@@ -512,7 +516,7 @@ func _on_command_issued(command: String, target_pos: Vector2) -> void:
 	if _command_vfx:
 		match command:
 			"move": _command_vfx.add_move_indicator(target_pos)
-			"attack_move": _command_vfx.add_attack_indicator(target_pos)
+			"attack_move": _command_vfx.add_attack_move_ring(target_pos)
 			"gather": _command_vfx.add_gather_indicator(target_pos)
 	# Tutorial notifications
 	match command:
@@ -574,6 +578,10 @@ func _on_map_event_started(event_type: int, event_pos: Vector2, _event_name: Str
 	# Minimap ping at event location
 	if _minimap and _minimap.has_method("add_attack_ping"):
 		_minimap.add_attack_ping(event_pos)
+
+func _on_map_event_minimap(event_pos: Vector2, event_type: int, duration: float) -> void:
+	if _minimap and _minimap.has_method("add_event_indicator"):
+		_minimap.add_event_indicator(event_pos, event_type, duration)
 
 func _on_ai_taunt(fid: int, message: String) -> void:
 	if _hud and _hud.has_method("show_event_announcement"):

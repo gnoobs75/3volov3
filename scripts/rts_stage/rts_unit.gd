@@ -5,6 +5,7 @@ signal died(unit: Node2D)
 signal reached_target(unit: Node2D)
 
 enum State { IDLE, MOVE, ATTACK, GATHER, BUILD, PATROL, RETURN_RESOURCES, FLEE, HOLD, REPAIR }
+enum Stance { AGGRESSIVE, DEFENSIVE, PASSIVE }
 
 var faction_id: int = 0
 var unit_type: int = UnitStats.UnitType.WORKER
@@ -27,6 +28,9 @@ var carried_genes: int = 0
 var build_speed: float = 0.0
 var _last_resource_group: String = ""  # Track the group of the last gathered resource
 
+# Stance
+var stance: int = Stance.DEFENSIVE
+
 # State
 var state: State = State.IDLE
 var _target_position: Vector2 = Vector2.ZERO
@@ -39,6 +43,8 @@ var _patrol_point_b: Vector2 = Vector2.ZERO
 var _patrol_going_to_b: bool = true
 var _attack_timer: float = 0.0
 var _gather_timer: float = 0.0
+var _flee_timer: float = 0.0
+var _flee_recalc: float = 0.0
 
 # Selection
 var is_selected: bool = false
@@ -227,6 +233,8 @@ func _physics_process(delta: float) -> void:
 			_process_patrol(delta)
 		State.RETURN_RESOURCES:
 			_process_return_resources(delta)
+		State.FLEE:
+			_process_flee(delta)
 		State.HOLD:
 			_process_hold(delta)
 		State.REPAIR:
@@ -419,6 +427,47 @@ func _process_hold(_delta: float) -> void:
 	# Hold position but still attack enemies in range
 	_check_auto_retaliate()
 
+func _process_flee(delta: float) -> void:
+	_flee_timer += delta
+	_flee_recalc += delta
+	# After 3 seconds, stop fleeing
+	if _flee_timer >= 3.0:
+		state = State.IDLE
+		_flee_timer = 0.0
+		_flee_recalc = 0.0
+		velocity = Vector2.ZERO
+		return
+	# Find nearest enemy and flee away from it (recalculate every 0.5s)
+	if _flee_recalc >= 0.5 or _flee_recalc == delta:  # First frame or recalc interval
+		_flee_recalc = 0.0
+		var nearest_enemy: Node2D = null
+		var nearest_dist: float = INF
+		for unit in get_tree().get_nodes_in_group("rts_units"):
+			if not is_instance_valid(unit) or unit == self:
+				continue
+			if "faction_id" in unit and unit.faction_id == faction_id:
+				continue
+			var dist: float = global_position.distance_to(unit.global_position)
+			if dist < nearest_dist:
+				nearest_dist = dist
+				nearest_enemy = unit
+		if nearest_enemy == null or nearest_dist > 200.0:
+			# No enemies nearby, stop fleeing
+			state = State.IDLE
+			_flee_timer = 0.0
+			_flee_recalc = 0.0
+			velocity = Vector2.ZERO
+			return
+		# Flee away from nearest enemy at 130% speed
+		var flee_dir: Vector2 = (global_position - nearest_enemy.global_position).normalized()
+		var flee_pos: Vector2 = global_position + flee_dir * 150.0
+		_nav_agent.target_position = flee_pos
+	# Move along nav path at boosted speed
+	if not _nav_agent.is_navigation_finished():
+		var next_pos: Vector2 = _nav_agent.get_next_path_position()
+		var dir: Vector2 = (next_pos - global_position).normalized()
+		_nav_agent.velocity = dir * speed * 1.3
+
 func _process_repair(delta: float) -> void:
 	if not is_instance_valid(_repair_target) or not _repair_target.is_in_group("rts_buildings"):
 		_repair_target = null
@@ -536,6 +585,18 @@ func command_hold() -> void:
 	state = State.HOLD
 	velocity = Vector2.ZERO
 
+func command_flee() -> void:
+	state = State.FLEE
+	_flee_timer = 0.0
+	_flee_recalc = 0.0
+	velocity = Vector2.ZERO
+	_attack_target = null
+	_gather_target = null
+	_build_target = null
+	_repair_target = null
+	_has_formation_slot = false
+	clear_command_queue()
+
 func command_stop() -> void:
 	state = State.IDLE
 	velocity = Vector2.ZERO
@@ -570,6 +631,9 @@ func _advance_queue() -> void:
 		"move":
 			var pos: Vector2 = cmd.get("target_pos", global_position)
 			command_move(pos)
+		"attack_move":
+			var pos: Vector2 = cmd.get("target_pos", global_position)
+			command_move(pos)  # Units auto-retaliate enemies on the way
 		"attack":
 			var target: Node2D = cmd.get("target_node", null)
 			if is_instance_valid(target):
@@ -674,8 +738,8 @@ func take_damage(amount: float, _attacker: Node2D = null) -> void:
 		if is_instance_valid(_attacker) and _attacker.has_method("grant_xp"):
 			_attacker.grant_xp(1)
 		_die()
-	elif state == State.IDLE and is_instance_valid(_attacker):
-		# Auto-retaliate
+	elif state == State.IDLE and is_instance_valid(_attacker) and stance != Stance.PASSIVE:
+		# Auto-retaliate (not in passive stance)
 		command_attack(_attacker)
 
 func _count_nearby_allies(radius: float) -> int:
@@ -718,6 +782,9 @@ func _find_best_target(enemies: Array) -> Node2D:
 	return best
 
 func _check_auto_retaliate() -> void:
+	# Passive stance: never auto-attack or auto-retaliate
+	if stance == Stance.PASSIVE:
+		return
 	if state == State.ATTACK and is_instance_valid(_attack_target):
 		return
 	var enemies_in_range: Array = []
@@ -736,12 +803,21 @@ func _check_auto_retaliate() -> void:
 			taunting_defender = unit
 		if dist < detection_range:
 			enemies_in_range.append(unit)
+	# Defensive stance: only retaliate (current behavior) — don't actively seek from IDLE
+	# Aggressive stance: actively seek targets even when IDLE
+	if stance == Stance.DEFENSIVE and state == State.IDLE and enemies_in_range.is_empty():
+		return
 	if taunting_defender:
 		command_attack(taunting_defender)
 	elif not enemies_in_range.is_empty():
 		var best: Node2D = _find_best_target(enemies_in_range)
 		if best:
-			command_attack(best)
+			# Defensive: chase limit 150u from original position
+			if stance == Stance.DEFENSIVE:
+				command_attack(best)
+			else:
+				# Aggressive: chase indefinitely
+				command_attack(best)
 
 func _navigate_to_nearest_depot() -> void:
 	var nearest_depot: Node2D = null
@@ -871,6 +947,10 @@ func _draw() -> void:
 	# 17. Patrol route visualization (selected patrolling units)
 	if state == State.PATROL and is_selected:
 		_draw_patrol_route()
+
+	# 18. Stance indicator (only when selected)
+	if is_selected:
+		_draw_stance_indicator()
 
 func _draw_command_queue() -> void:
 	## Draw faint lines from current position through queued waypoints, with numbered dots.
@@ -1130,6 +1210,25 @@ func _draw_diamond(center: Vector2, size: float, color: Color) -> void:
 		center + Vector2(-size, 0),
 	])
 	draw_colored_polygon(pts, color)
+
+func _draw_stance_indicator() -> void:
+	## Draw a small stance letter in the bottom-right: A (red), D (yellow), P (grey).
+	var label: String = ""
+	var label_color: Color = Color.WHITE
+	match stance:
+		Stance.AGGRESSIVE:
+			label = "A"
+			label_color = Color(1.0, 0.3, 0.3, 0.9)
+		Stance.DEFENSIVE:
+			label = "D"
+			label_color = Color(1.0, 0.9, 0.2, 0.9)
+		Stance.PASSIVE:
+			label = "P"
+			label_color = Color(0.6, 0.6, 0.6, 0.9)
+	var stance_pos: Vector2 = Vector2(_cell_radius + 2.0, _cell_radius + 2.0)
+	var stance_font: Font = ThemeDB.fallback_font
+	if stance_font:
+		draw_string(stance_font, stance_pos, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, label_color)
 
 # === ABILITIES ===
 

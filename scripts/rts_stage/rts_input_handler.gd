@@ -296,22 +296,41 @@ func _handle_right_click(shift_held: bool = false) -> void:
 	# Default: move
 	if _command_sys.current_mode == _command_sys.CommandMode.ATTACK_MOVE:
 		if shift_held:
-			_queue_command_to_selected({"type": "move", "target_pos": world_pos})
+			_queue_command_to_selected({"type": "attack_move", "target_pos": world_pos}, true)
 		else:
 			_command_sys.issue_attack_move(_selection_mgr.selected_units, world_pos)
 			_command_sys.exit_special_mode()
 	else:
 		if shift_held:
-			_queue_command_to_selected({"type": "move", "target_pos": world_pos})
+			_queue_command_to_selected({"type": "move", "target_pos": world_pos}, false)
 		else:
 			_command_sys.issue_move(_selection_mgr.selected_units, world_pos)
 
-func _queue_command_to_selected(cmd: Dictionary) -> void:
+func _queue_command_to_selected(cmd: Dictionary, is_attack_move: bool = false) -> void:
 	## Queue a command to all selected units (shift-queue).
 	for unit in _selection_mgr.selected_units:
 		if is_instance_valid(unit) and unit.has_method("queue_command"):
 			unit.queue_command(cmd.duplicate())
 	AudioManager.play_rts_command()
+	# Update waypoint chain VFX
+	_update_waypoint_chains(is_attack_move)
+
+func _update_waypoint_chains(is_attack_move: bool) -> void:
+	## Build waypoint position arrays from unit command queues and send to VFX.
+	var vfx: Node2D = _stage.get_command_vfx() if _stage and _stage.has_method("get_command_vfx") else null
+	if not vfx:
+		return
+	for unit in _selection_mgr.selected_units:
+		if not is_instance_valid(unit) or not "_command_queue" in unit:
+			continue
+		var positions: Array = []
+		for cmd in unit._command_queue:
+			if cmd.has("target_pos"):
+				positions.append(cmd["target_pos"])
+			elif cmd.has("target_node") and is_instance_valid(cmd["target_node"]):
+				positions.append(cmd["target_node"].global_position)
+		if not positions.is_empty():
+			vfx.add_waypoint_chain(unit, positions, is_attack_move)
 
 func _try_place_building() -> void:
 	if not _build_ghost or not is_instance_valid(_build_ghost):

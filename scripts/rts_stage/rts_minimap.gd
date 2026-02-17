@@ -27,6 +27,9 @@ const MINIMAP_RADIUS: float = 85.0
 const MINIMAP_CENTER: Vector2 = Vector2(95, 0)  # Offset from bottom-left
 const MAP_RADIUS: float = 8000.0
 
+# Map event indicators: [{pos: Vector2, type: int, timer: float, duration: float}]
+var _active_events: Array = []
+
 # Reference to HUD for forwarding typed pings
 var _hud: Control = null
 
@@ -52,6 +55,12 @@ func add_player_ping(world_pos: Vector2, ping_type: int = 2) -> void:
 		_hud.add_map_ping(world_pos, ping_type)
 	AudioManager.play_map_ping()
 
+func add_event_indicator(world_pos: Vector2, event_type: int, duration: float) -> void:
+	## Add a map event indicator to the minimap.
+	_active_events.append({"pos": world_pos, "type": event_type, "timer": 0.0, "duration": duration})
+	if _active_events.size() > 5:
+		_active_events.pop_front()
+
 func _process(delta: float) -> void:
 	_time += delta
 	_alert_cooldown = maxf(_alert_cooldown - delta, 0.0)
@@ -68,6 +77,13 @@ func _process(delta: float) -> void:
 		_player_pings[i]["time"] += delta
 		if _player_pings[i]["time"] >= PLAYER_PING_LIFE:
 			_player_pings.remove_at(i)
+		i -= 1
+	# Update map event indicators
+	i = _active_events.size() - 1
+	while i >= 0:
+		_active_events[i]["timer"] += delta
+		if _active_events[i]["timer"] >= _active_events[i]["duration"]:
+			_active_events.remove_at(i)
 		i -= 1
 	queue_redraw()
 
@@ -214,6 +230,9 @@ func _draw() -> void:
 		if pt < 0.5:
 			draw_circle(mp, 2.0, Color(pc.r, pc.g, pc.b, ping_alpha))
 
+	# Map event indicators
+	_draw_event_indicators(center)
+
 	# Camera viewport rectangle (drawn last, on top)
 	_draw_camera_rect()
 
@@ -235,3 +254,55 @@ func _draw_camera_rect() -> void:
 	draw_line(tr, br, rect_color, 1.0)
 	draw_line(br, bl, rect_color, 1.0)
 	draw_line(bl, tl, rect_color, 1.0)
+
+func _draw_event_indicators(center: Vector2) -> void:
+	for evt in _active_events:
+		var mp: Vector2 = _world_to_minimap(evt["pos"])
+		if mp.distance_to(center) > MINIMAP_RADIUS:
+			continue
+		var t: float = evt["timer"]
+		var dur: float = evt["duration"]
+		var progress: float = clampf(t / dur, 0.0, 1.0)
+		# Fade out in last 20% of duration
+		var fade: float = 1.0 if progress < 0.8 else (1.0 - progress) / 0.2
+		var etype: int = evt["type"]
+		match etype:
+			0:  # NUTRIENT_BLOOM - green pulsing dot
+				var pulse: float = 0.5 + 0.5 * sin(t * 4.0)
+				var r: float = 2.5 + pulse * 1.5
+				draw_circle(mp, r, Color(0.2, 0.9, 0.4, fade * 0.8))
+				draw_circle(mp, r + 1.5, Color(0.2, 0.9, 0.4, fade * 0.25))
+			1:  # TOXIC_TIDE - red/purple expanding ring
+				var ring_r: float = 2.0 + progress * 8.0
+				draw_arc(mp, ring_r, 0, TAU, 12, Color(0.7, 0.2, 0.8, fade * 0.7), 1.5)
+				if progress < 0.5:
+					draw_circle(mp, 2.0, Color(0.7, 0.2, 0.8, fade * 0.5))
+			2:  # EVOLUTIONARY_SURGE - yellow star
+				_draw_star(mp, 3.5, 5, Color(1.0, 0.85, 0.2, fade * 0.8), t)
+			3:  # PETRI_QUAKE - orange flash
+				# Quick flash (quake is only 3s duration)
+				var flash: float = maxf(1.0 - progress * 2.0, 0.0)
+				if flash > 0.0:
+					draw_circle(mp, 4.0 + flash * 4.0, Color(0.9, 0.5, 0.1, flash * 0.6))
+				draw_circle(mp, 2.5, Color(0.9, 0.5, 0.1, fade * 0.5))
+			4:  # MIGRATION - moving white dots
+				var travel_dir: Vector2 = (-evt["pos"]).normalized()  # Moves to opposite side
+				var mm_dir: Vector2 = travel_dir * MINIMAP_RADIUS / MAP_RADIUS
+				for di in range(3):
+					var dot_progress: float = clampf(progress + float(di) * 0.08, 0.0, 1.0)
+					var offset: Vector2 = mm_dir * dot_progress * MAP_RADIUS * 1.8
+					var dot_mp: Vector2 = mp + offset
+					if dot_mp.distance_to(center) < MINIMAP_RADIUS:
+						draw_circle(dot_mp, 1.5, Color(0.9, 0.9, 1.0, fade * 0.7))
+
+func _draw_star(pos: Vector2, radius: float, points: int, color: Color, anim_time: float) -> void:
+	## Draw a simple star shape at pos.
+	var rot_offset: float = anim_time * 1.5
+	var inner_r: float = radius * 0.4
+	for i in range(points):
+		var angle_outer: float = rot_offset + TAU * float(i) / float(points) - PI * 0.5
+		var angle_inner: float = rot_offset + TAU * (float(i) + 0.5) / float(points) - PI * 0.5
+		var p_outer: Vector2 = pos + Vector2(cos(angle_outer), sin(angle_outer)) * radius
+		var p_inner: Vector2 = pos + Vector2(cos(angle_inner), sin(angle_inner)) * inner_r
+		draw_line(pos, p_outer, color, 1.5)
+		draw_line(p_outer, p_inner, Color(color.r, color.g, color.b, color.a * 0.6), 1.0)

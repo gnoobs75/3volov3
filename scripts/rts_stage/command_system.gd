@@ -71,6 +71,14 @@ func issue_stop(units: Array) -> void:
 		if is_instance_valid(unit) and unit.has_method("command_stop"):
 			unit.command_stop()
 
+func issue_retreat(units: Array) -> void:
+	for unit in units:
+		if is_instance_valid(unit) and unit.has_method("command_flee"):
+			unit.command_flee()
+	AudioManager.play_rts_command()
+	if not units.is_empty() and is_instance_valid(units[0]):
+		command_issued.emit("retreat", units[0].global_position)
+
 func issue_ability(units: Array, target_pos: Vector2) -> void:
 	for unit in units:
 		if is_instance_valid(unit) and unit.has_method("use_ability"):

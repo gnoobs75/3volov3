@@ -6,6 +6,7 @@ extends Node
 signal event_started(event_type: int, position: Vector2, name: String)
 signal event_ended(event_type: int)
 signal event_warning(event_type: int, position: Vector2, name: String)
+signal event_started_minimap(pos: Vector2, event_type: int, duration: float)
 
 enum EventType { NUTRIENT_BLOOM, TOXIC_TIDE, EVOLUTIONARY_SURGE, PETRI_QUAKE, MIGRATION }
 
@@ -146,6 +147,7 @@ func _start_event(etype: int) -> void:
 			_spawn_migration()
 
 	event_started.emit(etype, _event_position, data["name"])
+	event_started_minimap.emit(_event_position, etype, data["duration"])
 
 func _end_event() -> void:
 	var ended_type: int = _active_event
