@@ -37,6 +37,26 @@ var _low_resource_pulse: float = 0.0  # For resource warning flash
 var _threat_detector: Node = null
 var _income_changed_pulse: float = 0.0
 
+# --- Map pings (typed: 0=danger, 1=assist, 2=omw) ---
+var _map_pings: Array = []  # [{pos: Vector2, time: float, type: int}]
+const PING_LIFE: float = 4.0
+const PING_MAX: int = 5
+const PING_DANGER: int = 0
+const PING_ASSIST: int = 1
+const PING_OMW: int = 2
+const PING_COLORS: Array = [
+	Color(1.0, 0.3, 0.2),   # Danger - red
+	Color(1.0, 0.85, 0.2),  # Assist - yellow
+	Color(0.2, 1.0, 0.4),   # On My Way - green
+]
+
+# --- Surrender confirmation ---
+var _surrender_confirm: bool = false
+var _surrender_blink: float = 0.0
+
+# --- Victory manager ref (for surrender) ---
+var _victory_manager: Node = null
+
 # --- Event announcements ---
 var _event_announcement: String = ""
 var _event_announce_timer: float = 0.0
@@ -66,6 +86,7 @@ const BUILD_BUTTONS: Array = [
 	{"type": BuildingStats.BuildingType.MEMBRANE_TOWER, "key": "E"},
 	{"type": BuildingStats.BuildingType.BIO_WALL, "key": "R"},
 	{"type": BuildingStats.BuildingType.NUTRIENT_PROCESSOR, "key": "T"},
+	{"type": BuildingStats.BuildingType.SUPPLY_DEPOT, "key": "Y"},
 ]
 
 const BUILDING_DESCRIPTIONS: Dictionary = {
@@ -74,6 +95,7 @@ const BUILDING_DESCRIPTIONS: Dictionary = {
 	2: "Defensive tower. Auto-attacks nearby enemies.",
 	3: "Cheap wall segment. Blocks enemy movement.",
 	4: "Secondary resource drop-off. Provides +5 supply.",
+	5: "Organic storage sac. +10 unit supply cap.",
 }
 
 const UNIT_DESCRIPTIONS: Dictionary = {
@@ -138,6 +160,14 @@ func setup(stage: Node, sel: Node, cmd: Node) -> void:
 
 func set_threat_detector(detector: Node) -> void:
 	_threat_detector = detector
+
+func set_victory_manager(vm: Node) -> void:
+	_victory_manager = vm
+
+func add_map_ping(pos: Vector2, ping_type: int) -> void:
+	_map_pings.append({"pos": pos, "time": 0.0, "type": clampi(ping_type, 0, 2)})
+	if _map_pings.size() > PING_MAX:
+		_map_pings.pop_front()
 
 func show_event_announcement(text: String, color: Color) -> void:
 	_event_announcement = text
@@ -222,6 +252,18 @@ func _process(delta: float) -> void:
 	if _event_announce_timer > 0.0:
 		_event_announce_timer -= delta
 
+	# --- Map pings update ---
+	var pi: int = _map_pings.size() - 1
+	while pi >= 0:
+		_map_pings[pi]["time"] += delta
+		if _map_pings[pi]["time"] >= PING_LIFE:
+			_map_pings.remove_at(pi)
+		pi -= 1
+
+	# --- Surrender blink ---
+	if _surrender_confirm:
+		_surrender_blink += delta * 4.0
+
 	queue_redraw()
 
 func _input(event: InputEvent) -> void:
@@ -272,6 +314,24 @@ func _input(event: InputEvent) -> void:
 		var vp: Vector2 = get_viewport_rect().size
 		_update_speed_from_mouse(event.position, _get_speed_slider_rect(vp))
 		get_viewport().set_input_as_handled()
+	# --- Surrender key handling ---
+	elif event is InputEventKey and event.pressed:
+		if _surrender_confirm:
+			if event.keycode == KEY_Y:
+				_surrender_confirm = false
+				if _victory_manager and _victory_manager.has_method("force_loss"):
+					_victory_manager.force_loss()
+				get_viewport().set_input_as_handled()
+				return
+			elif event.keycode == KEY_N or event.keycode == KEY_ESCAPE:
+				_surrender_confirm = false
+				get_viewport().set_input_as_handled()
+				return
+		elif event.keycode == KEY_F10:
+			_surrender_confirm = true
+			_surrender_blink = 0.0
+			get_viewport().set_input_as_handled()
+			return
 
 func _handle_cmd_button(idx: int) -> void:
 	if not _selection_mgr or not _command_sys:
@@ -522,6 +582,12 @@ func _draw() -> void:
 
 	# === EVENT ANNOUNCEMENT (center screen) ===
 	_draw_event_announcement(vp, font)
+
+	# === SURRENDER BUTTON (top-right) ===
+	_draw_surrender_button(vp, font)
+
+	# === MAP PINGS (screen-space indicators) ===
+	_draw_map_pings(vp, font)
 
 	# === TOOLTIP (always last - on top of everything) ===
 	if _tooltip_text.length() > 0:
@@ -912,3 +978,110 @@ func _draw_event_announcement(vp: Vector2, font: Font) -> void:
 	var text_y: float = box_y + box_h * 0.5 + UIConstants.FONT_HEADER * 0.35
 	var text_color: Color = Color(_event_announce_color.r, _event_announce_color.g, _event_announce_color.b, alpha)
 	draw_string(font, Vector2(text_x, text_y), _event_announcement, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_HEADER, text_color)
+
+# === SURRENDER BUTTON ===
+
+func _draw_surrender_button(vp: Vector2, font: Font) -> void:
+	if _surrender_confirm:
+		# Draw confirmation dialog in center
+		var box_w: float = 300.0
+		var box_h: float = 80.0
+		var box_x: float = (vp.x - box_w) * 0.5
+		var box_y: float = vp.y * 0.4 - box_h * 0.5
+		var box_rect: Rect2 = Rect2(box_x, box_y, box_w, box_h)
+		draw_rect(box_rect, Color(0.06, 0.04, 0.04, 0.95))
+		draw_rect(box_rect, Color(0.9, 0.25, 0.2, 0.6), false, 1.5)
+		# Confirmation text
+		var confirm_text: String = "Surrender?"
+		var cts: Vector2 = font.get_string_size(confirm_text, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_SUBHEADER)
+		draw_string(font, Vector2(box_x + (box_w - cts.x) * 0.5, box_y + 30),
+			confirm_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_SUBHEADER, Color(1.0, 0.4, 0.3))
+		# Y/N prompt with blink
+		var blink: float = 0.6 + 0.4 * sin(_surrender_blink)
+		var yn_text: String = "[Y] Yes   [N] No"
+		var yns: Vector2 = font.get_string_size(yn_text, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_CAPTION)
+		draw_string(font, Vector2(box_x + (box_w - yns.x) * 0.5, box_y + 58),
+			yn_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION,
+			Color(UIConstants.TEXT_BRIGHT.r, UIConstants.TEXT_BRIGHT.g, UIConstants.TEXT_BRIGHT.b, blink))
+	else:
+		# Small surrender label in top-right
+		var surr_text: String = "F10: Surrender"
+		var surr_x: float = vp.x - 120.0
+		var surr_y: float = 55.0
+		draw_string(font, Vector2(surr_x, surr_y), surr_text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+			UIConstants.FONT_TINY, Color(0.7, 0.3, 0.3, 0.5))
+
+# === MAP PINGS (screen-space) ===
+
+func _draw_map_pings(vp: Vector2, font: Font) -> void:
+	if _map_pings.is_empty():
+		return
+	var camera: Camera2D = get_viewport().get_camera_2d()
+	if not camera:
+		return
+	var cam_pos: Vector2 = camera.global_position
+	var screen_center: Vector2 = vp * 0.5
+
+	for ping in _map_pings:
+		var world_pos: Vector2 = ping["pos"]
+		var ping_type: int = ping["type"]
+		var elapsed: float = ping["time"]
+		var alpha: float = 1.0 - (elapsed / PING_LIFE)
+		if alpha <= 0.0:
+			continue
+		var ping_color: Color = PING_COLORS[ping_type]
+
+		# Convert world pos to screen pos
+		var zoom: float = camera.zoom.x if camera.zoom.x > 0 else 1.0
+		var screen_pos: Vector2 = (world_pos - cam_pos) * zoom + screen_center
+
+		# Clamp to screen edge if off screen (with margin)
+		var margin: float = 50.0
+		var on_screen: bool = (screen_pos.x > margin and screen_pos.x < vp.x - margin and
+			screen_pos.y > margin and screen_pos.y < vp.y - margin)
+
+		var draw_pos: Vector2 = screen_pos
+		if not on_screen:
+			var dir: Vector2 = (screen_pos - screen_center).normalized()
+			draw_pos = _clamp_to_screen_edge(screen_center, dir, vp, margin)
+
+		# Expanding ring animation
+		var ring_phase: float = fmod(elapsed * 2.0, 1.0)
+		var ring_r: float = 8.0 + ring_phase * 20.0
+		var ring_alpha: float = alpha * (1.0 - ring_phase)
+		draw_arc(draw_pos, ring_r, 0, TAU, 16,
+			Color(ping_color.r, ping_color.g, ping_color.b, ring_alpha * 0.7), 1.5)
+
+		# Second ring offset
+		var ring_phase2: float = fmod(elapsed * 2.0 + 0.5, 1.0)
+		var ring_r2: float = 8.0 + ring_phase2 * 20.0
+		var ring_alpha2: float = alpha * (1.0 - ring_phase2)
+		draw_arc(draw_pos, ring_r2, 0, TAU, 16,
+			Color(ping_color.r, ping_color.g, ping_color.b, ring_alpha2 * 0.4), 1.0)
+
+		# Core dot
+		draw_circle(draw_pos, 4.0, Color(ping_color.r, ping_color.g, ping_color.b, alpha * 0.8))
+
+		# Type-specific icon
+		match ping_type:
+			PING_DANGER:
+				# X shape
+				var sz: float = 5.0
+				draw_line(draw_pos + Vector2(-sz, -sz), draw_pos + Vector2(sz, sz),
+					Color(ping_color.r, ping_color.g, ping_color.b, alpha), 2.0)
+				draw_line(draw_pos + Vector2(sz, -sz), draw_pos + Vector2(-sz, sz),
+					Color(ping_color.r, ping_color.g, ping_color.b, alpha), 2.0)
+			PING_ASSIST:
+				# ! exclamation
+				draw_string(font, draw_pos + Vector2(-3, -8), "!",
+					HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_BODY,
+					Color(ping_color.r, ping_color.g, ping_color.b, alpha))
+			PING_OMW:
+				# > arrow pointing right-ish toward center
+				var arr_dir: Vector2 = (screen_center - draw_pos).normalized() if not on_screen else Vector2(1, 0)
+				var perp: Vector2 = Vector2(-arr_dir.y, arr_dir.x)
+				var tip: Vector2 = draw_pos + arr_dir * 8.0
+				var base1: Vector2 = draw_pos - arr_dir * 4.0 + perp * 5.0
+				var base2: Vector2 = draw_pos - arr_dir * 4.0 - perp * 5.0
+				draw_line(base1, tip, Color(ping_color.r, ping_color.g, ping_color.b, alpha), 1.5)
+				draw_line(base2, tip, Color(ping_color.r, ping_color.g, ping_color.b, alpha), 1.5)

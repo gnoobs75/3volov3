@@ -201,6 +201,16 @@ func _ready() -> void:
 	_stats_screen.name = "StatsScreen"
 	add_child(_stats_screen)
 
+	# Terrain elevation zones
+	_terrain_zones = preload("res://scripts/rts_stage/rts_terrain_zones.gd").new()
+	_terrain_zones.name = "TerrainZones"
+	_terrain_zones.z_index = 1  # Below units, above map
+	add_child(_terrain_zones)
+	_terrain_zones.setup(8000.0)
+
+	# Check spectator mode
+	_spectator_mode = GameManager.rts_spectator_mode
+
 	# 7. Initialize systems
 	_faction_manager.setup_factions()
 	_resource_manager.setup(4)
@@ -311,6 +321,8 @@ func _spawn_unit(fid: int, utype: int, pos: Vector2, template: CreatureTemplate)
 	unit.setup(fid, utype, template)
 	if _tech_tree:
 		unit._tech_tree = _tech_tree
+	if _terrain_zones:
+		unit._terrain_zones = _terrain_zones
 	unit.died.connect(_on_unit_died)
 	return unit
 

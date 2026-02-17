@@ -15,7 +15,15 @@ var stats_units_produced: int = 0
 var stats_units_lost: int = 0
 var stats_enemies_killed: int = 0
 var stats_buildings_built: int = 0
+var stats_buildings_lost: int = 0
 var stats_resources_gathered: int = 0
+var stats_total_biomass: int = 0
+var stats_total_genes: int = 0
+
+# Army timeline: record player unit count every 30s
+var _army_timeline: Array = []  # Array[int]
+var _timeline_timer: float = 0.0
+const TIMELINE_INTERVAL: float = 30.0
 
 func setup(stage: Node) -> void:
 	_stage = stage
@@ -24,6 +32,26 @@ func _process(delta: float) -> void:
 	if _game_over:
 		return
 	_game_time += delta
+
+	# Record army timeline
+	_timeline_timer += delta
+	if _timeline_timer >= TIMELINE_INTERVAL:
+		_timeline_timer -= TIMELINE_INTERVAL
+		var unit_count: int = 0
+		for unit in get_tree().get_nodes_in_group("faction_0"):
+			if unit.is_in_group("rts_units") and is_instance_valid(unit):
+				unit_count += 1
+		_army_timeline.append(unit_count)
+
+	# Track cumulative resource income
+	if _stage and _stage.has_method("get_resource_manager"):
+		var rm: Node = _stage.get_resource_manager()
+		var cur_bio: int = rm.get_biomass(0)
+		var cur_gen: int = rm.get_genes(0)
+		if cur_bio > stats_total_biomass:
+			stats_total_biomass = cur_bio
+		if cur_gen > stats_total_genes:
+			stats_total_genes = cur_gen
 
 func check_victory() -> void:
 	if _game_over:
@@ -52,6 +80,13 @@ func check_victory() -> void:
 		_game_over = true
 		game_won.emit()
 
+func force_loss() -> void:
+	## Surrender: force a loss regardless of game state.
+	if _game_over:
+		return
+	_game_over = true
+	game_lost.emit()
+
 func is_game_over() -> bool:
 	return _game_over
 
@@ -60,3 +95,23 @@ func get_game_time() -> float:
 
 func get_elimination_count() -> int:
 	return _eliminations.size()
+
+func get_stats_summary() -> Dictionary:
+	## Returns all tracked stats for the end-game screen.
+	# Count enemy factions eliminated (not counting player faction 0)
+	var factions_eliminated: int = 0
+	for fid in _eliminations:
+		if fid != 0:
+			factions_eliminated += 1
+	return {
+		"units_produced": stats_units_produced,
+		"units_lost": stats_units_lost,
+		"enemies_killed": stats_enemies_killed,
+		"buildings_built": stats_buildings_built,
+		"buildings_lost": stats_buildings_lost,
+		"resources_gathered": stats_resources_gathered,
+		"total_biomass": stats_total_biomass,
+		"total_genes": stats_total_genes,
+		"factions_eliminated": factions_eliminated,
+		"army_timeline": _army_timeline.duplicate(),
+	}

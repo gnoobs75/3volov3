@@ -1,6 +1,6 @@
 extends Control
 ## Circular minimap showing faction-colored dots for units/buildings, resources.
-## Click to pan camera. Alt+click to ping.
+## Click to pan camera. Alt+click to ping (typed). Click-and-drag to scroll.
 
 var _stage: Node = null
 var _camera: Camera2D = null
@@ -11,28 +11,45 @@ var _alert_pings: Array = []  # [{pos, time}]
 const ALERT_PING_LIFE: float = 3.0
 var _alert_cooldown: float = 0.0
 
-# Player communication pings (green, Alt+click)
-var _player_pings: Array = []  # [{pos, time}]
+# Player communication pings (typed: 0=danger, 1=assist, 2=omw)
+var _player_pings: Array = []  # [{pos, time, type}]
 const PLAYER_PING_LIFE: float = 4.0
+const PING_COLORS: Array = [
+	Color(1.0, 0.3, 0.2),   # Danger - red
+	Color(1.0, 0.85, 0.2),  # Assist - yellow
+	Color(0.2, 1.0, 0.4),   # On My Way - green
+]
+
+# Minimap drag state
+var _minimap_dragging: bool = false
 
 const MINIMAP_RADIUS: float = 85.0
 const MINIMAP_CENTER: Vector2 = Vector2(95, 0)  # Offset from bottom-left
 const MAP_RADIUS: float = 8000.0
+
+# Reference to HUD for forwarding typed pings
+var _hud: Control = null
 
 func setup(stage: Node, camera: Camera2D) -> void:
 	_stage = stage
 	_camera = camera
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+func set_hud(hud: Control) -> void:
+	_hud = hud
+
 func add_attack_ping(world_pos: Vector2) -> void:
 	_alert_pings.append({"pos": world_pos, "time": 0.0})
 	if _alert_pings.size() > 5:
 		_alert_pings.pop_front()
 
-func add_player_ping(world_pos: Vector2) -> void:
-	_player_pings.append({"pos": world_pos, "time": 0.0})
+func add_player_ping(world_pos: Vector2, ping_type: int = 2) -> void:
+	_player_pings.append({"pos": world_pos, "time": 0.0, "type": clampi(ping_type, 0, 2)})
 	if _player_pings.size() > 5:
 		_player_pings.pop_front()
+	# Also forward to HUD for screen-space ping display
+	if _hud and _hud.has_method("add_map_ping"):
+		_hud.add_map_ping(world_pos, ping_type)
 
 func _process(delta: float) -> void:
 	_time += delta
@@ -68,20 +85,46 @@ func _minimap_to_world(minimap_pos: Vector2) -> Vector2:
 	var normalized: Vector2 = offset / MINIMAP_RADIUS
 	return normalized * MAP_RADIUS
 
+func _move_camera_to_minimap_pos(screen_pos: Vector2) -> void:
+	var center: Vector2 = _get_minimap_center()
+	var dist: float = screen_pos.distance_to(center)
+	if dist > MINIMAP_RADIUS:
+		# Clamp to minimap circle
+		var dir: Vector2 = (screen_pos - center).normalized()
+		screen_pos = center + dir * MINIMAP_RADIUS
+	var world_pos: Vector2 = _minimap_to_world(screen_pos)
+	if _camera and _camera.has_method("focus_position"):
+		_camera.focus_position(world_pos)
+
 func _input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		var center: Vector2 = _get_minimap_center()
 		var dist: float = event.position.distance_to(center)
-		if dist < MINIMAP_RADIUS:
-			var world_pos: Vector2 = _minimap_to_world(event.position)
-			if event.alt_pressed:
-				# Alt+click: player ping
-				add_player_ping(world_pos)
-			else:
-				# Normal click: pan camera
-				if _camera and _camera.has_method("focus_position"):
-					_camera.focus_position(world_pos)
-			get_viewport().set_input_as_handled()
+		if event.pressed:
+			if dist < MINIMAP_RADIUS:
+				var world_pos: Vector2 = _minimap_to_world(event.position)
+				if event.alt_pressed:
+					# Alt+click: danger ping (type 0)
+					var ping_type: int = 0  # danger
+					if event.ctrl_pressed:
+						ping_type = 1  # assist (Ctrl+Alt)
+					elif event.shift_pressed:
+						ping_type = 2  # omw (Shift+Alt)
+					add_player_ping(world_pos, ping_type)
+				else:
+					# Normal click: pan camera + start dragging
+					_minimap_dragging = true
+					_move_camera_to_minimap_pos(event.position)
+				get_viewport().set_input_as_handled()
+		else:
+			# Mouse released
+			if _minimap_dragging:
+				_minimap_dragging = false
+				get_viewport().set_input_as_handled()
+	elif event is InputEventMouseMotion and _minimap_dragging:
+		# Drag on minimap: continuously scroll camera
+		_move_camera_to_minimap_pos(event.position)
+		get_viewport().set_input_as_handled()
 
 func _draw() -> void:
 	var center: Vector2 = _get_minimap_center()
@@ -156,17 +199,19 @@ func _draw() -> void:
 		if pt < 0.5:
 			draw_circle(mp, 2.0, Color(1.0, 0.3, 0.2, ping_alpha))
 
-	# Player communication pings (green)
+	# Player communication pings (typed colors)
 	for ping in _player_pings:
 		var mp: Vector2 = _world_to_minimap(ping["pos"])
 		if mp.distance_to(center) > MINIMAP_RADIUS:
 			continue
+		var ping_type: int = ping.get("type", 2)
+		var pc: Color = PING_COLORS[clampi(ping_type, 0, 2)]
 		var ping_alpha: float = 1.0 - (ping["time"] / PLAYER_PING_LIFE)
 		var pt: float = ping["time"] / PLAYER_PING_LIFE
 		var ping_r: float = 3.0 + pt * 10.0
-		draw_arc(mp, ping_r, 0, TAU, 12, Color(0.2, 1.0, 0.4, ping_alpha * 0.7), 1.5)
+		draw_arc(mp, ping_r, 0, TAU, 12, Color(pc.r, pc.g, pc.b, ping_alpha * 0.7), 1.5)
 		if pt < 0.5:
-			draw_circle(mp, 2.0, Color(0.2, 1.0, 0.4, ping_alpha))
+			draw_circle(mp, 2.0, Color(pc.r, pc.g, pc.b, ping_alpha))
 
 	# Camera viewport rectangle (drawn last, on top)
 	_draw_camera_rect()
