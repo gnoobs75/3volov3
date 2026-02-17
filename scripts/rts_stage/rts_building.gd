@@ -39,6 +39,9 @@ var attack_cooldown: float = 1.5
 var _tower_attack_timer: float = 0.0
 var _tower_target: Node2D = null
 
+# Rotation (cosmetic only)
+var build_rotation: float = 0.0
+
 # Rally point
 var rally_point: Vector2 = Vector2.ZERO
 var has_rally_point: bool = false
@@ -130,6 +133,45 @@ func take_repair(amount: float) -> void:
 	_being_repaired = true
 	_repair_fade = 0.5
 
+# Salvage visual
+var _salvage_flash: float = 0.0
+var _salvage_pending: bool = false
+
+func salvage() -> void:
+	## Salvage a fully constructed building, returning 50% of original cost.
+	if not _is_constructed:
+		return
+	var stats: Dictionary = BuildingStats.get_stats(building_type)
+	var biomass_refund: int = int(stats.get("cost_biomass", 0) * 0.5)
+	var genes_refund: int = int(stats.get("cost_genes", 0) * 0.5)
+	var stage: Node = get_tree().get_first_node_in_group("rts_stage")
+	if stage and stage.has_method("get_resource_manager"):
+		var rm: Node = stage.get_resource_manager()
+		if rm:
+			rm.add_biomass(faction_id, biomass_refund)
+			rm.add_genes(faction_id, genes_refund)
+	# Flash white for 0.3s before removal
+	_salvage_flash = 0.3
+	_salvage_pending = true
+
+func cancel_construction() -> void:
+	## Cancel a building under construction with partial refund.
+	## Early cancel ~ 75% back, late cancel ~ 0% back.
+	if _is_constructed:
+		return
+	var progress_pct: float = clampf(construction_progress / build_time, 0.0, 1.0)
+	var refund_pct: float = 0.75 * (1.0 - progress_pct)
+	var stats: Dictionary = BuildingStats.get_stats(building_type)
+	var biomass_refund: int = int(stats.get("cost_biomass", 0) * refund_pct)
+	var genes_refund: int = int(stats.get("cost_genes", 0) * refund_pct)
+	var stage: Node = get_tree().get_first_node_in_group("rts_stage")
+	if stage and stage.has_method("get_resource_manager"):
+		var rm: Node = stage.get_resource_manager()
+		if rm:
+			rm.add_biomass(faction_id, biomass_refund)
+			rm.add_genes(faction_id, genes_refund)
+	_die()
+
 func _die() -> void:
 	destroyed.emit(self)
 	queue_free()
@@ -203,9 +245,28 @@ func cancel_last_queue_item() -> void:
 	if not _production_queue.is_empty():
 		cancel_queue_item(_production_queue.size() - 1)
 
+func reorder_queue(from_idx: int, to_idx: int) -> void:
+	## Move a queued item from from_idx to to_idx. Cannot move index 0 (currently producing).
+	if from_idx <= 0 or to_idx <= 0:
+		return
+	if from_idx >= _production_queue.size() or to_idx >= _production_queue.size():
+		return
+	if from_idx == to_idx:
+		return
+	var item: int = _production_queue[from_idx]
+	_production_queue.remove_at(from_idx)
+	_production_queue.insert(to_idx, item)
+
 func _process(delta: float) -> void:
 	_time += delta
 	_hurt_flash = maxf(_hurt_flash - delta * 3.0, 0.0)
+	# Salvage flash countdown
+	if _salvage_pending:
+		_salvage_flash -= delta
+		if _salvage_flash <= 0.0:
+			_salvage_pending = false
+			_die()
+			return
 	# Repair fade timer
 	if _repair_fade > 0:
 		_repair_fade -= delta
@@ -289,9 +350,14 @@ func _draw() -> void:
 		draw_arc(Vector2.ZERO, size_radius + 3.0, -PI * 0.5, -PI * 0.5 + TAU * pct, 32, Color(gc.r, gc.g, gc.b, 0.8), 2.5)
 		# Construction scaffolding
 		for i in range(4):
-			var angle: float = TAU * float(i) / 4.0
+			var angle: float = TAU * float(i) / 4.0 + build_rotation
 			draw_line(Vector2.ZERO, Vector2(cos(angle), sin(angle)) * size_radius * 0.8, Color(0.5, 0.5, 0.4, 0.3 * pct), 1.0)
 		return
+
+	# Salvage flash (white overlay)
+	if _salvage_pending:
+		var flash_alpha: float = clampf(_salvage_flash / 0.3, 0.0, 1.0) * 0.6
+		draw_circle(Vector2.ZERO, size_radius * 1.3, Color(1.0, 1.0, 1.0, flash_alpha))
 
 	# Hurt flash
 	if _hurt_flash > 0:
@@ -361,7 +427,7 @@ func _draw_spawning_pool(mc: Color, gc: Color) -> void:
 	# Outer membrane
 	var pts := PackedVector2Array()
 	for i in range(20):
-		var angle: float = TAU * float(i) / 20.0
+		var angle: float = TAU * float(i) / 20.0 + build_rotation
 		var r: float = size_radius * pulse + sin(angle * 3.0 + _time) * 3.0
 		pts.append(Vector2(cos(angle) * r, sin(angle) * r))
 	draw_colored_polygon(pts, Color(mc.r * 0.6, mc.g * 0.6, mc.b * 0.6, 0.8))
@@ -370,7 +436,7 @@ func _draw_spawning_pool(mc: Color, gc: Color) -> void:
 	# Bubbles (more bubbles when upgraded)
 	var bubble_count: int = 5 if _building_upgrade_id == 0 else 3
 	for i in range(bubble_count):
-		var ba: float = _time * 0.5 + TAU * float(i) / float(bubble_count)
+		var ba: float = _time * 0.5 + TAU * float(i) / float(bubble_count) + build_rotation
 		var bp: Vector2 = Vector2(cos(ba) * 12.0, sin(ba) * 12.0)
 		draw_circle(bp, 3.0, Color(gc.r, gc.g, gc.b, 0.3))
 
@@ -378,7 +444,7 @@ func _draw_evolution_chamber(mc: Color, gc: Color) -> void:
 	# Hexagonal-ish structure
 	var pts := PackedVector2Array()
 	for i in range(6):
-		var angle: float = TAU * float(i) / 6.0 + PI / 6.0
+		var angle: float = TAU * float(i) / 6.0 + PI / 6.0 + build_rotation
 		pts.append(Vector2(cos(angle), sin(angle)) * size_radius)
 	draw_colored_polygon(pts, Color(mc.r * 0.5, mc.g * 0.5, mc.b * 0.7, 0.8))
 	# DNA helix center
@@ -395,7 +461,7 @@ func _draw_membrane_tower(mc: Color, gc: Color) -> void:
 	if _building_upgrade_id == 1:  # SPINE_TOWER
 		var spike_count: int = 8
 		for si in range(spike_count):
-			var sa: float = TAU * float(si) / float(spike_count) + _time * 0.3
+			var sa: float = TAU * float(si) / float(spike_count) + _time * 0.3 + build_rotation
 			var base_l: Vector2 = Vector2(cos(sa - 0.15), sin(sa - 0.15)) * size_radius
 			var base_r: Vector2 = Vector2(cos(sa + 0.15), sin(sa + 0.15)) * size_radius
 			var tip: Vector2 = Vector2(cos(sa), sin(sa)) * (size_radius + 10.0 + 2.0 * sin(_time * 4.0 + float(si)))
@@ -424,17 +490,23 @@ func _draw_membrane_tower(mc: Color, gc: Color) -> void:
 			draw_arc(Vector2.ZERO, attack_range, a_start, a_start + dash_arc, 4, Color(mc.r, mc.g, mc.b, range_alpha), 1.0)
 
 func _draw_bio_wall(mc: Color, _gc: Color) -> void:
-	# Thick wall segment
+	# Thick wall segment (rotated by build_rotation)
 	var pts := PackedVector2Array()
-	pts.append(Vector2(-size_radius, -size_radius * 0.6))
-	pts.append(Vector2(size_radius, -size_radius * 0.6))
-	pts.append(Vector2(size_radius, size_radius * 0.6))
-	pts.append(Vector2(-size_radius, size_radius * 0.6))
+	var corners: Array = [
+		Vector2(-size_radius, -size_radius * 0.6),
+		Vector2(size_radius, -size_radius * 0.6),
+		Vector2(size_radius, size_radius * 0.6),
+		Vector2(-size_radius, size_radius * 0.6),
+	]
+	for c in corners:
+		pts.append(c.rotated(build_rotation))
 	draw_colored_polygon(pts, Color(mc.r * 0.4, mc.g * 0.4, mc.b * 0.3, 0.9))
 	# Texture lines
 	for i in range(3):
 		var x: float = -size_radius + size_radius * 2.0 * float(i + 1) / 4.0
-		draw_line(Vector2(x, -size_radius * 0.5), Vector2(x, size_radius * 0.5), Color(mc.r * 0.3, mc.g * 0.3, mc.b * 0.2, 0.4), 1.5)
+		var line_start: Vector2 = Vector2(x, -size_radius * 0.5).rotated(build_rotation)
+		var line_end: Vector2 = Vector2(x, size_radius * 0.5).rotated(build_rotation)
+		draw_line(line_start, line_end, Color(mc.r * 0.3, mc.g * 0.3, mc.b * 0.2, 0.4), 1.5)
 
 func _draw_nutrient_processor(mc: Color, gc: Color) -> void:
 	# Refinery upgrade: processing glow circle
@@ -447,7 +519,7 @@ func _draw_nutrient_processor(mc: Color, gc: Color) -> void:
 	var vane_speed: float = 1.5 if _building_upgrade_id == 2 else 0.5
 	var vane_count: int = 6 if _building_upgrade_id == 2 else 4
 	for i in range(vane_count):
-		var angle: float = _time * vane_speed + TAU * float(i) / float(vane_count)
+		var angle: float = _time * vane_speed + TAU * float(i) / float(vane_count) + build_rotation
 		var start: Vector2 = Vector2(cos(angle), sin(angle)) * 5.0
 		var end: Vector2 = Vector2(cos(angle), sin(angle)) * (size_radius * 0.8)
 		draw_line(start, end, Color(gc.r, gc.g, gc.b, 0.5), 2.0)
@@ -693,7 +765,7 @@ func _draw_supply_depot(mc: Color, gc: Color) -> void:
 	var sac_pts := PackedVector2Array()
 	for i in range(24):
 		var angle: float = TAU * float(i) / 24.0
-		sac_pts.append(Vector2(cos(angle) * rx, sin(angle) * ry))
+		sac_pts.append(Vector2(cos(angle) * rx, sin(angle) * ry).rotated(build_rotation))
 	var sac_color: Color = Color(0.4, 0.2, 0.6, 0.8)
 	draw_colored_polygon(sac_pts, Color(sac_color.r * mc.r * 2.0, sac_color.g * mc.g * 2.0, sac_color.b * mc.b * 2.0, 0.75))
 	# Inner cavity (darker)
@@ -707,7 +779,7 @@ func _draw_supply_depot(mc: Color, gc: Color) -> void:
 			var t: float = float(j) / 9.0
 			var vx: float = (t - 0.5) * rx * 1.8
 			var vy: float = base_y + sin(t * PI * 2.0 + _time * 1.5 + float(vi) * 1.2) * 5.0
-			vein_pts.append(Vector2(vx, vy))
+			vein_pts.append(Vector2(vx, vy).rotated(build_rotation))
 		for j in range(vein_pts.size() - 1):
 			draw_line(vein_pts[j], vein_pts[j + 1], vein_color, 1.5)
 	# Supply count label when selected

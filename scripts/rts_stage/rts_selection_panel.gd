@@ -6,6 +6,8 @@ var _selection_mgr: Node
 var _time: float = 0.0
 var _hovered_unit_idx: int = -1
 var _hovered_produce_btn: int = -1  # Index of hovered produce button in multi-building panel
+var _hovered_queue_pod_idx: int = -1  # Index of hovered queue pod (for reorder)
+var _hovered_mixed_produce_btn: int = -1  # Index of hovered produce button in mixed-type building panel
 var _last_click_time: float = 0.0
 var _last_click_group: int = -1
 
@@ -330,10 +332,12 @@ func _draw_building_info(building: Node2D, x: float, y: float) -> void:
 		draw_string(_mono, Vector2(bar_x + 204, prog_bar_y + 5), "%d%%" % int(pct * 100), HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM)
 		return
 
-	# Production queue as organic pods
+	# Production queue as organic pods (with reorder indicators)
+	_hovered_queue_pod_idx = -1
 	if "_production_queue" in building and not building._production_queue.is_empty():
 		var pod_x: float = x + 12.0
 		var pod_y: float = y + 52.0
+		var mouse: Vector2 = get_local_mouse_position()
 		draw_string(_mono, Vector2(pod_x, pod_y), "Queue:", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM)
 		pod_x += 40.0
 		for i in range(mini(building._production_queue.size(), 6)):
@@ -341,13 +345,27 @@ func _draw_building_info(building: Node2D, x: float, y: float) -> void:
 			var pod_r: float = 8.0
 			var pod_cx: float = pod_x + float(i) * 22.0
 			var pod_cy: float = pod_y - 3.0
+			var pod_rect: Rect2 = Rect2(pod_cx - pod_r, pod_cy - pod_r, pod_r * 2.0, pod_r * 2.0)
+			var pod_hovered: bool = pod_rect.has_point(mouse) and i > 0
+			if pod_hovered:
+				_hovered_queue_pod_idx = i
 			# Pod shape (organic circle)
 			var pod_color: Color = Color(0.3, 0.6, 1.0, 0.5) if i == 0 else Color(0.2, 0.3, 0.5, 0.3)
+			if pod_hovered:
+				pod_color = Color(0.4, 0.7, 1.0, 0.6)
 			draw_circle(Vector2(pod_cx, pod_cy), pod_r, pod_color)
 			draw_arc(Vector2(pod_cx, pod_cy), pod_r, 0, TAU, 12, Color(pod_color.r, pod_color.g, pod_color.b, 0.8), 1.0)
 			# Unit initial
 			var pod_letter: String = UnitStats.get_unit_name(ut).substr(0, 1)
 			draw_string(_mono, Vector2(pod_cx - 3, pod_cy + 4), pod_letter, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_BRIGHT)
+			# Reorder arrow indicator for items at index 1+ (small up-arrow above pod)
+			if i > 0 and pod_hovered:
+				# Draw small left-arrow (move toward front of queue)
+				var arrow_x: float = pod_cx - pod_r - 2.0
+				var arrow_y: float = pod_cy
+				draw_line(Vector2(arrow_x, arrow_y), Vector2(arrow_x - 5.0, arrow_y), Color(0.5, 0.9, 1.0, 0.9), 1.5)
+				draw_line(Vector2(arrow_x - 5.0, arrow_y), Vector2(arrow_x - 3.0, arrow_y - 3.0), Color(0.5, 0.9, 1.0, 0.9), 1.5)
+				draw_line(Vector2(arrow_x - 5.0, arrow_y), Vector2(arrow_x - 3.0, arrow_y + 3.0), Color(0.5, 0.9, 1.0, 0.9), 1.5)
 
 		# Progress membrane on first pod
 		if building.has_method("get_production_progress"):
@@ -455,7 +473,8 @@ func _draw_multi_building_panel(buildings: Array, x: float, y: float) -> void:
 			draw_circle(Vector2(x + 20, rally_y - 3), 3.0, Color(0.2, 1.0, 0.4, 0.5))
 			draw_string(_mono, Vector2(x + 28, rally_y), "Rally set", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(0.3, 0.9, 0.5, 0.7))
 	else:
-		# Mixed types: show type counts
+		# Mixed types: show type counts + combined produce panel
+		_hovered_mixed_produce_btn = -1
 		draw_string(_font, Vector2(x + 8, y + 18), "%d buildings selected" % buildings.size(), HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, UIConstants.TEXT_BRIGHT)
 		var row_y: float = y + 32.0
 		for bt in type_counts:
@@ -463,6 +482,38 @@ func _draw_multi_building_panel(buildings: Array, x: float, y: float) -> void:
 			var count_text: String = "%dx %s" % [type_counts[bt], bname]
 			draw_string(_mono, Vector2(x + 16, row_y), count_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM)
 			row_y += 14.0
+		# Collect all unique producible unit types across all selected buildings
+		var all_producible: Array = []  # unit_type ints, unique
+		for bld in buildings:
+			if not is_instance_valid(bld) or not "can_produce" in bld:
+				continue
+			if not bld.has_method("is_complete") or not bld.is_complete():
+				continue
+			for ut in bld.can_produce:
+				if ut not in all_producible:
+					all_producible.append(ut)
+		if not all_producible.is_empty():
+			var btn_x: float = x + 12.0
+			var btn_y: float = row_y + 4.0
+			draw_string(_mono, Vector2(btn_x, btn_y), "Produce:", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM)
+			btn_x += 52.0
+			for pi in range(all_producible.size()):
+				var ut: int = all_producible[pi]
+				var uname: String = UnitStats.get_unit_name(ut)
+				var cost: Dictionary = UnitStats.get_cost(ut)
+				var btn_rect: Rect2 = Rect2(btn_x + float(pi) * 32.0, btn_y - 10.0, 28.0, 16.0)
+				var hovered: bool = btn_rect.has_point(mouse)
+				if hovered:
+					_hovered_mixed_produce_btn = pi
+				var btn_bg: Color = Color(0.2, 0.5, 0.8, 0.5) if hovered else Color(0.15, 0.25, 0.4, 0.4)
+				draw_rect(btn_rect, btn_bg)
+				draw_rect(btn_rect, Color(0.3, 0.6, 1.0, 0.6 if hovered else 0.3), false, 1.0)
+				var letter: String = uname.substr(0, 1)
+				draw_string(_mono, Vector2(btn_rect.position.x + 9, btn_rect.position.y + 12), letter, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_BRIGHT)
+				# Cost text below button
+				if hovered:
+					var cost_text: String = "%dB %dG" % [cost.get("biomass", 0), cost.get("genes", 0)]
+					draw_string(_mono, Vector2(btn_rect.position.x - 4, btn_rect.position.y + 26), cost_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, UIConstants.TEXT_DIM)
 
 # === NO SELECTION ===
 
@@ -537,6 +588,21 @@ func _is_group_under_attack(units: Array) -> bool:
 func _gui_input(event: InputEvent) -> void:
 	if not _selection_mgr:
 		return
+
+	# Right-click: queue reorder (move item toward front of queue)
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+		var selected: Array = _selection_mgr.selected_units
+		if selected.size() == 1 and _hovered_queue_pod_idx > 0:
+			var building: Node2D = selected[0]
+			if is_instance_valid(building) and building.is_in_group("rts_buildings"):
+				if building.has_method("reorder_queue"):
+					var target_idx: int = _hovered_queue_pod_idx - 1
+					if target_idx < 1:
+						target_idx = 1
+					building.reorder_queue(_hovered_queue_pod_idx, target_idx)
+					get_viewport().set_input_as_handled()
+					return
+
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		var vp: Vector2 = get_viewport_rect().size
 		var mouse: Vector2 = event.position
@@ -558,7 +624,7 @@ func _gui_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 				return
 
-		# Check multi-building produce button clicks
+		# Check multi-building produce button clicks (same-type buildings)
 		if selected.size() > 1 and _hovered_produce_btn >= 0:
 			var buildings_in_sel: Array = selected.filter(func(u):
 				return is_instance_valid(u) and u.is_in_group("rts_buildings")
@@ -572,6 +638,44 @@ func _gui_input(event: InputEvent) -> void:
 					var shortest_queue: int = 9999
 					for bld in buildings_in_sel:
 						if not is_instance_valid(bld):
+							continue
+						if not bld.has_method("queue_unit"):
+							continue
+						var qs: int = bld.get_queue_size() if bld.has_method("get_queue_size") else 0
+						if qs < shortest_queue:
+							shortest_queue = qs
+							best_bld = bld
+					if best_bld and best_bld.has_method("queue_unit"):
+						best_bld.queue_unit(ut)
+						AudioManager.play_rts_command()
+					get_viewport().set_input_as_handled()
+					return
+
+		# Check mixed-type multi-building produce button clicks
+		if selected.size() > 1 and _hovered_mixed_produce_btn >= 0:
+			var buildings_in_sel: Array = selected.filter(func(u):
+				return is_instance_valid(u) and u.is_in_group("rts_buildings")
+			)
+			if not buildings_in_sel.is_empty() and buildings_in_sel.size() == selected.size():
+				# Collect all unique producible unit types (same order as drawn)
+				var all_producible: Array = []
+				for bld in buildings_in_sel:
+					if not is_instance_valid(bld) or not "can_produce" in bld:
+						continue
+					if not bld.has_method("is_complete") or not bld.is_complete():
+						continue
+					for ut in bld.can_produce:
+						if ut not in all_producible:
+							all_producible.append(ut)
+				if _hovered_mixed_produce_btn < all_producible.size():
+					var ut: int = all_producible[_hovered_mixed_produce_btn]
+					# Find building that CAN produce this type with shortest queue
+					var best_bld: Node2D = null
+					var shortest_queue: int = 9999
+					for bld in buildings_in_sel:
+						if not is_instance_valid(bld) or not "can_produce" in bld:
+							continue
+						if ut not in bld.can_produce:
 							continue
 						if not bld.has_method("queue_unit"):
 							continue

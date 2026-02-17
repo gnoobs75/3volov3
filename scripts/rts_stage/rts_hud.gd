@@ -37,6 +37,19 @@ var _low_resource_pulse: float = 0.0  # For resource warning flash
 var _threat_detector: Node = null
 var _income_changed_pulse: float = 0.0
 
+# --- Income sparkline graph ---
+var _income_history_bio: Array = []  # Last 12 income samples (biomass)
+var _income_history_gen: Array = []  # Last 12 income samples (genes)
+var _income_history_timer: float = 0.0
+const INCOME_HISTORY_INTERVAL: float = 5.0
+const INCOME_HISTORY_MAX: int = 12
+
+# --- Unit stack indicators ---
+var _unit_clusters: Array = []  # [{center: Vector2, count: int}]
+var _cluster_update_frame: int = 0
+const CLUSTER_RADIUS: float = 15.0
+const CLUSTER_MIN_SIZE: int = 3
+
 # --- Map pings (typed: 0=danger, 1=assist, 2=omw) ---
 var _map_pings: Array = []  # [{pos: Vector2, time: float, type: int}]
 const PING_LIFE: float = 4.0
@@ -243,6 +256,23 @@ func _process(delta: float) -> void:
 			_last_biomass = cur_bio
 			_last_genes = cur_gen
 		_income_timer = 0.0
+
+	# --- Income sparkline history ---
+	_income_history_timer += delta
+	if _income_history_timer >= INCOME_HISTORY_INTERVAL:
+		_income_history_timer = 0.0
+		_income_history_bio.append(_income_biomass)
+		_income_history_gen.append(_income_genes)
+		if _income_history_bio.size() > INCOME_HISTORY_MAX:
+			_income_history_bio.pop_front()
+		if _income_history_gen.size() > INCOME_HISTORY_MAX:
+			_income_history_gen.pop_front()
+
+	# --- Unit stack indicator (update every 10 frames) ---
+	_cluster_update_frame += 1
+	if _cluster_update_frame >= 10:
+		_cluster_update_frame = 0
+		_compute_unit_clusters()
 
 	# --- Income pulse decay ---
 	if _income_changed_pulse > 0.0:
@@ -457,6 +487,50 @@ func _get_game_time() -> float:
 				return child.get_game_time()
 	return _local_game_time
 
+# === UNIT CLUSTER COMPUTATION ===
+
+func _compute_unit_clusters() -> void:
+	_unit_clusters.clear()
+	if not _stage:
+		return
+	var player_units: Array = []
+	for unit in get_tree().get_nodes_in_group("faction_0"):
+		if unit.is_in_group("rts_units") and is_instance_valid(unit):
+			player_units.append(unit)
+	if player_units.is_empty():
+		return
+	# Simple greedy clustering: iterate units, assign to nearby cluster or create new
+	var assigned: Array = []
+	assigned.resize(player_units.size())
+	assigned.fill(false)
+	var clusters: Array = []  # [{positions: [Vector2], center: Vector2}]
+	for i in range(player_units.size()):
+		if assigned[i]:
+			continue
+		var cluster_positions: Array = [player_units[i].global_position]
+		assigned[i] = true
+		# Find all nearby unassigned units
+		for j in range(i + 1, player_units.size()):
+			if assigned[j]:
+				continue
+			# Check distance to any unit already in this cluster
+			var pos_j: Vector2 = player_units[j].global_position
+			var close: bool = false
+			for cp in cluster_positions:
+				if cp.distance_to(pos_j) <= CLUSTER_RADIUS:
+					close = true
+					break
+			if close:
+				cluster_positions.append(pos_j)
+				assigned[j] = true
+		if cluster_positions.size() >= CLUSTER_MIN_SIZE:
+			var center: Vector2 = Vector2.ZERO
+			for cp in cluster_positions:
+				center += cp
+			center /= float(cluster_positions.size())
+			clusters.append({"center": center, "count": cluster_positions.size()})
+	_unit_clusters = clusters
+
 # ====================== DRAW ======================
 
 func _draw() -> void:
@@ -542,6 +616,9 @@ func _draw() -> void:
 		# Pop text next to tube
 		draw_string(font, Vector2(tube_x + tube_w + 6, 27), "Pop: %d/%d" % [used, cap], HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_BODY, pop_col)
 
+	# === INCOME SPARKLINE GRAPH (next to income rates) ===
+	_draw_income_sparkline(vp, mono)
+
 	# === IDLE WORKER COUNTER (after Population) ===
 	_draw_idle_worker_counter(vp, font, mono)
 
@@ -587,6 +664,9 @@ func _draw() -> void:
 
 	# === MAP PINGS (screen-space indicators) ===
 	_draw_map_pings(vp, font)
+
+	# === UNIT STACK COUNTS (world-space badges) ===
+	_draw_unit_stack_counts(vp, font)
 
 	# === TOOLTIP (always last - on top of everything) ===
 	if _tooltip_text.length() > 0:
@@ -1084,3 +1164,83 @@ func _draw_map_pings(vp: Vector2, font: Font) -> void:
 				var base2: Vector2 = draw_pos - arr_dir * 4.0 - perp * 5.0
 				draw_line(base1, tip, Color(ping_color.r, ping_color.g, ping_color.b, alpha), 1.5)
 				draw_line(base2, tip, Color(ping_color.r, ping_color.g, ping_color.b, alpha), 1.5)
+
+# === UNIT STACK COUNTS ===
+
+func _draw_unit_stack_counts(vp: Vector2, font: Font) -> void:
+	if _unit_clusters.is_empty():
+		return
+	var camera: Camera2D = get_viewport().get_camera_2d()
+	if not camera:
+		return
+	var cam_pos: Vector2 = camera.global_position
+	var screen_center: Vector2 = vp * 0.5
+	var zoom: float = camera.zoom.x if camera.zoom.x > 0 else 1.0
+
+	for cluster in _unit_clusters:
+		var world_pos: Vector2 = cluster["center"]
+		var count: int = cluster["count"]
+		# Convert world to screen
+		var screen_pos: Vector2 = (world_pos - cam_pos) * zoom + screen_center
+		# Skip if off-screen
+		if screen_pos.x < -20.0 or screen_pos.x > vp.x + 20.0 or screen_pos.y < -20.0 or screen_pos.y > vp.y + 20.0:
+			continue
+		# Offset badge above cluster center
+		var badge_pos: Vector2 = screen_pos + Vector2(0, -18.0)
+		var badge_r: float = 9.0
+		var count_text: String = str(count)
+		# Background circle
+		draw_circle(badge_pos, badge_r, Color(0.1, 0.15, 0.25, 0.85))
+		# Border
+		draw_arc(badge_pos, badge_r, 0, TAU, 16, Color(0.6, 0.85, 1.0, 0.7), 1.0)
+		# Number
+		var text_size: Vector2 = font.get_string_size(count_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY)
+		draw_string(font, Vector2(badge_pos.x - text_size.x * 0.5, badge_pos.y + 4), count_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color.WHITE)
+
+# === INCOME SPARKLINE GRAPH ===
+
+func _draw_income_sparkline(vp: Vector2, mono: Font) -> void:
+	if _income_history_bio.size() < 2 and _income_history_gen.size() < 2:
+		return
+	# Position: below top bar, right-aligned to resource panel
+	var graph_x: float = 200.0
+	var graph_y: float = 42.0
+	var graph_w: float = 80.0
+	var graph_h: float = 20.0
+
+	# Background
+	draw_rect(Rect2(graph_x, graph_y, graph_w, graph_h), Color(0.04, 0.06, 0.1, 0.7))
+	draw_rect(Rect2(graph_x, graph_y, graph_w, graph_h), Color(0.2, 0.3, 0.4, 0.3), false, 0.5)
+
+	# Draw biomass sparkline (green)
+	if _income_history_bio.size() >= 2:
+		_draw_sparkline(_income_history_bio, graph_x, graph_y, graph_w, graph_h, Color(0.3, 0.9, 0.4, 0.8))
+	# Draw genes sparkline (cyan)
+	if _income_history_gen.size() >= 2:
+		_draw_sparkline(_income_history_gen, graph_x, graph_y, graph_w, graph_h, Color(0.5, 0.7, 1.0, 0.8))
+
+func _draw_sparkline(data: Array, x: float, y: float, w: float, h: float, color: Color) -> void:
+	if data.size() < 2:
+		return
+	# Find value range
+	var min_val: float = 0.0
+	var max_val: float = 1.0
+	for val in data:
+		if val < min_val:
+			min_val = val
+		if val > max_val:
+			max_val = val
+	var val_range: float = maxf(max_val - min_val, 1.0)
+	# Draw line segments
+	var step_x: float = w / float(data.size() - 1)
+	var prev_point: Vector2 = Vector2.ZERO
+	for i in range(data.size()):
+		var px: float = x + float(i) * step_x
+		var normalized: float = clampf((float(data[i]) - min_val) / val_range, 0.0, 1.0)
+		var py: float = y + h - normalized * (h - 2.0) - 1.0
+		var point: Vector2 = Vector2(px, py)
+		if i > 0:
+			draw_line(prev_point, point, color, 1.0, true)
+		prev_point = point
+	# End dot
+	draw_circle(prev_point, 1.5, color)
