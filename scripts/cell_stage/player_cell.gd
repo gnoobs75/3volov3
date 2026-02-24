@@ -1644,22 +1644,22 @@ func _draw_mutations() -> void:
 			_draw_mutation_visual(vis)
 			continue
 		# Angular placement system (new)
+		# Mutation visuals self-position relative to center (e.g. tail_club draws at
+		# Vector2(-rr, 0) = back). We rotate from the default angle to the desired
+		# angle so the self-positioning lands at the correct membrane location.
 		if placement.has("angle"):
 			var angle: float = placement.get("angle", 0.0)
-			var distance: float = placement.get("distance", 1.0)
 			var mirrored: bool = placement.get("mirrored", false)
 			var mut_scale: float = placement.get("scale", 1.0)
 			var rot_offset: float = placement.get("rotation_offset", 0.0)
-			var eff_handles: Array = _get_effective_handles()
-			var pos: Vector2 = SnapPointSystem.angle_to_perimeter_position_morphed(angle, _cell_radius, eff_handles, distance)
-			var outward_rot: float = SnapPointSystem.get_outward_rotation(angle) + rot_offset
-			draw_set_transform(pos, outward_rot, Vector2(mut_scale, mut_scale))
+			var default_angle: float = SnapPointSystem.get_default_angle_for_visual(vis)
+			var rotation_delta: float = angle - default_angle + rot_offset
+			draw_set_transform(Vector2.ZERO, rotation_delta, Vector2(mut_scale, mut_scale))
 			_draw_mutation_visual(vis)
 			if mirrored:
 				var mirror_angle: float = SnapPointSystem.get_mirror_angle(angle)
-				var mirror_pos: Vector2 = SnapPointSystem.angle_to_perimeter_position_morphed(mirror_angle, _cell_radius, eff_handles, distance)
-				var mirror_rot: float = SnapPointSystem.get_outward_rotation(mirror_angle) - rot_offset
-				draw_set_transform(mirror_pos, mirror_rot, Vector2(mut_scale, mut_scale))
+				var mirror_rot_delta: float = mirror_angle - default_angle - rot_offset
+				draw_set_transform(Vector2.ZERO, mirror_rot_delta, Vector2(mut_scale, mut_scale))
 				_draw_mutation_visual(vis)
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 			continue

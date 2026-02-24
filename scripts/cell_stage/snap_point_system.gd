@@ -100,7 +100,7 @@ static func get_default_angle_for_visual(visual: String) -> float:
 		"third_eye", "eye_stalks", "compound_eye", "photoreceptor":
 			return 0.0  # Front
 		"tentacles":
-			return PI * 0.5  # Bottom
+			return PI  # Back (drawing function places tentacles at PI ± 0.4)
 		"spikes", "armor_plates", "thick_membrane", "absorption_villi", "pili_network":
 			return -PI * 0.5  # Top
 		"dorsal_fin":
