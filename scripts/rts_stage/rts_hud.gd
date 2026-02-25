@@ -423,6 +423,16 @@ func _handle_cmd_button(idx: int) -> void:
 				if is_instance_valid(building) and building.is_in_group("rts_buildings"):
 					if "can_produce" in building and produce_idx < building.can_produce.size():
 						building.queue_unit(building.can_produce[produce_idx])
+		"singularity_charge":
+			if units.size() == 1 and is_instance_valid(units[0]):
+				var building: Node2D = units[0]
+				if building.has_method("start_singularity_charge"):
+					building.start_singularity_charge()
+		"singularity_fire":
+			if units.size() == 1 and is_instance_valid(units[0]):
+				var building: Node2D = units[0]
+				if building.has_method("fire_singularity_pulse"):
+					building.fire_singularity_pulse()
 
 func _handle_build_button(idx: int) -> void:
 	if idx < 0 or idx >= BUILD_BUTTONS.size():
@@ -760,7 +770,21 @@ func _get_active_command_set() -> Array:
 				all_workers = false
 	if all_workers:
 		return WORKER_CMD
-	return MILITARY_CMD
+	# Context-sensitive ability labels for single-type selections
+	var cmds: Array = MILITARY_CMD.duplicate(true)
+	if sel.size() == 1 and is_instance_valid(sel[0]) and "unit_type" in sel[0]:
+		var ut: int = sel[0].unit_type
+		match ut:
+			UnitStats.UnitType.MEDIC:
+				cmds[8] = {"label": "Regen Aura", "hotkey": "V", "tooltip": "Regen Aura: +2 HP/s to allies in 80u for 10s (V)", "action": "ability"}
+			UnitStats.UnitType.SIEGE_WORM:
+				var is_deployed: bool = "_is_deployed" in sel[0] and sel[0]._is_deployed
+				var deploy_label: String = "Undeploy" if is_deployed else "Deploy"
+				var deploy_tip: String = "Undeploy to move (V)" if is_deployed else "Deploy to enable attacks (V)"
+				cmds[8] = {"label": deploy_label, "hotkey": "V", "tooltip": deploy_tip, "action": "ability"}
+			UnitStats.UnitType.PSI_CASTER:
+				cmds[8] = {"label": "Neural Dis.", "hotkey": "V", "tooltip": "Neural Disruption: -50% speed and damage for 6s (V)", "action": "ability"}
+	return cmds
 
 func _get_building_command_set(building: Node2D) -> Array:
 	## Build a dynamic command set for a selected building, with production slots.
@@ -798,6 +822,52 @@ func _get_building_command_set(building: Node2D) -> Array:
 				"action": "produce",
 				"produce_idx": i,
 			}
+	# Singularity Core commands
+	if "building_type" in building and building.building_type == BuildingStats.BuildingType.SINGULARITY_CORE:
+		var is_cooling: bool = building.get_singularity_cooldown() > 0.0 if building.has_method("get_singularity_cooldown") else false
+		var is_charging: bool = building.is_singularity_charging() if building.has_method("is_singularity_charging") else false
+		var is_ready: bool = building.is_singularity_ready() if building.has_method("is_singularity_ready") else false
+		var charge_pct: float = clampf(building.get_singularity_charge() / 60.0, 0.0, 1.0) if building.has_method("get_singularity_charge") else 0.0
+		# Charge button (slot 2)
+		if is_cooling:
+			var cd: float = building.get_singularity_cooldown() if building.has_method("get_singularity_cooldown") else 0.0
+			cmds[2] = {
+				"label": "Cooldown",
+				"hotkey": "",
+				"tooltip": "Cooling down: %ds remaining" % int(cd),
+				"action": "",
+			}
+		elif is_charging and not is_ready:
+			cmds[2] = {
+				"label": "Charging...",
+				"hotkey": "",
+				"tooltip": "Charging: %d%%" % int(charge_pct * 100),
+				"action": "",
+				"research_progress": charge_pct,
+			}
+		elif is_ready:
+			cmds[2] = {
+				"label": "Charged!",
+				"hotkey": "",
+				"tooltip": "Singularity pulse ready to fire!",
+				"action": "",
+			}
+		else:
+			cmds[2] = {
+				"label": "Charge",
+				"hotkey": "C",
+				"tooltip": "Begin charging singularity pulse (60s)",
+				"action": "singularity_charge",
+			}
+		# Fire button (slot 3)
+		if is_ready:
+			cmds[3] = {
+				"label": "FIRE",
+				"hotkey": "F",
+				"tooltip": "Fire singularity pulse! 80 dmg + 40% slow to ALL enemies",
+				"action": "singularity_fire",
+			}
+		return cmds
 	# Research slot (if Evolution Chamber)
 	if "building_type" in building and building.building_type == BuildingStats.BuildingType.EVOLUTION_CHAMBER:
 		if building.has_method("is_researching") and building.is_researching():

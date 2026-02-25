@@ -561,6 +561,8 @@ func _do_endgame() -> void:
 	_try_research_upgrade()
 	# Try to use unit abilities
 	_try_use_abilities()
+	# Singularity Core: build if possible, charge and fire when ready
+	_try_singularity_core()
 	if _grace_active:
 		return
 	var army: Array = _get_combat_units()

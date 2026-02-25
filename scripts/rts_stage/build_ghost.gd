@@ -21,6 +21,13 @@ func _process(delta: float) -> void:
 
 func _check_validity() -> void:
 	_is_valid = true
+	# Check resource affordability
+	var stage: Node = get_tree().get_first_node_in_group("rts_stage") if get_tree() else null
+	if stage and "_resource_manager" in stage:
+		var cost: Dictionary = BuildingStats.get_cost(building_type)
+		if not stage._resource_manager.can_afford(faction_id, cost.get("biomass", 0), cost.get("genes", 0)):
+			_is_valid = false
+			return
 	# Check map edge (must be > 100u from edge)
 	var map_radius: float = 8000.0
 	if global_position.length() > map_radius - 100.0:
@@ -56,6 +63,27 @@ func _check_validity() -> void:
 			continue
 		var dist: float = global_position.distance_to(obs.global_position)
 		if dist < _size_radius + 40.0:
+			_is_valid = false
+			return
+	# Singularity Core: tech gate + max 1 per player
+	if building_type == BuildingStats.BuildingType.SINGULARITY_CORE:
+		var rts_stage: Node = get_tree().get_first_node_in_group("rts_stage") if get_tree() else null
+		if rts_stage and "_tech_tree" in rts_stage and rts_stage._tech_tree:
+			if not rts_stage._tech_tree.can_build_singularity(faction_id):
+				_is_valid = false
+				return
+		else:
+			_is_valid = false
+			return
+		# Max 1 per player check
+		var core_count: int = 0
+		for building in get_tree().get_nodes_in_group("rts_buildings"):
+			if not is_instance_valid(building):
+				continue
+			if "faction_id" in building and building.faction_id == faction_id:
+				if "building_type" in building and building.building_type == BuildingStats.BuildingType.SINGULARITY_CORE:
+					core_count += 1
+		if core_count >= 1:
 			_is_valid = false
 			return
 
