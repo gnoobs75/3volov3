@@ -34,6 +34,7 @@ var tutorial_shown: bool = false
 var rts_tutorial_shown: bool = false
 var initial_customization_done: bool = false
 var rts_spectator_mode: bool = false
+var rts_map_id: String = "petri_dish"  # "petri_dish", "blood_vessel", or "brain_cortex"
 
 # Creature visual customization (persists across deaths)
 var creature_customization: Dictionary = {

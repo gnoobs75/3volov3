@@ -86,6 +86,9 @@ var _tech_tree: Node = null
 var _grace_period: float = 0.0
 var _grace_active: bool = false
 
+# Map awareness
+var _map_id: String = "petri_dish"
+
 # SWEATY micro state
 var _rally_in_progress: bool = false
 var _rally_target: Node2D = null
@@ -155,6 +158,10 @@ func setup(fid: int, stage: Node, diff: int = Difficulty.MEDIUM) -> void:
 	difficulty = diff as Difficulty
 	_threat_map = preload("res://scripts/rts_stage/ai_threat_map.gd").new()
 	_threat_map.setup(faction_id)
+	# Read map ID for map-specific AI behavior
+	if _stage.has_method("get_map_id"):
+		_map_id = _stage.get_map_id()
+	_apply_map_personality()
 
 func set_difficulty(diff: int) -> void:
 	difficulty = diff as Difficulty
@@ -644,6 +651,60 @@ func _get_idle_workers() -> Array:
 				if "state" in unit and unit.state == 0:  # IDLE
 					workers.append(unit)
 	return workers
+
+# === MAP-SPECIFIC AI PERSONALITY ===
+
+func _apply_map_personality() -> void:
+	## Adjust AI behavior based on which map is being played.
+	## Called once during setup. Map-specific adjustments to aggression thresholds,
+	## expansion patterns, and attack routing would go here.
+	match _map_id:
+		"blood_vessel":
+			# Blood Vessel: lane-based map favors lane control and chokepoint defense
+			# TODO: Prefer building towers at capillary entrances
+			# TODO: Route attacks along lanes rather than direct paths
+			# TODO: Contest center lane resources more aggressively
+			pass
+		"brain_cortex":
+			# Brain Cortex: irregular terrain favors holding gyri and central plateau
+			# TODO: Prioritize capturing high-ground gyri
+			# TODO: Use sulci for flanking maneuvers
+			# TODO: Build defenses around central plateau
+			pass
+		_:  # petri_dish
+			# Default circular map — existing behavior is tuned for this
+			pass
+
+# === SERIALIZATION ===
+
+func serialize() -> Dictionary:
+	return {
+		"faction_id": faction_id,
+		"difficulty": difficulty,
+		"phase": _phase,
+		"decision_timer": _decision_timer,
+		"time": _time,
+		"taunt_timer": _taunt_timer,
+		"grace_period": _grace_period,
+		"grace_active": _grace_active,
+		"workers_built": _workers_built,
+		"combat_units_built": _combat_units_built,
+		"buildings_built": _buildings_built,
+		"map_id": _map_id,
+	}
+
+func deserialize(data: Dictionary) -> void:
+	difficulty = data.get("difficulty", Difficulty.MEDIUM) as Difficulty
+	_phase = data.get("phase", AIPhase.OPENING) as AIPhase
+	_decision_timer = data.get("decision_timer", 0.0)
+	_time = data.get("time", 0.0)
+	_taunt_timer = data.get("taunt_timer", 0.0)
+	_grace_period = data.get("grace_period", 0.0)
+	_grace_active = data.get("grace_active", false)
+	_workers_built = data.get("workers_built", 0)
+	_combat_units_built = data.get("combat_units_built", 0)
+	_buildings_built = data.get("buildings_built", 0)
+	_map_id = data.get("map_id", "petri_dish")
 
 # === AI TAUNTS ===
 

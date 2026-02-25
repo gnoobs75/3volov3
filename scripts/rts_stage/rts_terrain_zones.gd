@@ -6,8 +6,7 @@ var _zones: Array = []  # Array of {center: Vector2, radius: float}
 var _time: float = 0.0
 
 func setup(map_radius: float) -> void:
-	# Place 6 elevation zones at strategic locations
-	# Between spawn points, near resource clusters
+	# Default: place 6 elevation zones for petri dish map
 	var zone_configs: Array = [
 		{"center": Vector2(2000, 0), "radius": 200.0},
 		{"center": Vector2(-2000, 0), "radius": 200.0},
@@ -17,6 +16,14 @@ func setup(map_radius: float) -> void:
 		{"center": Vector2(-1500, -1500), "radius": 150.0},
 	]
 	_zones = zone_configs
+
+func setup_from_map(map_zones: Array, map_radius: float) -> void:
+	## Initialize terrain zones from map-provided layout.
+	## If map_zones is empty, falls back to default petri dish zones.
+	if map_zones.is_empty():
+		setup(map_radius)
+	else:
+		_zones = map_zones
 
 func is_on_high_ground(pos: Vector2) -> bool:
 	for zone in _zones:

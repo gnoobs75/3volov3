@@ -2,8 +2,62 @@ extends Node2D
 ## Circular petri dish arena for the RTS stage.
 ## Draws the boundary, substrate, and spawns resources + obstacles.
 ## Enhanced with living liquid environment: ambient particles, currents, caustics.
+## Serves as the base map pattern. New maps implement the same interface via duck typing.
 
 const MAP_RADIUS: float = 8000.0
+
+# === MAP INTERFACE (virtual methods — override in new map scripts) ===
+
+func get_map_name() -> String:
+	return "Petri Dish"
+
+func get_map_description() -> String:
+	return "Circular arena with scattered resources"
+
+func get_map_bounds_type() -> String:
+	return "circle"  # "circle", "rect", or "polygon"
+
+func get_map_radius() -> float:
+	return MAP_RADIUS
+
+func get_map_rect() -> Rect2:
+	return Rect2()  # Not used for circle maps
+
+func get_map_polygon() -> PackedVector2Array:
+	return PackedVector2Array()  # Not used for circle maps
+
+func get_spawn_positions() -> Array:
+	return spawn_positions
+
+func get_background_color() -> Color:
+	return Color(0.03, 0.05, 0.08)
+
+func get_particle_colors() -> Array:
+	return [Color(0.2, 0.8, 0.3), Color(0.3, 0.5, 0.9), Color(0.6, 0.3, 0.8)]
+
+func get_nav_polygon() -> PackedVector2Array:
+	## Returns the outline used for NavigationPolygon baking.
+	var outline := PackedVector2Array()
+	var num_pts: int = 64
+	for i in range(num_pts):
+		var angle: float = TAU * float(i) / float(num_pts)
+		outline.append(Vector2(cos(angle), sin(angle)) * (MAP_RADIUS - 100.0))
+	return outline
+
+func _get_resource_layout() -> Array:
+	## Returns [{pos: Vector2, type: String, amount: int}]
+	## Override in subclasses for custom resource placement.
+	return []  # Default: use spawn_resources() procedural generation
+
+func _get_obstacle_layout() -> Array:
+	## Returns [{pos: Vector2, radius: float}]
+	return []
+
+func _get_terrain_zone_layout() -> Array:
+	## Returns [{center: Vector2, radius: float, elevation: int}]
+	## Override to provide map-specific terrain zones.
+	return []
+
 const SPAWN_INSET: float = 0.7  # Spawn at 70% from center
 const TITAN_RING_RADIUS: float = 0.45  # Titans at 45% radius
 const NUM_RESOURCE_NODES: int = 45
@@ -407,9 +461,44 @@ func _draw() -> void:
 		draw_arc(sp, 120.0, 0, TAU, 32, Color(fc.r, fc.g, fc.b, 0.15), 2.0)
 
 func is_within_bounds(pos: Vector2) -> bool:
-	return pos.length() < MAP_RADIUS - 10.0
+	var bounds_type: String = get_map_bounds_type()
+	match bounds_type:
+		"rect":
+			return get_map_rect().has_point(pos)
+		"polygon":
+			return Geometry2D.is_point_in_polygon(pos, get_map_polygon())
+		_:  # "circle"
+			return pos.length() < get_map_radius() - 10.0
 
 func clamp_to_bounds(pos: Vector2) -> Vector2:
-	if pos.length() > MAP_RADIUS - 10.0:
-		return pos.normalized() * (MAP_RADIUS - 10.0)
-	return pos
+	var bounds_type: String = get_map_bounds_type()
+	match bounds_type:
+		"rect":
+			var r: Rect2 = get_map_rect()
+			return Vector2(
+				clampf(pos.x, r.position.x + 10.0, r.end.x - 10.0),
+				clampf(pos.y, r.position.y + 10.0, r.end.y - 10.0)
+			)
+		"polygon":
+			if Geometry2D.is_point_in_polygon(pos, get_map_polygon()):
+				return pos
+			# Find closest point on polygon boundary
+			var poly: PackedVector2Array = get_map_polygon()
+			var best_pos: Vector2 = pos
+			var best_dist: float = INF
+			for i in range(poly.size()):
+				var a: Vector2 = poly[i]
+				var b: Vector2 = poly[(i + 1) % poly.size()]
+				var closest: Vector2 = Geometry2D.get_closest_point_to_segment(pos, a, b)
+				var d: float = pos.distance_squared_to(closest)
+				if d < best_dist:
+					best_dist = d
+					best_pos = closest
+			# Nudge slightly inward
+			var inward: Vector2 = (Vector2.ZERO - best_pos).normalized() * 10.0
+			return best_pos + inward
+		_:  # "circle"
+			var radius: float = get_map_radius()
+			if pos.length() > radius - 10.0:
+				return pos.normalized() * (radius - 10.0)
+			return pos

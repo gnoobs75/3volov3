@@ -14,6 +14,7 @@ var _ai_directors: Array = []  # One per AI faction
 
 # HUD layer
 var _hud_layer: CanvasLayer = null
+var _desk_frame: Control = null
 var _hud: Control = null
 var _minimap: Control = null
 var _input_handler: Control = null
@@ -33,15 +34,20 @@ var _stats_screen: Node = null  # CanvasLayer for post-game stats
 var _terrain_zones: Node2D = null
 var _spectator: Node = null
 var _spectator_mode: bool = false
+var _music: Node = null
 
 var _time: float = 0.0
 var _game_started: bool = false
 var _paused: bool = false
 var _game_over_shown: bool = false
 var _game_over_type: String = ""  # "win" or "lose"
+var _music_update_timer: float = 0.0
 
 # AI difficulty (0=NOOB, 1=EASY, 2=MEDIUM, 3=HARD, 4=SWEATY)
 var ai_difficulty: int = 2
+
+# Map selection
+var _map_id: String = "petri_dish"
 
 # Navigation
 var _nav_region: NavigationRegion2D = null
@@ -49,9 +55,11 @@ var _nav_region: NavigationRegion2D = null
 func _ready() -> void:
 	add_to_group("rts_stage")
 
+	# Read map selection from GameManager
+	_map_id = GameManager.rts_map_id
+
 	# 1. Create map
-	_petri_dish = preload("res://scripts/rts_stage/petri_dish_map.gd").new()
-	_petri_dish.name = "PetriDishMap"
+	_petri_dish = _create_map()
 	_petri_dish.add_to_group("rts_map")
 	add_child(_petri_dish)
 
@@ -99,6 +107,12 @@ func _ready() -> void:
 	_hud_layer.name = "HUD"
 	_hud_layer.layer = 5
 	add_child(_hud_layer)
+
+	# Science Desk frame — dark panels on left/right (draws behind everything)
+	_desk_frame = preload("res://scripts/rts_stage/rts_desk_frame.gd").new()
+	_desk_frame.name = "DeskFrame"
+	_hud_layer.add_child(_desk_frame)
+	_desk_frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	_input_handler = preload("res://scripts/rts_stage/rts_input_handler.gd").new()
 	_input_handler.name = "InputHandler"
@@ -206,7 +220,17 @@ func _ready() -> void:
 	_terrain_zones.name = "TerrainZones"
 	_terrain_zones.z_index = 1  # Below units, above map
 	add_child(_terrain_zones)
-	_terrain_zones.setup(8000.0)
+	# Pass map-specific terrain zone layout if available
+	var map_zones: Array = []
+	if _petri_dish.has_method("_get_terrain_zone_layout"):
+		map_zones = _petri_dish._get_terrain_zone_layout()
+	_terrain_zones.setup_from_map(map_zones, _petri_dish.get_map_radius() if _petri_dish.has_method("get_map_radius") else 8000.0)
+
+	# Dynamic music system
+	_music = preload("res://scripts/rts_stage/rts_music.gd").new()
+	_music.name = "RTSMusic"
+	add_child(_music)
+	_music.setup(self, _map_id)
 
 	# Check spectator mode
 	_spectator_mode = GameManager.rts_spectator_mode
@@ -283,16 +307,41 @@ func _ready() -> void:
 
 	_game_started = true
 
+func _create_map() -> Node2D:
+	## Create the appropriate map based on _map_id selection.
+	var m: Node2D
+	match _map_id:
+		"blood_vessel":
+			m = load("res://scripts/rts_stage/blood_vessel_map.gd").new()
+			m.name = "BloodVesselMap"
+		"brain_cortex":
+			m = load("res://scripts/rts_stage/brain_cortex_map.gd").new()
+			m.name = "BrainCortexMap"
+		_:
+			m = load("res://scripts/rts_stage/petri_dish_map.gd").new()
+			m.name = "PetriDishMap"
+	return m
+
+func get_map() -> Node2D:
+	return _petri_dish
+
+func get_map_id() -> String:
+	return _map_id
+
 func _setup_navigation() -> void:
 	_nav_region = NavigationRegion2D.new()
 	_nav_region.name = "NavigationRegion"
-	# Create a large circular navigation polygon
+	# Create navigation polygon from map's nav outline
 	var nav_poly := NavigationPolygon.new()
 	var outline := PackedVector2Array()
-	var num_pts: int = 64
-	for i in range(num_pts):
-		var angle: float = TAU * float(i) / float(num_pts)
-		outline.append(Vector2(cos(angle), sin(angle)) * 7900.0)  # Slightly inside map boundary
+	if _petri_dish.has_method("get_nav_polygon"):
+		outline = _petri_dish.get_nav_polygon()
+	else:
+		# Fallback: circular polygon for backward compatibility
+		var num_pts: int = 64
+		for i in range(num_pts):
+			var angle: float = TAU * float(i) / float(num_pts)
+			outline.append(Vector2(cos(angle), sin(angle)) * 7900.0)
 	nav_poly.add_outline(outline)
 	var source_geo := NavigationMeshSourceGeometryData2D.new()
 	NavigationServer2D.parse_source_geometry_data(nav_poly, source_geo, self)
@@ -346,6 +395,29 @@ func _process(delta: float) -> void:
 	if int(_time * 2) % 3 == 0:
 		_victory_manager.check_victory()
 
+	# Update dynamic music state (~1 Hz to avoid per-frame unit scans)
+	_music_update_timer -= delta
+	if _music_update_timer <= 0.0 and _music and _music.has_method("update_combat_state"):
+		_music_update_timer = 1.0
+		var units_in_combat: int = 0
+		var enemy_visible: bool = false
+		for unit in get_tree().get_nodes_in_group("faction_0"):
+			if unit.is_in_group("rts_units") and is_instance_valid(unit):
+				if "state" in unit and unit.state == 2:  # State.ATTACK
+					units_in_combat += 1
+		# Check if any enemy units are visible in fog of war
+		if _fog_of_war:
+			for fid in [1, 2, 3]:
+				for unit in get_tree().get_nodes_in_group("faction_%d" % fid):
+					if unit.is_in_group("rts_units") and is_instance_valid(unit):
+						if _fog_of_war.has_method("is_pos_visible") and _fog_of_war.is_pos_visible(unit.global_position):
+							enemy_visible = true
+							break
+				if enemy_visible:
+					break
+		var threat_active: bool = _threat_detector != null and _threat_detector.has_method("get_active_threats") and not _threat_detector.get_active_threats().is_empty()
+		_music.update_combat_state(units_in_combat, threat_active, enemy_visible)
+
 # === PUBLIC API ===
 
 func get_resource_manager() -> Node:
@@ -398,6 +470,8 @@ func place_building(building_type: int, pos: Vector2, p_rotation: float = -1.0) 
 	## Place a player building (faction 0)
 	var cost: Dictionary = BuildingStats.get_cost(building_type)
 	if not _resource_manager.spend(0, cost.get("biomass", 0), cost.get("genes", 0)):
+		if _hud and _hud.has_method("show_event_announcement"):
+			_hud.show_event_announcement("Not enough resources!", Color(1.0, 0.3, 0.3))
 		return
 	# Grab rotation from build ghost if not explicitly provided
 	var rot: float = p_rotation
@@ -530,6 +604,7 @@ func _on_faction_eliminated(fid: int, fname: String) -> void:
 func _on_game_won() -> void:
 	_game_over_shown = true
 	_record_match_result(true)
+	AudioManager.play_rts_victory()
 	if _stats_screen and _stats_screen.has_method("show_stats"):
 		_stats_screen.show_stats("VICTORY", _victory_manager.get_stats_summary(), _victory_manager.get_game_time())
 	elif _overlay and _overlay.has_method("show_victory"):
@@ -538,6 +613,7 @@ func _on_game_won() -> void:
 func _on_game_lost() -> void:
 	_game_over_shown = true
 	_record_match_result(false)
+	AudioManager.play_rts_defeat()
 	if _stats_screen and _stats_screen.has_method("show_stats"):
 		_stats_screen.show_stats("DEFEAT", _victory_manager.get_stats_summary(), _victory_manager.get_game_time())
 	elif _overlay and _overlay.has_method("show_defeat"):
@@ -548,6 +624,7 @@ func _record_match_result(won: bool) -> void:
 	GameManager.record_rts_match({
 		"won": won,
 		"difficulty": ai_difficulty,
+		"map_id": _map_id,
 		"game_time": _victory_manager.get_game_time(),
 		"units_produced": stats.get("units_produced", 0),
 		"enemies_killed": stats.get("enemies_killed", 0),
@@ -560,11 +637,19 @@ func _on_tutorial_completed() -> void:
 	if _contextual_tips:
 		_contextual_tips.visible = true
 
+func notify_tutorial(method: String) -> void:
+	_notify_tutorial(method)
+
 func _notify_tutorial(method: String) -> void:
 	if _tutorial and is_instance_valid(_tutorial) and _tutorial.has_method(method):
 		_tutorial.call(method)
 
+func _notify_tips(method: String) -> void:
+	if _contextual_tips and is_instance_valid(_contextual_tips) and _contextual_tips.has_method(method):
+		_contextual_tips.call(method)
+
 func _on_map_event_started(event_type: int, event_pos: Vector2, _event_name: String) -> void:
+	_notify_tips("notify_map_event")
 	# Notify HUD for announcement
 	if _hud and _hud.has_method("show_event_announcement"):
 		var event_names: Array = ["Nutrient Bloom", "Toxic Tide", "Evolutionary Surge", "Petri Quake", "Migration"]
@@ -591,6 +676,7 @@ func _on_ai_taunt(fid: int, message: String) -> void:
 
 func _on_threat_detected(threat_pos: Vector2, _threat_count: int) -> void:
 	AudioManager.play_threat_alert()
+	_notify_tips("notify_threat_alert")
 	# Minimap ping at threat location
 	if _minimap and _minimap.has_method("add_attack_ping"):
 		_minimap.add_attack_ping(threat_pos)
