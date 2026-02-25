@@ -56,8 +56,9 @@ var _nav_region: NavigationRegion2D = null
 func _ready() -> void:
 	add_to_group("rts_stage")
 
-	# Read map selection from GameManager
+	# Read settings from GameManager
 	_map_id = GameManager.rts_map_id
+	ai_difficulty = GameManager.rts_difficulty
 
 	# 1. Create map
 	_petri_dish = _create_map()
@@ -233,6 +234,12 @@ func _ready() -> void:
 	add_child(_music)
 	_music.setup(self, _map_id)
 
+	# Save manager
+	_save_manager = preload("res://scripts/rts_stage/rts_save_manager.gd").new()
+	_save_manager.name = "SaveManager"
+	add_child(_save_manager)
+	_save_manager.setup(self)
+
 	# Check spectator mode
 	_spectator_mode = GameManager.rts_spectator_mode
 
@@ -275,8 +282,11 @@ func _ready() -> void:
 	# 10. Setup starting bases for all 4 factions
 	_setup_starting_bases()
 
-	# 11. Create AI directors
-	var ai_factions: Array = [1, 2, 3]
+	# 11. Create AI directors (respecting ai_count from pregame)
+	var ai_count: int = clampi(GameManager.rts_ai_count, 1, 3)
+	var ai_factions: Array = []
+	for i in range(ai_count):
+		ai_factions.append(i + 1)  # Factions 1, 2, 3
 	if _spectator_mode:
 		ai_factions = [0, 1, 2, 3]  # All factions are AI in spectator mode
 	for fid in ai_factions:
@@ -307,6 +317,12 @@ func _ready() -> void:
 		_camera.focus_position(_petri_dish.spawn_positions[0])
 
 	_game_started = true
+
+	# Auto-load save if requested from menu
+	if GameManager.rts_load_save != "":
+		var slot: String = GameManager.rts_load_save
+		GameManager.rts_load_save = ""
+		_save_manager.load_game(slot)
 
 func _create_map() -> Node2D:
 	## Create the appropriate map based on _map_id selection.
@@ -450,6 +466,9 @@ func get_terrain_zones() -> Node2D:
 
 func get_victory_manager() -> Node:
 	return _victory_manager
+
+func get_save_manager() -> Node:
+	return _save_manager
 
 func is_spectator_mode() -> bool:
 	return _spectator_mode

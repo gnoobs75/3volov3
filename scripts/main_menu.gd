@@ -22,6 +22,7 @@ const BUTTONS: Array = [
 ]
 
 var _database: Control = null
+var _pregame: Control = null
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -44,6 +45,18 @@ func _ready() -> void:
 		_database = db_instance.get_node_or_null("XenobiologyDatabase")
 		if _database:
 			_database.database_closed.connect(_on_database_closed)
+
+	# Load RTS Pre-game screen (CanvasLayer + Control child)
+	var pregame_layer := CanvasLayer.new()
+	pregame_layer.layer = 15
+	pregame_layer.name = "PregameLayer"
+	add_child(pregame_layer)
+	_pregame = preload("res://scripts/rts_stage/rts_pregame.gd").new()
+	_pregame.name = "PregameScreen"
+	pregame_layer.add_child(_pregame)
+	_pregame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_pregame.visible = false
+	_pregame.pregame_back_pressed.connect(_on_pregame_back)
 
 func _process(delta: float) -> void:
 	_time += delta
@@ -94,7 +107,7 @@ func _gui_input(event: InputEvent) -> void:
 			GameManager.go_to_snake_stage()
 		elif _hover_button == 2:
 			AudioManager.play_ui_select()
-			GameManager.go_to_rts_stage()
+			_show_pregame()
 		elif _hover_button == 3:
 			AudioManager.play_ui_select()
 			if _database:
@@ -112,6 +125,14 @@ func _input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 
 func _on_database_closed() -> void:
+	pass
+
+func _show_pregame() -> void:
+	if _pregame:
+		_pregame.visible = true
+
+func _on_pregame_back() -> void:
+	# Pregame hides itself; nothing extra needed here
 	pass
 
 func _get_button_rect(vp: Vector2, index: int) -> Rect2:

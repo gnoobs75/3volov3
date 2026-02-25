@@ -35,6 +35,9 @@ var rts_tutorial_shown: bool = false
 var initial_customization_done: bool = false
 var rts_spectator_mode: bool = false
 var rts_map_id: String = "petri_dish"  # "petri_dish", "blood_vessel", or "brain_cortex"
+var rts_difficulty: int = 2  # 0=NOOB, 1=EASY, 2=MEDIUM, 3=HARD, 4=SWEATY
+var rts_ai_count: int = 3  # 1-3 AI opponents
+var rts_load_save: String = ""  # Set to a save slot name to auto-load on RTS stage start
 
 # Creature visual customization (persists across deaths)
 var creature_customization: Dictionary = {
