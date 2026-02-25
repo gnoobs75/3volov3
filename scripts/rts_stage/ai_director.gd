@@ -322,12 +322,14 @@ func _update_phase() -> void:
 	var worker_count: int = _count_units_of_type(UnitStats.UnitType.WORKER)
 	var combat_count: int = _count_combat_units()
 	var threatened: bool = _threat_map.is_base_threatened(get_tree())
+	# Use personality-based aggression threshold
+	var aggro_threshold: int = PERSONALITY_ATTACK_THRESHOLD.get(_personality, cfg["aggression_threshold"])
 
 	if threatened and combat_count > 0:
 		_phase = AIPhase.DEFENSE
 	elif worker_count < mini(3, cfg["worker_cap"]) and not _has_evolution_chamber:
 		_phase = AIPhase.OPENING
-	elif combat_count < cfg["aggression_threshold"]:
+	elif combat_count < aggro_threshold:
 		_phase = AIPhase.EXPANSION
 	elif _get_alive_enemies() <= 1:
 		_phase = AIPhase.ENDGAME
@@ -958,14 +960,69 @@ func _try_research_upgrade() -> void:
 				if _try_spend(cost.get("biomass", 0), cost.get("genes", 0)):
 					_tech_tree.unlock_tier(faction_id, current_tier + 1)
 		return
-	# Pick random available upgrade
-	var pick: int = available[randi() % available.size()]
+	# Pick upgrade based on personality priority (first available in priority list)
+	var pick: int = -1
+	var priority: Array = _get_tech_priority()
+	for upgrade_id in priority:
+		if upgrade_id in available:
+			pick = upgrade_id
+			break
+	# Fallback to random if nothing from priority list is available
+	if pick < 0:
+		pick = available[randi() % available.size()]
+	# Also try building upgrades based on personality
+	_try_personality_building_upgrade()
 	# Let the building handle resource spending via queue_research()
 	for b in get_tree().get_nodes_in_group("faction_%d" % faction_id):
 		if b is StaticBody2D and "building_type" in b and b.building_type == BuildingStats.BuildingType.EVOLUTION_CHAMBER:
 			if b.has_method("is_complete") and b.is_complete() and b.has_method("queue_research"):
 				if b.queue_research(pick):
 					break
+
+func _try_personality_building_upgrade() -> void:
+	## Try to research a building upgrade based on personality priorities.
+	if not _tech_tree or not _tech_tree.has_method("get_available_building_upgrades"):
+		return
+	var available: Array = _tech_tree.get_available_building_upgrades(faction_id)
+	if available.is_empty():
+		return
+	# Personality priority for building upgrades
+	var pick: int = -1
+	match _personality:
+		Personality.SWARM:
+			# Prioritize Hatchery (more supply + queue slots for flooding)
+			for uid in [0, 2, 1]:  # Hatchery, Refinery, Spine Tower
+				if uid in available:
+					pick = uid
+					break
+		Personality.BULWARK:
+			# Prioritize Spine Tower (defense), then Hatchery
+			for uid in [1, 0, 2]:  # Spine Tower, Hatchery, Refinery
+				if uid in available:
+					pick = uid
+					break
+		Personality.PREDATOR:
+			# Prioritize Refinery (economy for sustaining raids)
+			for uid in [2, 0, 1]:  # Refinery, Hatchery, Spine Tower
+				if uid in available:
+					pick = uid
+					break
+		_:
+			pick = available[randi() % available.size()]
+
+	if pick < 0:
+		return
+	# Find appropriate building to queue the research
+	var target_building_type: int = -1
+	var bdata: Dictionary = _tech_tree.BUILDING_UPGRADE_DATA.get(pick, {})
+	if "target_building" in bdata:
+		target_building_type = bdata["target_building"]
+	for b in get_tree().get_nodes_in_group("faction_%d" % faction_id):
+		if b.is_in_group("rts_buildings") and "building_type" in b:
+			if b.building_type == target_building_type:
+				if b.has_method("is_complete") and b.is_complete() and b.has_method("queue_research"):
+					b.queue_research(pick)
+					return
 
 # === ABILITY USAGE ===
 
@@ -1005,6 +1062,36 @@ func _try_use_abilities() -> void:
 				# Burst gather (HARD+ only)
 				if difficulty >= Difficulty.HARD and "state" in unit and unit.state == 3:  # GATHER
 					unit.use_ability(Vector2.ZERO)
+
+# === SINGULARITY CORE ===
+
+func _try_singularity_core() -> void:
+	## In endgame, try to build a Singularity Core if tech-gated requirements are met.
+	## If one exists, start charging and fire when ready.
+	if not _tech_tree or not _tech_tree.has_method("can_build_singularity"):
+		return
+	if not _tech_tree.can_build_singularity(faction_id):
+		return
+	# Check if we already have one
+	var core: Node2D = null
+	for building in get_tree().get_nodes_in_group("faction_%d" % faction_id):
+		if not building.is_in_group("rts_buildings") or not is_instance_valid(building):
+			continue
+		if "building_type" in building and building.building_type == BuildingStats.BuildingType.SINGULARITY_CORE:
+			core = building
+			break
+	if not core:
+		# Build one
+		_try_build(BuildingStats.BuildingType.SINGULARITY_CORE)
+		return
+	# If built and complete, start charging or fire
+	if not core.has_method("is_complete") or not core.is_complete():
+		return
+	if core.has_method("is_singularity_ready") and core.is_singularity_ready():
+		core.fire_singularity_pulse()
+	elif core.has_method("is_singularity_charging") and not core.is_singularity_charging():
+		if core.has_method("get_singularity_cooldown") and core.get_singularity_cooldown() <= 0.0:
+			core.start_singularity_charge()
 
 # === MAP EVENT REACTIONS ===
 
@@ -1074,6 +1161,7 @@ func serialize() -> Dictionary:
 	return {
 		"faction_id": faction_id,
 		"difficulty": difficulty,
+		"personality": _personality,
 		"phase": _phase,
 		"decision_timer": _decision_timer,
 		"time": _time,
@@ -1084,10 +1172,12 @@ func serialize() -> Dictionary:
 		"combat_units_built": _combat_units_built,
 		"buildings_built": _buildings_built,
 		"map_id": _map_id,
+		"raid_cooldown": _raid_cooldown,
 	}
 
 func deserialize(data: Dictionary) -> void:
 	difficulty = data.get("difficulty", Difficulty.MEDIUM) as Difficulty
+	_personality = data.get("personality", Personality.ADAPTIVE) as Personality
 	_phase = data.get("phase", AIPhase.OPENING) as AIPhase
 	_decision_timer = data.get("decision_timer", 0.0)
 	_time = data.get("time", 0.0)
@@ -1098,12 +1188,20 @@ func deserialize(data: Dictionary) -> void:
 	_combat_units_built = data.get("combat_units_built", 0)
 	_buildings_built = data.get("buildings_built", 0)
 	_map_id = data.get("map_id", "petri_dish")
+	_raid_cooldown = data.get("raid_cooldown", 0.0)
 
 # === AI TAUNTS ===
 
 func _emit_taunt() -> void:
-	## Pick a random phase-appropriate taunt and emit it.
-	var messages: Array = _taunt_messages.get(_phase, [])
+	## Pick a random phase-appropriate taunt, preferring personality-specific taunts.
+	var messages: Array = []
+	# Try personality-specific taunts first (70% chance)
+	if _personality != Personality.ADAPTIVE and randf() < 0.7:
+		var pt: Dictionary = _personality_taunts.get(_personality, {})
+		messages = pt.get(_phase, [])
+	# Fall back to generic phase taunts
+	if messages.is_empty():
+		messages = _taunt_messages.get(_phase, [])
 	if messages.is_empty():
 		return
 	var msg: String = messages[randi() % messages.size()]
