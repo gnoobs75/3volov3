@@ -100,15 +100,17 @@ const BUILD_BUTTONS: Array = [
 	{"type": BuildingStats.BuildingType.BIO_WALL, "key": "R"},
 	{"type": BuildingStats.BuildingType.NUTRIENT_PROCESSOR, "key": "T"},
 	{"type": BuildingStats.BuildingType.SUPPLY_DEPOT, "key": "Y"},
+	{"type": BuildingStats.BuildingType.SINGULARITY_CORE, "key": "U"},
 ]
 
 const BUILDING_DESCRIPTIONS: Dictionary = {
 	0: "Main base. Produces workers. Drop-off for resources.",
-	1: "Produces combat units: Warriors, Tanks, Scouts, Spitters.",
+	1: "Produces combat units: Warriors, Tanks, Scouts, Spitters, Siege Worms, Psi-Casters.",
 	2: "Defensive tower. Auto-attacks nearby enemies.",
 	3: "Cheap wall segment. Blocks enemy movement.",
 	4: "Secondary resource drop-off. Provides +5 supply.",
 	5: "Organic storage sac. +10 unit supply cap.",
+	6: "Superweapon. Charges 60s, then fires pulse dealing 80 damage to all enemies.",
 }
 
 const UNIT_DESCRIPTIONS: Dictionary = {
@@ -117,6 +119,9 @@ const UNIT_DESCRIPTIONS: Dictionary = {
 	2: "Heavy tank. High HP and armor, slow.",
 	3: "Fast scout. Double detection range.",
 	4: "Ranged spitter. Fires acid projectiles.",
+	5: "Healer. Auto-heals wounded allies. Regen Aura ability.",
+	6: "Artillery. Must deploy to attack. Splash damage.",
+	7: "Debuffer. Psi Field reduces enemy armor. Neural Disruption slows.",
 }
 
 # Evolved 3x4 Command Card — context-sensitive buttons
@@ -756,6 +761,19 @@ func _get_building_command_set(building: Node2D) -> Array:
 	## Build a dynamic command set for a selected building, with production slots.
 	var cmds: Array = BUILDING_CMD.duplicate(true)
 	if not is_instance_valid(building):
+		return cmds
+	# Show construction status if building is incomplete
+	if building.has_method("is_complete") and not building.is_complete():
+		var pct: float = 0.0
+		if "construction_progress" in building and "build_time" in building and building.build_time > 0:
+			pct = clampf(building.construction_progress / building.build_time, 0.0, 1.0)
+		cmds[2] = {
+			"label": "Building...",
+			"hotkey": "",
+			"tooltip": "Under construction (%d%%). Send a worker to build." % int(pct * 100),
+			"action": "",
+			"research_progress": pct,
+		}
 		return cmds
 	# Fill production slots starting at index 2
 	if "can_produce" in building and building.has_method("is_complete") and building.is_complete():
