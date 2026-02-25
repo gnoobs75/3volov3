@@ -76,6 +76,13 @@ var _creature_codex_debounce: bool = false
 var _discovery_timer: float = 0.0
 const DISCOVERY_RANGE: float = 40.0
 
+# --- Tutorial System ---
+var _tutorial: Control = null
+var _contextual_tips: Control = null
+var _tutorial_active: bool = true  # Suppresses enemy spawns until tutorial completes
+var _tutorial_nutrients_spawned: bool = false  # Spawn guaranteed nutrients for tractor step
+var _last_hub_biome: int = -1  # Track hub transitions for boss hint tip
+
 # --- Danger Proximity Indicator ---
 var _nearest_threat_dir: Vector3 = Vector3.ZERO
 var _nearest_threat_dist: float = INF
@@ -250,20 +257,17 @@ func _on_cave_ready() -> void:
 	# Defer physics enable by one frame so collision shapes are fully registered
 	call_deferred("_enable_player_physics")
 
-	# Initial spawns
+	# Initial spawns — nutrients and prey always spawn, enemies wait for tutorial
 	call_deferred("_spawn_initial_nutrients")
 	call_deferred("_spawn_initial_prey")
-	call_deferred("_spawn_initial_wbc")
-	call_deferred("_spawn_initial_flyers")
 
-	# Spawn Macrophage Queen in the Brain biome hub
-	call_deferred("_spawn_macrophage_queen")
-
-	# Spawn new enemy types in appropriate biomes
-	call_deferred("_spawn_initial_new_enemies")
-
-	# Spawn biome bosses in each wing hub
-	call_deferred("_spawn_biome_bosses")
+	if not _tutorial_active:
+		# No tutorial — spawn enemies immediately
+		call_deferred("_spawn_initial_wbc")
+		call_deferred("_spawn_initial_flyers")
+		call_deferred("_spawn_macrophage_queen")
+		call_deferred("_spawn_initial_new_enemies")
+		call_deferred("_spawn_biome_bosses")
 
 	# Wire minimap to cave system
 	if _minimap and _minimap.has_method("setup"):
@@ -530,6 +534,33 @@ func _setup_hud() -> void:
 		radial.set_anchors_preset(Control.PRESET_FULL_RECT)
 		trait_layer.add_child(radial)
 
+	# Tutorial overlay (CanvasLayer 12 — above HUD but below codex)
+	var tutorial_layer: CanvasLayer = CanvasLayer.new()
+	tutorial_layer.layer = 12
+	tutorial_layer.name = "TutorialLayer"
+	add_child(tutorial_layer)
+
+	var tut_script = load("res://scripts/snake_stage/snake_tutorial_overlay.gd")
+	if tut_script:
+		_tutorial = Control.new()
+		_tutorial.set_script(tut_script)
+		_tutorial.name = "SnakeTutorial"
+		_tutorial.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_tutorial.tutorial_completed.connect(_on_tutorial_completed)
+		tutorial_layer.add_child(_tutorial)
+		_tutorial_active = true
+	else:
+		_tutorial_active = false
+
+	# Contextual tips (same layer, below tutorial)
+	var tips_script = load("res://scripts/snake_stage/snake_contextual_tips.gd")
+	if tips_script:
+		_contextual_tips = Control.new()
+		_contextual_tips.set_script(tips_script)
+		_contextual_tips.name = "SnakeContextualTips"
+		_contextual_tips.setup(self)
+		tutorial_layer.add_child(_contextual_tips)
+
 # --- Scan pulse timer ---
 var _scan_timer: float = 0.0
 var _scan_intensity: float = 0.0
@@ -606,31 +637,38 @@ func _handle_input() -> void:
 		if _creature_codex and not _creature_codex_debounce:
 			_creature_codex.toggle()
 			_creature_codex_debounce = true
+			if _tutorial and _tutorial.has_method("notify_codex_opened"):
+				_tutorial.notify_codex_opened()
 	elif not Input.is_key_pressed(KEY_TAB):
 		_creature_codex_debounce = false
 
 func _update_spawn_timers(delta: float) -> void:
 	_manage_nutrients()
+	# Tutorial: spawn guaranteed items near player when needed
+	if _tutorial_active and _tutorial:
+		_manage_tutorial_spawns()
 	# Prey management
 	_prey_check_timer += delta
 	if _prey_check_timer >= 3.0:
 		_prey_check_timer = 0.0
 		_manage_prey()
-	# WBC management
-	_wbc_check_timer += delta
-	if _wbc_check_timer >= 3.0:
-		_wbc_check_timer = 0.0
-		_manage_wbc()
-	# Flyer management
-	_flyer_check_timer += delta
-	if _flyer_check_timer >= 3.0:
-		_flyer_check_timer = 0.0
-		_manage_flyers()
-	# New enemy management
-	_new_enemy_check_timer += delta
-	if _new_enemy_check_timer >= 4.0:
-		_new_enemy_check_timer = 0.0
-		_manage_new_enemies()
+	# Enemy management — suppressed during tutorial safe zone
+	if not _tutorial_active:
+		# WBC management
+		_wbc_check_timer += delta
+		if _wbc_check_timer >= 3.0:
+			_wbc_check_timer = 0.0
+			_manage_wbc()
+		# Flyer management
+		_flyer_check_timer += delta
+		if _flyer_check_timer >= 3.0:
+			_flyer_check_timer = 0.0
+			_manage_flyers()
+		# New enemy management
+		_new_enemy_check_timer += delta
+		if _new_enemy_check_timer >= 4.0:
+			_new_enemy_check_timer = 0.0
+			_manage_new_enemies()
 	# Safety: full cave validation every 1 second
 	_cave_check_timer += delta
 	if _cave_check_timer >= 1.0:
@@ -840,6 +878,13 @@ func _update_camera_context() -> void:
 	var hub = _cave_gen.get_hub_at_position(_player.global_position)
 	if hub:
 		_camera.set_cave_size(clampf(hub.radius / 120.0, 0.3, 1.0))
+		# Track hub transitions for boss hint contextual tip
+		var biome_idx: int = hub.biome if "biome" in hub else -1
+		if biome_idx != _last_hub_biome:
+			_last_hub_biome = biome_idx
+			# Wing hubs (non-center/STOMACH) have biome > 0
+			if biome_idx > 0 and _contextual_tips and _contextual_tips.has_method("notify_entered_wing_hub"):
+				_contextual_tips.notify_entered_wing_hub()
 	else:
 		# In tunnel: use moderate camera
 		_camera.set_cave_size(0.15)
@@ -1402,6 +1447,11 @@ var _stun_sphere: MeshInstance3D = null
 var _stun_sphere_tween: Tween = null
 
 func _on_player_bite() -> void:
+	# Tutorial/tips notifications
+	if _tutorial and _tutorial.has_method("notify_bite"):
+		_tutorial.notify_bite()
+	if _contextual_tips and _contextual_tips.has_method("notify_first_bite"):
+		_contextual_tips.notify_first_bite()
 	# Venom is applied in do_bite_damage() (called during bite snap tween)
 	# White screen flash
 	_bite_flash_alpha = 0.4
@@ -1475,6 +1525,8 @@ func _on_player_stun_burst() -> void:
 		AudioManager.play_stun_burst()
 
 func _on_player_tail_whip() -> void:
+	if _tutorial and _tutorial.has_method("notify_tail_whip"):
+		_tutorial.notify_tail_whip()
 	if not _player:
 		return
 	# Expanding ring VFX at tail position
@@ -1508,6 +1560,58 @@ func _on_player_tail_whip() -> void:
 	# Sound
 	if AudioManager.has_method("play_stun_burst"):
 		AudioManager.play_stun_burst()
+
+# --- Tutorial System ---
+
+func _on_tutorial_completed() -> void:
+	_tutorial_active = false
+	# _tutorial will be freed by queue_free() in its own _process after fade-out
+	# We keep the reference until it's freed naturally (is_instance_valid checks guard access)
+	# Notify contextual tips that tutorial is done
+	if _contextual_tips and _contextual_tips.has_method("on_tutorial_complete"):
+		_contextual_tips.on_tutorial_complete()
+	# Now spawn all enemies that were suppressed during tutorial
+	print("[TUTORIAL] Complete — spawning enemies")
+	call_deferred("_spawn_initial_wbc")
+	call_deferred("_spawn_initial_flyers")
+	call_deferred("_spawn_macrophage_queen")
+	call_deferred("_spawn_initial_new_enemies")
+	call_deferred("_spawn_biome_bosses")
+
+func _manage_tutorial_spawns() -> void:
+	## Spawn guaranteed nutrients and prey near the player for tutorial steps.
+	if not _player or not _cave_gen or not is_instance_valid(_tutorial):
+		return
+	# Step 2 (tractor beam): spawn 3 nutrients close to player
+	if not _tutorial_nutrients_spawned and _tutorial._step >= 2:
+		_tutorial_nutrients_spawned = true
+		var forward: Vector3 = Vector3(sin(_player._heading), 0, cos(_player._heading)).normalized()
+		for i in range(3):
+			var offset: Vector3 = forward * (5.0 + i * 3.0) + Vector3(randf_range(-2, 2), 0, randf_range(-2, 2))
+			var pos: Vector3 = _player.global_position + offset
+			pos = _snap_above_floor(pos, 1.5)
+			var nutrient: Node3D = _create_nutrient()
+			nutrient.position = pos
+			_nutrients_container.add_child(nutrient)
+	# Step 4 (bite): spawn 1 prey creature nearby, respawn if it dies before step completes
+	if _tutorial._step >= 4 and _tutorial._step <= 4:
+		var has_prey: bool = false
+		for child in _creatures_container.get_children():
+			if child.is_in_group("prey") and is_instance_valid(child):
+				if child.global_position.distance_to(_player.global_position) < 30.0:
+					has_prey = true
+					break
+		if not has_prey:
+			var forward: Vector3 = Vector3(sin(_player._heading), 0, cos(_player._heading)).normalized()
+			var pos: Vector3 = _player.global_position + forward * 8.0 + Vector3(randf_range(-2, 2), 0, randf_range(-2, 2))
+			pos = _snap_above_floor(pos, 2.0)
+			var bug_script = load("res://scripts/snake_stage/prey_bug.gd")
+			var bug: CharacterBody3D = CharacterBody3D.new()
+			bug.set_script(bug_script)
+			bug.position = pos
+			_creatures_container.add_child(bug)
+			if bug.has_signal("died"):
+				bug.died.connect(_on_creature_died)
 
 func _update_stun_vfx(_delta: float) -> void:
 	pass  # Tween handles the animation
@@ -2269,6 +2373,9 @@ func _scan_nearest_threat() -> void:
 		_vitals_hud.set_meta(META_THREAT_DIR, best_dir)
 		_vitals_hud.set_meta(META_THREAT_DIST, best_dist)
 		_vitals_hud.set_meta(META_THREAT_RANGE, THREAT_DETECT_RANGE)
+		# Contextual tip: first time threat indicator appears
+		if _contextual_tips and _contextual_tips.has_method("notify_threat_indicator"):
+			_contextual_tips.notify_threat_indicator()
 	elif _vitals_hud:
 		_vitals_hud.set_meta(META_THREAT_DIST, INF)
 
