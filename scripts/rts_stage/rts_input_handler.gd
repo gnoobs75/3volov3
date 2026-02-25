@@ -43,12 +43,16 @@ func _get_world_mouse_pos() -> Vector2:
 	return _camera.get_global_mouse_position()
 
 func _gui_input(event: InputEvent) -> void:
+	if not _selection_mgr or not _command_sys:
+		return
 	if event is InputEventMouseButton:
 		_handle_mouse_button(event)
 	elif event is InputEventMouseMotion:
 		_handle_mouse_motion(event)
 
 func _handle_mouse_button(event: InputEventMouseButton) -> void:
+	if not _command_sys or not _selection_mgr:
+		return
 	if event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			if _command_sys.current_mode == _command_sys.CommandMode.BUILD:
@@ -100,7 +104,7 @@ func _handle_double_click() -> void:
 
 	# Check units first
 	var best_unit: Node2D = null
-	var best_dist: float = 25.0
+	var best_dist: float = 35.0
 	for unit in get_tree().get_nodes_in_group("rts_units"):
 		if not is_instance_valid(unit):
 			continue
@@ -147,7 +151,7 @@ func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
 func _try_select_at_mouse(add_to_selection: bool) -> void:
 	var world_pos: Vector2 = _get_world_mouse_pos()
 	var best_unit: Node2D = null
-	var best_dist: float = 25.0  # Click radius
+	var best_dist: float = 35.0  # Click radius (world units)
 
 	# Check player units first
 	for unit in get_tree().get_nodes_in_group("rts_units"):
@@ -197,7 +201,7 @@ func _handle_right_click(shift_held: bool = false) -> void:
 			continue
 		if "faction_id" in unit and unit.faction_id == 0:
 			continue
-		if world_pos.distance_to(unit.global_position) < 25.0:
+		if world_pos.distance_to(unit.global_position) < 35.0:
 			if shift_held:
 				_queue_command_to_selected({"type": "attack", "target_node": unit})
 			else:
@@ -291,6 +295,7 @@ func _handle_right_click(shift_held: bool = false) -> void:
 			if bld.has_method("set_rally_point"):
 				bld.set_rally_point(world_pos)
 		AudioManager.play_rts_command()
+		_notify_tutorial_action("notify_rally_point_set")
 		return
 
 	# Default: move
@@ -312,6 +317,7 @@ func _queue_command_to_selected(cmd: Dictionary, is_attack_move: bool = false) -
 		if is_instance_valid(unit) and unit.has_method("queue_command"):
 			unit.queue_command(cmd.duplicate())
 	AudioManager.play_rts_command()
+	_notify_tutorial_action("notify_shift_queue_used")
 	# Update waypoint chain VFX
 	_update_waypoint_chains(is_attack_move)
 
@@ -413,6 +419,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if event.keycode == group_keys[i]:
 				if event.ctrl_pressed:
 					_selection_mgr.assign_control_group(i + 1)
+					_notify_tutorial_action("notify_control_group_assigned")
 				elif event.shift_pressed:
 					_selection_mgr.add_to_control_group(i + 1)
 				elif event.alt_pressed:
@@ -480,14 +487,19 @@ func _unhandled_input(event: InputEvent) -> void:
 				var new_formation: int = _command_sys.cycle_formation()
 				_formation_notification = "Formation: %s" % RtsFormation.get_formation_name(new_formation)
 				_formation_notify_timer = FORMATION_NOTIFY_DURATION
+				_notify_tutorial_action("notify_formation_changed")
 			get_viewport().set_input_as_handled()
 			return
 
-		# G key — cycle unit stance (Aggressive=0 → Defensive=1 → Passive=2)
+		# G key — cycle unit stance (Aggressive → Defensive → Passive)
 		if event.keycode == KEY_G:
+			var cycled_any: bool = false
 			for unit in _selection_mgr.selected_units:
-				if is_instance_valid(unit) and "stance" in unit:
-					unit.stance = (unit.stance + 1) % 3
+				if is_instance_valid(unit) and unit.has_method("cycle_stance"):
+					unit.cycle_stance()
+					cycled_any = true
+			if cycled_any:
+				AudioManager.play_rts_command()
 			get_viewport().set_input_as_handled()
 			return
 
@@ -536,11 +548,16 @@ func _unhandled_input(event: InputEvent) -> void:
 				# Ability hotkey — use selected units' abilities at mouse position
 				var world_pos: Vector2 = _get_world_mouse_pos()
 				_command_sys.issue_ability(_selection_mgr.selected_units, world_pos)
+				_notify_tutorial_action("notify_ability_used")
 				get_viewport().set_input_as_handled()
 			elif event.keycode == KEY_B:
 				if _selection_mgr.has_selected_workers():
 					# Build menu handled by HUD
 					pass
+
+func _notify_tutorial_action(method: String) -> void:
+	if _stage and _stage.has_method("notify_tutorial"):
+		_stage.notify_tutorial(method)
 
 func _draw() -> void:
 	# Draw drag selection rectangle

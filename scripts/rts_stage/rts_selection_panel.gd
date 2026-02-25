@@ -23,7 +23,7 @@ var _mono: Font
 
 func setup(selection_mgr: Node) -> void:
 	_selection_mgr = selection_mgr
-	mouse_filter = MOUSE_FILTER_PASS
+	mouse_filter = MOUSE_FILTER_IGNORE
 
 func _ready() -> void:
 	_font = UIConstants.get_display_font()
@@ -143,9 +143,25 @@ func _draw_single_unit(unit: Node2D, x: float, y: float) -> void:
 	var initial: String = uname.substr(0, 1) if uname.length() > 0 else "?"
 	draw_string(_font, Vector2(portrait_cx - 7, portrait_cy + 8), initial, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_HEADER, UIConstants.TEXT_BRIGHT)
 
-	# Unit name
+	# Unit name + stance
 	var name_x: float = x + 70.0
+	var stance_label: String = ""
+	var stance_color: Color = UIConstants.TEXT_DIM
+	if "stance" in unit:
+		match unit.stance:
+			0:  # AGGRESSIVE
+				stance_label = " [A]"
+				stance_color = Color(1.0, 0.3, 0.3, 0.9)
+			1:  # DEFENSIVE
+				stance_label = " [D]"
+				stance_color = Color(1.0, 0.9, 0.2, 0.9)
+			2:  # PASSIVE
+				stance_label = " [P]"
+				stance_color = Color(0.6, 0.6, 0.6, 0.9)
 	draw_string(_font, Vector2(name_x, y + 22), uname, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_SUBHEADER, UIConstants.TEXT_BRIGHT)
+	if stance_label.length() > 0:
+		var name_w: float = _font.get_string_size(uname, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_SUBHEADER).x
+		draw_string(_mono, Vector2(name_x + name_w + 2, y + 22), stance_label, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, stance_color)
 
 	# HP bar (organic gradient)
 	if "health" in unit and "max_health" in unit:
@@ -228,10 +244,35 @@ func _draw_single_unit(unit: Node2D, x: float, y: float) -> void:
 func _draw_multi_selection(units: Array, x: float, y: float) -> void:
 	# Header
 	var valid_count: int = 0
+	var stances_seen: Dictionary = {}
 	for u in units:
 		if is_instance_valid(u):
 			valid_count += 1
-	draw_string(_font, Vector2(x + 8, y + 18), "%d units selected" % valid_count, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, UIConstants.TEXT_BRIGHT)
+			if "stance" in u:
+				stances_seen[u.stance] = true
+	var header_text: String = "%d units selected" % valid_count
+	draw_string(_font, Vector2(x + 8, y + 18), header_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, UIConstants.TEXT_BRIGHT)
+	# Stance indicator for group
+	if not stances_seen.is_empty():
+		var stance_text: String = ""
+		var st_color: Color = UIConstants.TEXT_DIM
+		if stances_seen.size() == 1:
+			var st: int = stances_seen.keys()[0]
+			match st:
+				0:
+					stance_text = "[A]"
+					st_color = Color(1.0, 0.3, 0.3, 0.9)
+				1:
+					stance_text = "[D]"
+					st_color = Color(1.0, 0.9, 0.2, 0.9)
+				2:
+					stance_text = "[P]"
+					st_color = Color(0.6, 0.6, 0.6, 0.9)
+		else:
+			stance_text = "[Mixed]"
+			st_color = Color(0.7, 0.7, 0.7, 0.7)
+		var header_w: float = _font.get_string_size(header_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION).x
+		draw_string(_mono, Vector2(x + 8 + header_w + 4, y + 18), stance_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, st_color)
 
 	# 8x3 grid of unit icons
 	var grid_x: float = x + 8.0
@@ -585,7 +626,7 @@ func _is_group_under_attack(units: Array) -> bool:
 
 # === INPUT HANDLING ===
 
-func _gui_input(event: InputEvent) -> void:
+func _input(event: InputEvent) -> void:
 	if not _selection_mgr:
 		return
 
@@ -733,6 +774,7 @@ func _get_state_name(state_val: int) -> String:
 		6: return "Returning"
 		7: return "Fleeing"
 		8: return "Holding"
+		9: return "Repairing"
 		_: return "Unknown"
 
 func _get_state_color(state_val: int) -> Color:
@@ -746,6 +788,7 @@ func _get_state_color(state_val: int) -> Color:
 		6: return Color(0.3, 0.9, 0.5, 0.7)  # Return - green
 		7: return Color(1.0, 0.6, 0.2, 0.8)  # Flee - orange
 		8: return Color(0.7, 0.7, 0.3, 0.8)  # Hold - dark yellow
+		9: return Color(0.4, 0.8, 0.9, 0.8)  # Repair - cyan
 		_: return UIConstants.TEXT_DIM
 
 func _draw_star(center: Vector2, radius: float, points: int, color: Color) -> void:

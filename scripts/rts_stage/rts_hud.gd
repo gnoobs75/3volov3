@@ -146,7 +146,7 @@ const MILITARY_CMD: Array = [
 	{"label": "Attack", "hotkey": "A", "tooltip": "Attack Move (A)", "action": "attack_move"},
 	{"label": "Patrol", "hotkey": "P", "tooltip": "Patrol (P)", "action": "patrol"},
 	{"label": "Formation", "hotkey": "F", "tooltip": "Cycle Formation (F)", "action": "formation"},
-	{"label": "", "hotkey": "", "tooltip": "", "action": ""},
+	{"label": "Stance", "hotkey": "G", "tooltip": "Cycle Stance (G): Aggressive/Defensive/Passive", "action": "stance"},
 	{"label": "", "hotkey": "", "tooltip": "", "action": ""},
 	{"label": "Ability", "hotkey": "V", "tooltip": "Use unit ability (V)", "action": "ability"},
 	{"label": "", "hotkey": "", "tooltip": "", "action": ""},
@@ -394,6 +394,11 @@ func _handle_cmd_button(idx: int) -> void:
 		"formation":
 			if _command_sys.has_method("cycle_formation"):
 				_command_sys.cycle_formation()
+		"stance":
+			for unit in units:
+				if is_instance_valid(unit) and unit.has_method("cycle_stance"):
+					unit.cycle_stance()
+			AudioManager.play_rts_command()
 		"ability":
 			if _command_sys.has_method("issue_ability"):
 				# Ability needs a target position; use current mouse world pos as fallback

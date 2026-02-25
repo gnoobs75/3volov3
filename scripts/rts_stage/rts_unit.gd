@@ -4,7 +4,7 @@ extends CharacterBody2D
 signal died(unit: Node2D)
 signal reached_target(unit: Node2D)
 
-enum State { IDLE, MOVE, ATTACK, GATHER, BUILD, PATROL, RETURN_RESOURCES, FLEE, HOLD, REPAIR }
+enum State { IDLE, MOVE, ATTACK, GATHER, BUILD, PATROL, RETURN_RESOURCES, FLEE, HOLD, REPAIR, HEALING, DEPLOYED }
 enum Stance { AGGRESSIVE, DEFENSIVE, PASSIVE }
 
 var faction_id: int = 0
@@ -30,6 +30,8 @@ var _last_resource_group: String = ""  # Track the group of the last gathered re
 
 # Stance
 var stance: int = Stance.DEFENSIVE
+var _last_attacker: Node2D = null
+var _anchor_position: Vector2 = Vector2.ZERO
 
 # State
 var state: State = State.IDLE
@@ -82,6 +84,18 @@ var _is_fortified: bool = false
 var _is_burst_gathering: bool = false
 var _is_stunned: bool = false
 var _stun_timer: float = 0.0
+
+# Medic healing
+var _heal_target: Node2D = null
+
+# Siege Worm deploy
+var _is_deployed: bool = false
+var _deploy_timer: float = 0.0
+var _deploying: bool = false  # True while deploying/undeploying
+
+# Psi-Caster field
+var _psi_field_timer: float = 0.0
+var _neural_target: Node2D = null  # Current neural disruption target
 
 # Veterancy
 var _xp: int = 0
@@ -163,6 +177,9 @@ func setup(p_faction_id: int, p_unit_type: int, p_template: CreatureTemplate) ->
 		UnitStats.UnitType.DEFENDER: _cell_radius = 16.0
 		UnitStats.UnitType.SCOUT: _cell_radius = 9.0
 		UnitStats.UnitType.RANGED: _cell_radius = 11.0
+		UnitStats.UnitType.MEDIC: _cell_radius = 11.0
+		UnitStats.UnitType.SIEGE_WORM: _cell_radius = 14.0
+		UnitStats.UnitType.PSI_CASTER: _cell_radius = 10.0
 		_: _cell_radius = 12.0
 	_init_membrane()
 
@@ -218,6 +235,43 @@ func _physics_process(delta: float) -> void:
 		if regen > 0:
 			health = minf(health + regen * delta, max_health)
 
+	# Neural disruption debuff tick (on any unit that has it)
+	if has_meta("neural_disruption_remaining"):
+		var nd_rem: float = get_meta("neural_disruption_remaining") - delta
+		if nd_rem <= 0:
+			remove_meta("neural_disruption_remaining")
+			remove_meta("neural_slow")
+			remove_meta("neural_damage_mult")
+		else:
+			set_meta("neural_disruption_remaining", nd_rem)
+
+	# Regen aura tick (on any unit that has the aura buff)
+	if has_meta("regen_aura_remaining"):
+		var ra_rem: float = get_meta("regen_aura_remaining") - delta
+		if ra_rem <= 0:
+			remove_meta("regen_aura_remaining")
+		else:
+			set_meta("regen_aura_remaining", ra_rem)
+			# Heal 2 HP/s from regen aura
+			health = minf(health + 2.0 * delta, max_health)
+
+	# Psi-Caster passive psi field (every 0.5s)
+	if unit_type == UnitStats.UnitType.PSI_CASTER:
+		_psi_field_timer += delta
+		if _psi_field_timer >= 0.5:
+			_psi_field_timer = 0.0
+			_apply_psi_field()
+
+	# Deploy timer tick (Siege Worm)
+	if _deploying:
+		_deploy_timer -= delta
+		if _deploy_timer <= 0:
+			_deploying = false
+			_is_deployed = not _is_deployed
+			if _is_deployed:
+				velocity = Vector2.ZERO
+				state = State.DEPLOYED
+
 	match state:
 		State.IDLE:
 			_process_idle(delta)
@@ -239,6 +293,10 @@ func _physics_process(delta: float) -> void:
 			_process_hold(delta)
 		State.REPAIR:
 			_process_repair(delta)
+		State.HEALING:
+			_process_healing(delta)
+		State.DEPLOYED:
+			_process_deployed(delta)
 
 	# Auto-cast abilities when enabled
 	_check_auto_cast()
@@ -256,6 +314,8 @@ func _physics_process(delta: float) -> void:
 # === STATE PROCESSORS ===
 
 func _process_idle(_delta: float) -> void:
+	# Update anchor position when idle (for defensive stance leash)
+	_anchor_position = global_position
 	# Advance command queue if pending
 	if not _command_queue.is_empty():
 		_advance_queue()
@@ -266,6 +326,7 @@ func _process_idle(_delta: float) -> void:
 func _process_move(delta: float) -> void:
 	if _nav_agent.is_navigation_finished():
 		state = State.IDLE
+		_anchor_position = global_position
 		reached_target.emit(self)
 		return
 	var next_pos: Vector2 = _nav_agent.get_next_path_position()
@@ -292,6 +353,13 @@ func _process_attack(delta: float) -> void:
 			_attack_target = null
 			command_move(_formation_slot)
 			_has_formation_slot = true  # Re-set since command_move clears it
+			return
+	# Defensive stance leash: don't chase beyond 80u from anchor position
+	if stance == Stance.DEFENSIVE and dist > attack_range:
+		var dist_from_anchor: float = global_position.distance_to(_anchor_position)
+		if dist_from_anchor > 80.0:
+			_attack_target = null
+			command_move(_anchor_position)
 			return
 	if dist > attack_range:
 		# Move toward target
@@ -584,6 +652,7 @@ func command_patrol(point_a: Vector2, point_b: Vector2) -> void:
 func command_hold() -> void:
 	state = State.HOLD
 	velocity = Vector2.ZERO
+	_anchor_position = global_position
 
 func command_flee() -> void:
 	state = State.FLEE
@@ -605,7 +674,12 @@ func command_stop() -> void:
 	_build_target = null
 	_repair_target = null
 	_has_formation_slot = false
+	_anchor_position = global_position
 	clear_command_queue()
+
+func cycle_stance() -> void:
+	stance = ((stance + 1) % 3) as Stance
+	_anchor_position = global_position
 
 # === COMMAND QUEUE (shift-queue) ===
 
@@ -733,6 +807,9 @@ func take_damage(amount: float, _attacker: Node2D = null) -> void:
 	health -= effective_amount
 	_hurt_flash = 1.0
 	_last_combat_time = 0.0
+	# Track last attacker for defensive stance
+	if is_instance_valid(_attacker):
+		_last_attacker = _attacker
 	if health <= 0:
 		# Grant XP to attacker on kill
 		if is_instance_valid(_attacker) and _attacker.has_method("grant_xp"):
@@ -758,6 +835,20 @@ func _die() -> void:
 
 func _find_best_target(enemies: Array) -> Node2D:
 	## Score enemies by priority: attacking me > lowest HP > nearest.
+	## Stance modifies target selection:
+	##   PASSIVE: never auto-acquire targets
+	##   DEFENSIVE: only auto-target _last_attacker if alive and in range
+	##   AGGRESSIVE: full detection range scan (default)
+	if stance == Stance.PASSIVE:
+		return null
+	if stance == Stance.DEFENSIVE:
+		# Only auto-target the last unit that attacked us
+		if is_instance_valid(_last_attacker) and "faction_id" in _last_attacker and _last_attacker.faction_id != faction_id:
+			var dist: float = global_position.distance_to(_last_attacker.global_position)
+			if dist <= detection_range:
+				return _last_attacker
+		return null
+	# Aggressive: score all enemies normally
 	var best: Node2D = null
 	var best_score: float = -1.0
 	for enemy in enemies:
@@ -787,6 +878,14 @@ func _check_auto_retaliate() -> void:
 		return
 	if state == State.ATTACK and is_instance_valid(_attack_target):
 		return
+	# Defensive stance: only engage _last_attacker if alive and in range
+	if stance == Stance.DEFENSIVE:
+		if is_instance_valid(_last_attacker) and "faction_id" in _last_attacker and _last_attacker.faction_id != faction_id:
+			var dist: float = global_position.distance_to(_last_attacker.global_position)
+			if dist <= detection_range:
+				command_attack(_last_attacker)
+		return
+	# Aggressive stance: scan for all enemies in detection range
 	var enemies_in_range: Array = []
 	# Check for defender taunt -- prefer attacking defenders within 80 units
 	var taunting_defender: Node2D = null
@@ -803,21 +902,12 @@ func _check_auto_retaliate() -> void:
 			taunting_defender = unit
 		if dist < detection_range:
 			enemies_in_range.append(unit)
-	# Defensive stance: only retaliate (current behavior) — don't actively seek from IDLE
-	# Aggressive stance: actively seek targets even when IDLE
-	if stance == Stance.DEFENSIVE and state == State.IDLE and enemies_in_range.is_empty():
-		return
 	if taunting_defender:
 		command_attack(taunting_defender)
 	elif not enemies_in_range.is_empty():
 		var best: Node2D = _find_best_target(enemies_in_range)
 		if best:
-			# Defensive: chase limit 150u from original position
-			if stance == Stance.DEFENSIVE:
-				command_attack(best)
-			else:
-				# Aggressive: chase indefinitely
-				command_attack(best)
+			command_attack(best)
 
 func _navigate_to_nearest_depot() -> void:
 	var nearest_depot: Node2D = null
@@ -1453,6 +1543,68 @@ func _try_auto_return_gather() -> void:
 	if is_instance_valid(_last_gather_target) and _last_gather_target.has_method("is_depleted") and not _last_gather_target.is_depleted():
 		command_gather(_last_gather_target)
 	else:
+		state = State.IDLE
+
+# === SERIALIZATION ===
+
+func serialize() -> Dictionary:
+	return {
+		"unit_type": unit_type,
+		"faction_id": faction_id,
+		"pos_x": global_position.x,
+		"pos_y": global_position.y,
+		"health": health,
+		"max_health": max_health,
+		"state": state,
+		"stance": stance,
+		"xp": _xp,
+		"vet_level": _vet_level,
+		"carried_biomass": carried_biomass,
+		"carried_genes": carried_genes,
+		"ability_cooldown": _ability_cooldown_timer,
+		"ability_cooldown_max": _ability_cooldown_max,
+		"is_fortified": _is_fortified,
+		"is_burst_gathering": _is_burst_gathering,
+		"auto_cast": _auto_cast,
+		"control_group": control_group,
+		"base_max_health": _base_max_health,
+		"base_damage": _base_damage,
+		"base_speed": _base_speed,
+		"base_attack_cooldown": _base_attack_cooldown,
+		"anchor_x": _anchor_position.x,
+		"anchor_y": _anchor_position.y,
+		"patrol_a_x": _patrol_point_a.x,
+		"patrol_a_y": _patrol_point_a.y,
+		"patrol_b_x": _patrol_point_b.x,
+		"patrol_b_y": _patrol_point_b.y,
+		"patrol_going_to_b": _patrol_going_to_b,
+	}
+
+func deserialize(data: Dictionary) -> void:
+	health = data.get("health", max_health)
+	max_health = data.get("max_health", max_health)
+	state = data.get("state", State.IDLE) as State
+	stance = data.get("stance", Stance.DEFENSIVE) as Stance
+	_xp = data.get("xp", 0)
+	_vet_level = data.get("vet_level", 0)
+	carried_biomass = data.get("carried_biomass", 0)
+	carried_genes = data.get("carried_genes", 0)
+	_ability_cooldown_timer = data.get("ability_cooldown", 0.0)
+	_ability_cooldown_max = data.get("ability_cooldown_max", _ability_cooldown_max)
+	_is_fortified = data.get("is_fortified", false)
+	_is_burst_gathering = data.get("is_burst_gathering", false)
+	_auto_cast = data.get("auto_cast", false)
+	control_group = data.get("control_group", -1)
+	_base_max_health = data.get("base_max_health", _base_max_health)
+	_base_damage = data.get("base_damage", _base_damage)
+	_base_speed = data.get("base_speed", _base_speed)
+	_base_attack_cooldown = data.get("base_attack_cooldown", _base_attack_cooldown)
+	_anchor_position = Vector2(data.get("anchor_x", global_position.x), data.get("anchor_y", global_position.y))
+	_patrol_point_a = Vector2(data.get("patrol_a_x", 0.0), data.get("patrol_a_y", 0.0))
+	_patrol_point_b = Vector2(data.get("patrol_b_x", 0.0), data.get("patrol_b_y", 0.0))
+	_patrol_going_to_b = data.get("patrol_going_to_b", true)
+	# If state references targets that no longer exist, fall back to idle
+	if state == State.ATTACK or state == State.GATHER or state == State.BUILD or state == State.REPAIR:
 		state = State.IDLE
 
 # === VETERANCY ===
