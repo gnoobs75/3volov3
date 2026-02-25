@@ -152,6 +152,10 @@ var _buf_formation_click: PackedFloat32Array
 var _buf_queue_ping: PackedFloat32Array
 var _buf_map_ping: PackedFloat32Array
 
+# RTS victory/defeat jingle buffers
+var _buf_rts_victory: PackedFloat32Array
+var _buf_rts_defeat: PackedFloat32Array
+
 # RTS unit voice buffers (indexed by unit_type 0-4)
 var _buf_rts_voice_select: Array = []  # Array of PackedFloat32Array
 var _buf_rts_voice_ack: Array = []
@@ -300,6 +304,10 @@ func _ready() -> void:
 	_buf_formation_click = SynthSounds.gen_formation_click()
 	_buf_queue_ping = SynthSounds.gen_queue_ping()
 	_buf_map_ping = SynthSounds.gen_map_ping()
+
+	# Pre-generate RTS victory/defeat jingles
+	_buf_rts_victory = SynthSounds.gen_rts_victory_fanfare()
+	_buf_rts_defeat = SynthSounds.gen_rts_defeat_drone()
 
 	# Pre-generate RTS unit voice buffers (5 types x 3 categories)
 	_buf_rts_voice_select.resize(5)
@@ -982,6 +990,12 @@ func play_rts_group_voice(units: Array) -> void:
 
 func play_map_ping() -> void:
 	_play_buffer(_buf_map_ping, -4.0)
+
+func play_rts_victory() -> void:
+	_play_buffer(_buf_rts_victory, -1.0)
+
+func play_rts_defeat() -> void:
+	_play_buffer(_buf_rts_defeat, -2.0)
 
 # RTS sound generators (simple procedural)
 func _gen_rts_select() -> PackedFloat32Array:

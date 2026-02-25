@@ -35,6 +35,7 @@ var _terrain_zones: Node2D = null
 var _spectator: Node = null
 var _spectator_mode: bool = false
 var _music: Node = null
+var _save_manager: Node = null
 
 var _time: float = 0.0
 var _game_started: bool = false

@@ -1670,3 +1670,81 @@ static func gen_map_ping() -> PackedFloat32Array:
 		var s: float = sine(phase) * 0.6 + sine(phase * 2.0) * 0.15  # Bright overtone
 		buf[i] = s * env * 0.5
 	return buf
+
+## RTS victory fanfare: 2s ascending major arpeggio (C4-E4-G4-C5) on bright saw+sine mix
+static func gen_rts_victory_fanfare() -> PackedFloat32Array:
+	var dur: float = 2.0
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	# Notes: C4=262, E4=330, G4=392, C5=523
+	var notes: Array = [262.0, 330.0, 392.0, 523.0]
+	var note_start: float = 0.0
+	var note_dur: float = 0.3
+	var note_gap: float = 0.35  # Slight overlap between notes
+	var phases: Array = [0.0, 0.0, 0.0, 0.0]
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var s: float = 0.0
+		for n in range(4):
+			var ns: float = float(n) * note_gap
+			var nt: float = t - ns  # Time since this note started
+			if nt < 0.0:
+				continue
+			# Envelope: sharp attack, sustain, long tail for reverb feel
+			var note_env: float = 0.0
+			if nt < 0.02:
+				note_env = nt / 0.02  # 20ms attack
+			elif nt < note_dur:
+				note_env = 1.0 - (nt - 0.02) / (note_dur - 0.02) * 0.3  # Slight decay
+			elif nt < note_dur + 0.8:
+				note_env = 0.7 * exp(-(nt - note_dur) * 4.0)  # Reverb tail
+			else:
+				continue
+			var freq: float = notes[n]
+			phases[n] += freq / SAMPLE_RATE
+			# Bright saw + sine mix
+			var tone: float = sawtooth(phases[n]) * 0.3 + sine(phases[n]) * 0.5
+			tone += sine(phases[n] * 2.0) * 0.1  # Octave harmonic for brightness
+			s += tone * note_env
+		# Final note (C5) gets extra octave shimmer
+		var final_t: float = t - 3.0 * note_gap
+		if final_t > 0.0 and final_t < 1.2:
+			var shimmer_env: float = exp(-final_t * 2.0) * 0.15
+			s += sin(t * 1046.0 * TAU) * shimmer_env * 0.08
+		buf[i] = clampf(s * 0.5, -1.0, 1.0)
+	return buf
+
+## RTS defeat drone: 3s descending minor chord on filtered saw, slow fade-out, low rumble
+static func gen_rts_defeat_drone() -> PackedFloat32Array:
+	var dur: float = 3.0
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	var phase1: float = 0.0
+	var phase2: float = 0.0
+	var phase3: float = 0.0
+	var filter_prev: float = 0.0
+	for i in range(samples):
+		var t: float = float(i) / SAMPLE_RATE
+		var progress: float = t / dur
+		# Descending minor chord: C4(262)->A3(220), Eb4(311)->C4(262), G4(392)->E4(330)
+		var f1: float = lerpf(262.0, 220.0, progress)
+		var f2: float = lerpf(311.0, 262.0, progress)
+		var f3: float = lerpf(392.0, 330.0, progress)
+		phase1 += f1 / SAMPLE_RATE
+		phase2 += f2 / SAMPLE_RATE
+		phase3 += f3 / SAMPLE_RATE
+		# Filtered sawtooth for each voice
+		var saw_mix: float = sawtooth(phase1) * 0.3 + sawtooth(phase2) * 0.25 + sawtooth(phase3) * 0.2
+		# Lowpass filter: more filtered as time goes on
+		var filter_amount: float = 0.3 + progress * 0.6  # 0.3 -> 0.9 (more filtered = duller)
+		filter_prev = filter_prev * filter_amount + saw_mix * (1.0 - filter_amount)
+		var s: float = filter_prev
+		# Low rumble
+		s += sin(t * 40.0 * TAU) * 0.15 * (1.0 - progress * 0.5)
+		# Overall fade-out envelope
+		var env: float = 1.0 - progress * progress  # Quadratic fade
+		env *= clampf(t * 10.0, 0.0, 1.0)  # Quick fade-in
+		buf[i] = clampf(s * env * 0.5, -1.0, 1.0)
+	return buf
