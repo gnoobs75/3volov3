@@ -8,11 +8,15 @@ var _patrol_first_point: Vector2 = Vector2.ZERO
 var _waiting_patrol_second: bool = false
 var _build_type: int = -1
 var _current_formation: int = RtsFormation.FormationType.SPREAD
+var _replay_recorder: Node = null  # Optional: set by stage manager for replay recording
 
 signal command_issued(command: String, target_pos: Vector2)
 signal build_mode_entered(building_type: int)
 signal build_mode_exited()
 signal formation_changed(formation_type: int)
+
+func set_replay_recorder(recorder: Node) -> void:
+	_replay_recorder = recorder
 
 func issue_move(units: Array, target_pos: Vector2) -> void:
 	if _current_formation != RtsFormation.FormationType.SPREAD and units.size() >= 3:
@@ -21,6 +25,8 @@ func issue_move(units: Array, target_pos: Vector2) -> void:
 	for unit in units:
 		if is_instance_valid(unit) and unit.has_method("command_move"):
 			unit.command_move(target_pos)
+	if _replay_recorder and _replay_recorder.has_method("record_move"):
+		_replay_recorder.record_move(units, target_pos)
 	AudioManager.play_rts_command()
 	command_issued.emit("move", target_pos)
 
@@ -28,6 +34,8 @@ func issue_attack(units: Array, target: Node2D) -> void:
 	for unit in units:
 		if is_instance_valid(unit) and unit.has_method("command_attack"):
 			unit.command_attack(target)
+	if _replay_recorder and _replay_recorder.has_method("record_attack"):
+		_replay_recorder.record_attack(units, target)
 	AudioManager.play_rts_command()
 	if is_instance_valid(target):
 		command_issued.emit("attack", target.global_position)
@@ -37,6 +45,8 @@ func issue_attack_move(units: Array, target_pos: Vector2) -> void:
 		if is_instance_valid(unit) and unit.has_method("command_move"):
 			unit.command_move(target_pos)
 			# Units will auto-retaliate enemies on the way
+	if _replay_recorder and _replay_recorder.has_method("record_attack_move"):
+		_replay_recorder.record_attack_move(units, target_pos)
 	AudioManager.play_rts_command()
 	command_issued.emit("attack_move", target_pos)
 
@@ -45,6 +55,8 @@ func issue_gather(units: Array, target: Node2D) -> void:
 		var unit: Node2D = units[i]
 		if is_instance_valid(unit) and unit.has_method("command_gather"):
 			unit.command_gather(target)
+	if _replay_recorder and _replay_recorder.has_method("record_gather"):
+		_replay_recorder.record_gather(units, target)
 	AudioManager.play_rts_gather()
 	if is_instance_valid(target):
 		command_issued.emit("gather", target.global_position)
@@ -58,6 +70,8 @@ func issue_patrol(units: Array, point_a: Vector2, point_b: Vector2) -> void:
 	for unit in units:
 		if is_instance_valid(unit) and unit.has_method("command_patrol"):
 			unit.command_patrol(point_a, point_b)
+	if _replay_recorder and _replay_recorder.has_method("record_patrol"):
+		_replay_recorder.record_patrol(units, point_a, point_b)
 	AudioManager.play_rts_command()
 	command_issued.emit("patrol", point_b)
 
@@ -83,6 +97,11 @@ func issue_ability(units: Array, target_pos: Vector2) -> void:
 	for unit in units:
 		if is_instance_valid(unit) and unit.has_method("use_ability"):
 			unit.use_ability(target_pos)
+	if _replay_recorder and _replay_recorder.has_method("record_ability") and not units.is_empty():
+		for unit in units:
+			if is_instance_valid(unit):
+				_replay_recorder.record_ability(unit, target_pos)
+				break
 	command_issued.emit("ability", target_pos)
 
 func issue_repair(units: Array, building: Node2D) -> void:
@@ -90,6 +109,8 @@ func issue_repair(units: Array, building: Node2D) -> void:
 		if is_instance_valid(unit) and unit.has_method("command_repair"):
 			if "unit_type" in unit and unit.unit_type == UnitStats.UnitType.WORKER:
 				unit.command_repair(building)
+	if _replay_recorder and _replay_recorder.has_method("record_repair"):
+		_replay_recorder.record_repair(units, building)
 	AudioManager.play_rts_command()
 	if is_instance_valid(building):
 		command_issued.emit("repair", building.global_position)
@@ -97,6 +118,8 @@ func issue_repair(units: Array, building: Node2D) -> void:
 func issue_set_rally_point(building: Node2D, pos: Vector2) -> void:
 	if is_instance_valid(building) and building.has_method("set_rally_point"):
 		building.set_rally_point(pos)
+	if _replay_recorder and _replay_recorder.has_method("record_rally"):
+		_replay_recorder.record_rally(building, pos)
 	AudioManager.play_rts_command()
 
 # === COMMAND MODE MANAGEMENT ===
@@ -173,5 +196,7 @@ func issue_move_formation(units: Array, target_pos: Vector2) -> void:
 				units[i].command_move(target_pos)
 				units[i]._formation_slot = target_pos
 				units[i]._has_formation_slot = true
+	if _replay_recorder and _replay_recorder.has_method("record_move"):
+		_replay_recorder.record_move(units, target_pos)
 	AudioManager.play_rts_command()
 	command_issued.emit("move", target_pos)

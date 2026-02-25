@@ -11,6 +11,10 @@ var _continue_hovered: bool = false
 var _time: float = 0.0
 
 var _draw_control: Control = null
+var _replay_recorder: Node = null
+var _save_replay_hovered: bool = false
+var _replay_saved: bool = false
+var _replay_saved_name: String = ""
 
 func _ready() -> void:
 	layer = 20
@@ -34,6 +38,9 @@ func show_stats(result: String, stats: Dictionary, game_time: float) -> void:
 	# Pause game
 	get_tree().paused = true
 
+func set_replay_recorder(recorder: Node) -> void:
+	_replay_recorder = recorder
+
 func _process(delta: float) -> void:
 	if not _visible_screen:
 		return
@@ -45,6 +52,12 @@ func _process(delta: float) -> void:
 	var mouse: Vector2 = _draw_control.get_local_mouse_position()
 	var btn_rect: Rect2 = _get_continue_rect(vp)
 	_continue_hovered = btn_rect.has_point(mouse)
+	# Save Replay hover
+	if _replay_recorder and not _replay_saved:
+		var sr_rect: Rect2 = _get_save_replay_rect(vp)
+		_save_replay_hovered = sr_rect.has_point(mouse)
+	else:
+		_save_replay_hovered = false
 	_draw_control.queue_redraw()
 
 func _get_continue_rect(vp: Vector2) -> Rect2:
@@ -57,6 +70,18 @@ func _get_continue_rect(vp: Vector2) -> Rect2:
 	var btn_h: float = 40.0
 	var btn_x: float = panel_x + (panel_w - btn_w) * 0.5
 	var btn_y: float = panel_y + panel_h - 60.0
+	return Rect2(btn_x, btn_y, btn_w, btn_h)
+
+func _get_save_replay_rect(vp: Vector2) -> Rect2:
+	var panel_w: float = 700.0
+	var panel_h: float = 450.0
+	var panel_x: float = (vp.x - panel_w) * 0.5
+	var panel_y_target: float = (vp.y - panel_h) * 0.5
+	var panel_y: float = lerpf(vp.y, panel_y_target, _ease_out(_entrance_progress))
+	var btn_w: float = 140.0
+	var btn_h: float = 36.0
+	var btn_x: float = panel_x + panel_w - btn_w - 30.0
+	var btn_y: float = panel_y + panel_h - 58.0
 	return Rect2(btn_x, btn_y, btn_w, btn_h)
 
 func _ease_out(t: float) -> float:
@@ -74,6 +99,17 @@ func _on_gui_input(event: InputEvent) -> void:
 			get_tree().paused = false
 			GameManager.go_to_menu()
 			_draw_control.accept_event()
+			return
+		# Save Replay button
+		if _replay_recorder and not _replay_saved:
+			var sr_rect: Rect2 = _get_save_replay_rect(vp)
+			if sr_rect.has_point(event.position):
+				var path: String = _replay_recorder.save_replay(_generate_replay_name())
+				if path != "":
+					_replay_saved = true
+					_replay_saved_name = path.get_file().get_basename()
+				_draw_control.accept_event()
+				return
 
 func _on_draw() -> void:
 	if not _visible_screen:
@@ -258,6 +294,38 @@ func _on_draw() -> void:
 		_draw_control.draw_string(font,
 			Vector2(btn_rect.position.x + (btn_rect.size.x - cts.x) * 0.5, btn_rect.position.y + btn_rect.size.y * 0.5 + 6),
 			continue_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_SUBHEADER, btn_text_c)
+
+		# Save Replay button (right side, next to continue)
+		if _replay_recorder:
+			var sr_rect: Rect2 = _get_save_replay_rect(vp)
+			if _replay_saved:
+				# Show "Saved" confirmation
+				_draw_control.draw_rect(sr_rect, Color(0.05, 0.15, 0.08, 0.9))
+				_draw_control.draw_rect(sr_rect, Color(UIConstants.STAT_GREEN.r, UIConstants.STAT_GREEN.g, UIConstants.STAT_GREEN.b, 0.5), false, 1.0)
+				var saved_text: String = "Saved!"
+				var sv_ts: Vector2 = font.get_string_size(saved_text, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_CAPTION)
+				_draw_control.draw_string(font,
+					Vector2(sr_rect.position.x + (sr_rect.size.x - sv_ts.x) * 0.5, sr_rect.position.y + sr_rect.size.y * 0.5 + 5),
+					saved_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION,
+					Color(UIConstants.STAT_GREEN.r, UIConstants.STAT_GREEN.g, UIConstants.STAT_GREEN.b, 0.9))
+			else:
+				var sr_bg: Color = UIConstants.BTN_BG_HOVER if _save_replay_hovered else UIConstants.BTN_BG
+				var sr_border: Color = UIConstants.BTN_BORDER_HOVER if _save_replay_hovered else UIConstants.BTN_BORDER
+				var sr_text_c: Color = UIConstants.BTN_TEXT_HOVER if _save_replay_hovered else UIConstants.BTN_TEXT
+				_draw_control.draw_rect(sr_rect, sr_bg)
+				_draw_control.draw_rect(sr_rect, sr_border, false, 1.0)
+				if _save_replay_hovered:
+					_draw_control.draw_rect(sr_rect.grow(2), Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.04))
+				var sr_label: String = "Save Replay"
+				var sr_ls: Vector2 = font.get_string_size(sr_label, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_CAPTION)
+				_draw_control.draw_string(font,
+					Vector2(sr_rect.position.x + (sr_rect.size.x - sr_ls.x) * 0.5, sr_rect.position.y + sr_rect.size.y * 0.5 + 5),
+					sr_label, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, sr_text_c)
+
+func _generate_replay_name() -> String:
+	var dt: Dictionary = Time.get_datetime_dict_from_system()
+	var result_tag: String = "win" if _result == "VICTORY" else "loss"
+	return "replay_%s_%04d%02d%02d_%02d%02d%02d" % [result_tag, dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second]
 
 func _draw_membrane_border(rect: Rect2, color: Color, amplitude: float = 2.0, freq: float = 8.0) -> void:
 	var points: PackedVector2Array = PackedVector2Array()

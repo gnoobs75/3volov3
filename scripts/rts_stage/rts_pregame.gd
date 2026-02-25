@@ -17,6 +17,18 @@ var _hover_diff: int = -1
 var _hover_ai: int = -1
 var _hover_start: bool = false
 var _hover_back: bool = false
+var _hover_replay: bool = false
+
+# Replay browser state
+var _replay_browser_open: bool = false
+var _replay_list: Array = []
+var _hover_replay_item: int = -1
+var _hover_replay_close: bool = false
+var _replay_scroll_offset: int = 0
+const REPLAY_ITEM_H: float = 44.0
+const REPLAY_VISIBLE_COUNT: int = 6
+const REPLAY_BTN_W: float = 180.0
+const REPLAY_BTN_H: float = 44.0
 
 const MAP_IDS: Array = ["petri_dish", "blood_vessel", "brain_cortex"]
 const MAP_NAMES: Array = ["Petri Dish", "Blood Vessel", "Brain Cortex"]
@@ -82,6 +94,23 @@ func _process(delta: float) -> void:
 	_hover_ai = -1
 	_hover_start = false
 	_hover_back = false
+	_hover_replay = false
+	_hover_replay_item = -1
+	_hover_replay_close = false
+
+	if _replay_browser_open:
+		# Replay browser hover detection
+		var panel_rect: Rect2 = _get_replay_panel_rect(vp)
+		var close_rect: Rect2 = _get_replay_close_rect(vp)
+		_hover_replay_close = close_rect.has_point(mouse)
+		var visible_items: int = maxi(mini(_replay_list.size() - _replay_scroll_offset, REPLAY_VISIBLE_COUNT), 0)
+		for i in range(visible_items):
+			var item_rect: Rect2 = _get_replay_item_rect(vp, i)
+			if item_rect.has_point(mouse):
+				_hover_replay_item = i + _replay_scroll_offset
+		queue_redraw()
+		return
+
 	# Map cards
 	for i in range(3):
 		if _get_map_card_rect(vp, i).has_point(mouse):
@@ -94,15 +123,26 @@ func _process(delta: float) -> void:
 	for i in range(3):
 		if _get_ai_btn_rect(vp, i).has_point(mouse):
 			_hover_ai = i
-	# Start / Back
+	# Start / Back / Replay
 	if _get_start_rect(vp).has_point(mouse):
 		_hover_start = true
 	if _get_back_rect(vp).has_point(mouse):
 		_hover_back = true
+	if _get_replay_btn_rect(vp).has_point(mouse):
+		_hover_replay = true
 	queue_redraw()
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		# Replay browser clicks take priority when open
+		if _replay_browser_open:
+			if _hover_replay_close:
+				AudioManager.play_ui_select()
+				_replay_browser_open = false
+			elif _hover_replay_item >= 0 and _hover_replay_item < _replay_list.size():
+				AudioManager.play_ui_select()
+				_watch_replay(_replay_list[_hover_replay_item])
+			return
 		if _hover_map >= 0:
 			_selected_map = _hover_map
 			GameManager.rts_map_id = MAP_IDS[_selected_map]
@@ -121,14 +161,27 @@ func _gui_input(event: InputEvent) -> void:
 		elif _hover_back:
 			AudioManager.play_ui_select()
 			_go_back()
+		elif _hover_replay:
+			AudioManager.play_ui_select()
+			_open_replay_browser()
+	# Scroll wheel for replay list
+	elif _replay_browser_open and event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
+			_replay_scroll_offset = maxi(_replay_scroll_offset - 1, 0)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
+			_replay_scroll_offset = mini(_replay_scroll_offset + 1, maxi(_replay_list.size() - REPLAY_VISIBLE_COUNT, 0))
 
 func _input(event: InputEvent) -> void:
 	if not visible:
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_ESCAPE:
-			AudioManager.play_ui_select()
-			_go_back()
+			if _replay_browser_open:
+				_replay_browser_open = false
+				AudioManager.play_ui_select()
+			else:
+				AudioManager.play_ui_select()
+				_go_back()
 			get_viewport().set_input_as_handled()
 
 func _start_game() -> void:
@@ -138,6 +191,23 @@ func _start_game() -> void:
 func _go_back() -> void:
 	pregame_back_pressed.emit()
 	visible = false
+
+func _open_replay_browser() -> void:
+	# Load replay list from the recorder's static helper
+	var ReplayRecorder = preload("res://scripts/rts_stage/rts_replay_recorder.gd")
+	_replay_list = ReplayRecorder.list_replays()
+	_replay_scroll_offset = 0
+	_replay_browser_open = true
+
+func _watch_replay(replay_info: Dictionary) -> void:
+	var path: String = replay_info.get("path", "")
+	if path.is_empty():
+		return
+	GameManager.rts_replay_file = path
+	# Load map/difficulty from replay initial state
+	GameManager.rts_map_id = replay_info.get("map_id", "petri_dish")
+	GameManager.rts_difficulty = replay_info.get("difficulty", 2)
+	GameManager.go_to_rts_stage()
 
 # === RECT HELPERS ===
 
@@ -164,6 +234,23 @@ func _get_start_rect(vp: Vector2) -> Rect2:
 
 func _get_back_rect(vp: Vector2) -> Rect2:
 	return Rect2(40.0, vp.y * 0.87, BACK_BTN_W, BACK_BTN_H)
+
+func _get_replay_btn_rect(vp: Vector2) -> Rect2:
+	return Rect2(vp.x - REPLAY_BTN_W - 40.0, vp.y * 0.87, REPLAY_BTN_W, REPLAY_BTN_H)
+
+func _get_replay_panel_rect(vp: Vector2) -> Rect2:
+	var panel_w: float = 480.0
+	var panel_h: float = REPLAY_ITEM_H * REPLAY_VISIBLE_COUNT + 80.0
+	return Rect2((vp.x - panel_w) * 0.5, (vp.y - panel_h) * 0.5, panel_w, panel_h)
+
+func _get_replay_close_rect(vp: Vector2) -> Rect2:
+	var panel: Rect2 = _get_replay_panel_rect(vp)
+	return Rect2(panel.position.x + panel.size.x - 40.0, panel.position.y + 8.0, 32.0, 32.0)
+
+func _get_replay_item_rect(vp: Vector2, visual_index: int) -> Rect2:
+	var panel: Rect2 = _get_replay_panel_rect(vp)
+	var items_y: float = panel.position.y + 55.0
+	return Rect2(panel.position.x + 16.0, items_y + visual_index * REPLAY_ITEM_H, panel.size.x - 32.0, REPLAY_ITEM_H - 4.0)
 
 # === DRAWING ===
 
@@ -233,11 +320,18 @@ func _draw() -> void:
 	# 11. BACK button
 	_draw_back_button(vp, a)
 
-	# 12. Corner frame
+	# 12. WATCH REPLAY button (bottom right)
+	_draw_replay_button(vp, a)
+
+	# 13. Corner frame
 	UIConstants.draw_corner_frame(self, Rect2(8, 8, vp.x - 16, vp.y - 16), Color(ACCENT_DIM.r, ACCENT_DIM.g, ACCENT_DIM.b, 0.25 * a))
 
-	# 13. Match stats summary (bottom right)
+	# 14. Match stats summary (bottom right, shifted up for replay button)
 	_draw_stats_summary(vp, a)
+
+	# 15. Replay browser overlay (drawn last, on top)
+	if _replay_browser_open:
+		_draw_replay_browser(vp, a)
 
 func _draw_subtle_grid(vp: Vector2, a: float) -> void:
 	var spacing: float = 50.0
@@ -467,6 +561,90 @@ func _draw_back_button(vp: Vector2, a: float) -> void:
 	var text_col := Color(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, (0.9 if _hover_back else 0.6) * a)
 	draw_string(font, Vector2(rect.position.x + (rect.size.x - label_s.x) * 0.5, rect.position.y + rect.size.y * 0.5 + UIConstants.FONT_BODY * 0.35), label, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_BODY, text_col)
 
+func _draw_replay_button(vp: Vector2, a: float) -> void:
+	var rect := _get_replay_btn_rect(vp)
+	var font := UIConstants.get_display_font()
+
+	# Background
+	var bg := Color(0.06, 0.08, 0.14, 0.8)
+	if _hover_replay:
+		bg = Color(0.10, 0.14, 0.22, 0.9)
+	draw_rect(rect, bg)
+
+	# Border
+	var border_col := Color(UIConstants.STAT_YELLOW.r, UIConstants.STAT_YELLOW.g, UIConstants.STAT_YELLOW.b, 0.4 if _hover_replay else 0.25)
+	draw_rect(rect, border_col, false, 1.0)
+
+	# Label
+	var label := "WATCH REPLAY"
+	var label_s := font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_CAPTION)
+	var text_col := Color(UIConstants.STAT_YELLOW.r, UIConstants.STAT_YELLOW.g, UIConstants.STAT_YELLOW.b, (0.9 if _hover_replay else 0.6) * a)
+	draw_string(font, Vector2(rect.position.x + (rect.size.x - label_s.x) * 0.5, rect.position.y + rect.size.y * 0.5 + UIConstants.FONT_CAPTION * 0.35), label, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, text_col)
+
+func _draw_replay_browser(vp: Vector2, a: float) -> void:
+	var font := UIConstants.get_display_font()
+	var mono := UIConstants.get_mono_font()
+
+	# Dim background
+	draw_rect(Rect2(0, 0, vp.x, vp.y), Color(0.0, 0.0, 0.0, 0.6 * a))
+
+	# Panel
+	var panel := _get_replay_panel_rect(vp)
+	draw_rect(panel, Color(0.04, 0.06, 0.12, 0.96))
+	draw_rect(panel, Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.5 * a), false, 1.5)
+	UIConstants.draw_corner_frame(self, panel.grow(3), Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.3 * a))
+
+	# Title
+	var title := "REPLAY BROWSER"
+	var ts := font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_SUBHEADER)
+	draw_string(font, Vector2(panel.position.x + (panel.size.x - ts.x) * 0.5, panel.position.y + 30), title, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_SUBHEADER, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, a))
+
+	# Separator
+	draw_line(Vector2(panel.position.x + 16, panel.position.y + 45), Vector2(panel.position.x + panel.size.x - 16, panel.position.y + 45), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.3 * a), 1.0)
+
+	# Close button (X)
+	var close_rect := _get_replay_close_rect(vp)
+	var close_col := Color(UIConstants.STAT_RED.r, UIConstants.STAT_RED.g, UIConstants.STAT_RED.b, 0.8 if _hover_replay_close else 0.4)
+	draw_string(font, Vector2(close_rect.position.x + 8, close_rect.position.y + 22), "X", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_SUBHEADER, close_col)
+
+	# Replay items
+	if _replay_list.is_empty():
+		var empty_text := "No replays found"
+		var empty_s := mono.get_string_size(empty_text, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_BODY)
+		draw_string(mono, Vector2(panel.position.x + (panel.size.x - empty_s.x) * 0.5, panel.position.y + panel.size.y * 0.5), empty_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_BODY, Color(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.6 * a))
+		return
+
+	var visible_count: int = mini(_replay_list.size() - _replay_scroll_offset, REPLAY_VISIBLE_COUNT)
+	for i in range(visible_count):
+		var real_index: int = i + _replay_scroll_offset
+		var item_rect: Rect2 = _get_replay_item_rect(vp, i)
+		var info: Dictionary = _replay_list[real_index]
+		var is_hovered: bool = real_index == _hover_replay_item
+
+		# Item background
+		var item_bg: Color = Color(0.08, 0.12, 0.20, 0.8) if is_hovered else Color(0.05, 0.07, 0.12, 0.6)
+		draw_rect(item_rect, item_bg)
+		if is_hovered:
+			draw_rect(item_rect, Color(UIConstants.ACCENT.r, UIConstants.ACCENT.g, UIConstants.ACCENT.b, 0.3), false, 1.0)
+
+		# Replay name
+		var replay_name: String = info.get("name", "unknown")
+		draw_string(mono, Vector2(item_rect.position.x + 10, item_rect.position.y + 18), replay_name, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, Color(TEXT_LIGHT.r, TEXT_LIGHT.g, TEXT_LIGHT.b, 0.9 * a))
+
+		# Map + time info on second line
+		var map_id: String = info.get("map_id", "petri_dish")
+		var total_time: float = info.get("total_time", 0.0)
+		var mins: int = int(total_time) / 60
+		var secs: int = int(total_time) % 60
+		var detail_text: String = "%s  |  %02d:%02d  |  %d events" % [map_id, mins, secs, info.get("event_count", 0)]
+		draw_string(mono, Vector2(item_rect.position.x + 10, item_rect.position.y + 34), detail_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.7 * a))
+
+	# Scroll indicator
+	if _replay_list.size() > REPLAY_VISIBLE_COUNT:
+		var indicator_text: String = "%d-%d of %d" % [_replay_scroll_offset + 1, _replay_scroll_offset + visible_count, _replay_list.size()]
+		var ind_s := mono.get_string_size(indicator_text, HORIZONTAL_ALIGNMENT_CENTER, -1, UIConstants.FONT_TINY)
+		draw_string(mono, Vector2(panel.position.x + (panel.size.x - ind_s.x) * 0.5, panel.position.y + panel.size.y - 12), indicator_text, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.5 * a))
+
 func _draw_stats_summary(vp: Vector2, a: float) -> void:
 	var font := UIConstants.get_mono_font()
 	var stats: Dictionary = GameManager.get_rts_stats()
@@ -476,7 +654,7 @@ func _draw_stats_summary(vp: Vector2, a: float) -> void:
 	if total == 0:
 		return
 	var x: float = vp.x - 200.0
-	var y: float = vp.y * 0.87
+	var y: float = vp.y * 0.80
 	draw_string(font, Vector2(x, y), "RECORD", HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, Color(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.5 * a))
 	y += 16.0
 	var record_str := "%dW / %dL" % [wins, losses]

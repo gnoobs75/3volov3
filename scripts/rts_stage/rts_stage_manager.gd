@@ -36,6 +36,9 @@ var _spectator: Node = null
 var _spectator_mode: bool = false
 var _music: Node = null
 var _save_manager: Node = null
+var _replay_recorder: Node = null
+var _replay_player: Node = null  # CanvasLayer, only in replay mode
+var _replay_mode: bool = false
 
 var _time: float = 0.0
 var _game_started: bool = false
@@ -240,8 +243,33 @@ func _ready() -> void:
 	add_child(_save_manager)
 	_save_manager.setup(self)
 
+	# Replay recorder (always active for auto-recording)
+	_replay_recorder = preload("res://scripts/rts_stage/rts_replay_recorder.gd").new()
+	_replay_recorder.name = "ReplayRecorder"
+	add_child(_replay_recorder)
+	_replay_recorder.setup(self)
+	# Connect replay recorder to command system for rich event capture
+	if _command_system and _command_system.has_method("set_replay_recorder"):
+		_command_system.set_replay_recorder(_replay_recorder)
+
+	# Check replay mode
+	_replay_mode = GameManager.rts_replay_file != ""
+	if _replay_mode:
+		_replay_player = preload("res://scripts/rts_stage/rts_replay_player.gd").new()
+		_replay_player.name = "ReplayPlayer"
+		add_child(_replay_player)
+		_replay_player.setup(self)
+		if _replay_player.load_replay(GameManager.rts_replay_file):
+			_replay_player.start_playback()
+		GameManager.rts_replay_file = ""
+		# Disable fog of war in replay mode
+		if _fog_of_war and _fog_of_war.has_method("set_enabled"):
+			_fog_of_war.set_enabled(false)
+		elif _fog_of_war:
+			_fog_of_war.visible = false
+
 	# Check spectator mode
-	_spectator_mode = GameManager.rts_spectator_mode
+	_spectator_mode = GameManager.rts_spectator_mode or _replay_mode
 
 	# 7. Initialize systems
 	_faction_manager.setup_factions()
@@ -408,6 +436,9 @@ func _process(delta: float) -> void:
 	if not _game_started or _game_over_shown:
 		return
 	_time += delta
+	# Update replay recorder with current game time
+	if _replay_recorder:
+		_replay_recorder.update_time(_time)
 	# Check victory periodically
 	if int(_time * 2) % 3 == 0:
 		_victory_manager.check_victory()
@@ -473,10 +504,20 @@ func get_save_manager() -> Node:
 func is_spectator_mode() -> bool:
 	return _spectator_mode
 
+func is_replay_mode() -> bool:
+	return _replay_mode
+
+func get_replay_recorder() -> Node:
+	return _replay_recorder
+
 func toggle_intel_overlay() -> void:
 	if _intel_overlay and _intel_overlay.has_method("toggle"):
 		_intel_overlay.toggle()
 		_notify_tutorial("notify_intel_toggled")
+
+func toggle_hotkey_card() -> void:
+	if _hud and _hud.has_method("toggle_hotkey_card"):
+		_hud.toggle_hotkey_card()
 
 func set_ai_difficulty(diff: int) -> void:
 	ai_difficulty = diff
@@ -509,6 +550,9 @@ func place_building(building_type: int, pos: Vector2, p_rotation: float = -1.0) 
 	_victory_manager.stats_buildings_built += 1
 	# Send nearest selected worker to build
 	var workers: Array = _selection_manager.get_selected_workers()
+	# Record replay event
+	if _replay_recorder:
+		_replay_recorder.record_build(workers[0] if not workers.is_empty() else null, building_type, pos)
 	if not workers.is_empty():
 		var nearest_worker: Node2D = workers[0]
 		var nearest_dist: float = INF
@@ -559,6 +603,9 @@ func _on_unit_produced(building: Node2D, unit_type: int) -> void:
 	var fid: int = building.faction_id if "faction_id" in building else 0
 	if not _faction_manager.can_afford_supply(fid, unit_type):
 		return
+	# Record replay event
+	if _replay_recorder:
+		_replay_recorder.record_produce(building, unit_type)
 	var template: CreatureTemplate = _faction_manager.get_template(fid)
 	var offset: Vector2 = Vector2(randf_range(-30, 30), randf_range(30, 60))
 	var unit: Node2D = _spawn_unit(fid, unit_type, building.global_position + offset, template)
@@ -624,20 +671,31 @@ func _on_faction_eliminated(fid: int, fname: String) -> void:
 func _on_game_won() -> void:
 	_game_over_shown = true
 	_record_match_result(true)
+	_auto_save_replay()
 	AudioManager.play_rts_victory()
 	if _stats_screen and _stats_screen.has_method("show_stats"):
 		_stats_screen.show_stats("VICTORY", _victory_manager.get_stats_summary(), _victory_manager.get_game_time())
+		if _stats_screen.has_method("set_replay_recorder"):
+			_stats_screen.set_replay_recorder(_replay_recorder)
 	elif _overlay and _overlay.has_method("show_victory"):
 		_overlay.show_victory(_victory_manager.get_game_time())
 
 func _on_game_lost() -> void:
 	_game_over_shown = true
 	_record_match_result(false)
+	_auto_save_replay()
 	AudioManager.play_rts_defeat()
 	if _stats_screen and _stats_screen.has_method("show_stats"):
 		_stats_screen.show_stats("DEFEAT", _victory_manager.get_stats_summary(), _victory_manager.get_game_time())
+		if _stats_screen.has_method("set_replay_recorder"):
+			_stats_screen.set_replay_recorder(_replay_recorder)
 	elif _overlay and _overlay.has_method("show_defeat"):
 		_overlay.show_defeat(_victory_manager.get_game_time())
+
+func _auto_save_replay() -> void:
+	if _replay_recorder and not _replay_mode:
+		_replay_recorder.stop_recording()
+		_replay_recorder.auto_save_replay()
 
 func _record_match_result(won: bool) -> void:
 	var stats: Dictionary = _victory_manager.get_stats_summary()
