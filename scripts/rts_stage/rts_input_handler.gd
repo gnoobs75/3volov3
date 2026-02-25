@@ -36,6 +36,11 @@ func _process(delta: float) -> void:
 	if _formation_notify_timer > 0:
 		_formation_notify_timer -= delta
 		queue_redraw()
+	# Redraw while save/load toast is visible
+	elif _stage and _stage.has_method("get_save_manager"):
+		var sm: Node = _stage.get_save_manager()
+		if sm and sm.has_method("get_toast_alpha") and sm.get_toast_alpha() > 0.0:
+			queue_redraw()
 
 func _get_world_mouse_pos() -> Vector2:
 	if not _camera:
@@ -449,7 +454,25 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 
-		# Camera bookmarks: Ctrl+F5..F8 save, F5..F8 recall
+		# Quicksave (F5) / Quickload (F9)
+		if event.keycode == KEY_F5 and not event.ctrl_pressed and not event.shift_pressed:
+			if _stage and _stage.has_method("get_save_manager"):
+				var sm: Node = _stage.get_save_manager()
+				if sm and sm.has_method("save_game"):
+					if sm.save_game("quicksave"):
+						sm._show_toast("Quicksaved")
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode == KEY_F9 and not event.ctrl_pressed and not event.shift_pressed:
+			if _stage and _stage.has_method("get_save_manager"):
+				var sm: Node = _stage.get_save_manager()
+				if sm and sm.has_method("load_game"):
+					if sm.load_game("quicksave"):
+						sm._show_toast("Quickloaded")
+			get_viewport().set_input_as_handled()
+			return
+
+		# Camera bookmarks: Ctrl+F5..F8 save, Shift+F5..F8 recall
 		var bookmark_keys: Array = [KEY_F5, KEY_F6, KEY_F7, KEY_F8]
 		for bk in range(bookmark_keys.size()):
 			if event.keycode == bookmark_keys[bk]:
@@ -459,7 +482,7 @@ func _unhandled_input(event: InputEvent) -> void:
 						_camera_bookmarks[bookmark_keys[bk]] = _camera.global_position
 					get_viewport().set_input_as_handled()
 					return
-				else:
+				elif event.shift_pressed:
 					# Recall saved bookmark
 					if bookmark_keys[bk] in _camera_bookmarks and _camera and _camera.has_method("focus_position"):
 						_camera.focus_position(_camera_bookmarks[bookmark_keys[bk]])
@@ -564,6 +587,25 @@ func _draw() -> void:
 	if _drag_rect_visible and _drag_rect.size.length() > 0:
 		draw_rect(_drag_rect, Color(0.2, 1.0, 0.3, 0.15))
 		draw_rect(_drag_rect, Color(0.2, 1.0, 0.3, 0.6), false, 1.5)
+
+	# Draw save/load toast notification
+	if _stage and _stage.has_method("get_save_manager"):
+		var sm: Node = _stage.get_save_manager()
+		if sm and sm.has_method("get_toast_alpha"):
+			var toast_alpha: float = sm.get_toast_alpha()
+			if toast_alpha > 0.0:
+				var toast_text: String = sm.get_toast_text()
+				var vp2: Vector2 = get_viewport_rect().size
+				var tfont: Font = ThemeDB.fallback_font
+				if tfont and toast_text.length() > 0:
+					var pill_w: float = 180.0
+					var pill_h: float = 30.0
+					var tx: float = vp2.x * 0.5 - pill_w * 0.5
+					var ty: float = vp2.y * 0.12
+					draw_rect(Rect2(tx, ty, pill_w, pill_h), Color(0.05, 0.12, 0.08, 0.75 * toast_alpha))
+					draw_rect(Rect2(tx, ty, pill_w, pill_h), Color(0.2, 0.8, 0.4, 0.5 * toast_alpha), false, 1.0)
+					var tls: Vector2 = tfont.get_string_size(toast_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 13)
+					draw_string(tfont, Vector2(tx + (pill_w - tls.x) * 0.5, ty + 20), toast_text, HORIZONTAL_ALIGNMENT_LEFT, int(pill_w), 13, Color(0.5, 1.0, 0.6, 0.95 * toast_alpha))
 
 	# Draw formation notification
 	if _formation_notify_timer > 0 and _formation_notification.length() > 0:

@@ -115,3 +115,35 @@ func get_stats_summary() -> Dictionary:
 		"factions_eliminated": factions_eliminated,
 		"army_timeline": _army_timeline.duplicate(),
 	}
+
+func serialize() -> Dictionary:
+	return {
+		"game_time": _game_time,
+		"eliminations": _eliminations.duplicate(),
+		"stats_units_produced": stats_units_produced,
+		"stats_units_lost": stats_units_lost,
+		"stats_enemies_killed": stats_enemies_killed,
+		"stats_buildings_built": stats_buildings_built,
+		"stats_buildings_lost": stats_buildings_lost,
+		"stats_resources_gathered": stats_resources_gathered,
+		"stats_total_biomass": stats_total_biomass,
+		"stats_total_genes": stats_total_genes,
+		"army_timeline": _army_timeline.duplicate(),
+	}
+
+func deserialize(data: Dictionary) -> void:
+	_game_time = data.get("game_time", 0.0)
+	_eliminations = []
+	for e in data.get("eliminations", []):
+		_eliminations.append(int(e))
+	stats_units_produced = data.get("stats_units_produced", 0)
+	stats_units_lost = data.get("stats_units_lost", 0)
+	stats_enemies_killed = data.get("stats_enemies_killed", 0)
+	stats_buildings_built = data.get("stats_buildings_built", 0)
+	stats_buildings_lost = data.get("stats_buildings_lost", 0)
+	stats_resources_gathered = data.get("stats_resources_gathered", 0)
+	stats_total_biomass = data.get("stats_total_biomass", 0)
+	stats_total_genes = data.get("stats_total_genes", 0)
+	_army_timeline = []
+	for v in data.get("army_timeline", []):
+		_army_timeline.append(int(v))

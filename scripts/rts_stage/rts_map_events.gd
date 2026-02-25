@@ -344,3 +344,33 @@ func get_warning_event_name() -> String:
 	if _pending_event_type >= 0 and EVENT_DATA.has(_pending_event_type):
 		return EVENT_DATA[_pending_event_type]["name"]
 	return ""
+
+# === SERIALIZATION ===
+
+func serialize() -> Dictionary:
+	return {
+		"event_timer": _event_timer,
+		"next_event_time": _next_event_time,
+		"active_event": _active_event,
+		"event_position_x": _event_position.x,
+		"event_position_y": _event_position.y,
+		"event_remaining": _event_remaining,
+		"warning_active": _warning_active,
+		"warning_timer": _warning_timer,
+		"pending_event_type": _pending_event_type,
+	}
+
+func deserialize(data: Dictionary) -> void:
+	_event_timer = data.get("event_timer", 0.0)
+	_next_event_time = data.get("next_event_time", randf_range(EVENT_INTERVAL_MIN, EVENT_INTERVAL_MAX))
+	_active_event = data.get("active_event", -1)
+	_event_position = Vector2(data.get("event_position_x", 0.0), data.get("event_position_y", 0.0))
+	_event_remaining = data.get("event_remaining", 0.0)
+	_warning_active = data.get("warning_active", false)
+	_warning_timer = data.get("warning_timer", 0.0)
+	_pending_event_type = data.get("pending_event_type", -1)
+	# Clear any transient event state (bloom resources, migration creatures)
+	# These won't be serialized — if an event was active, it ends on load
+	if _active_event >= 0:
+		_active_event = -1
+		_event_remaining = 0.0

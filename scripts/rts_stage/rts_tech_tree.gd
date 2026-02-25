@@ -260,6 +260,14 @@ func unlock_tier(faction_id: int, tier: int) -> bool:
 	tier_unlocked.emit(faction_id, tier)
 	return true
 
+func can_build_singularity(faction_id: int) -> bool:
+	## Check if faction has ALL 3 Tier 3 upgrades, required to build the Singularity Core.
+	var t3_ids: Array = [UpgradeId.BERSERKER_ENZYMES, UpgradeId.HIVE_MIND, UpgradeId.APEX_PREDATOR]
+	for uid in t3_ids:
+		if not has_upgrade(faction_id, uid):
+			return false
+	return true
+
 # === STAT MODIFIER METHODS ===
 # Called by units to apply tech tree bonuses.
 
@@ -346,6 +354,48 @@ func get_gather_rate_mult(faction_id: int) -> float:
 func get_refinery_radius() -> float:
 	## Radius within which the Refinery bonus applies
 	return 200.0
+
+# === SERIALIZATION ===
+
+func serialize() -> Dictionary:
+	var upgrades_data: Dictionary = {}
+	for fid in _faction_upgrades:
+		var arr: Array = []
+		for uid in _faction_upgrades[fid]:
+			arr.append(uid)
+		upgrades_data[str(fid)] = arr
+	var building_upgrades_data: Dictionary = {}
+	for fid in _faction_building_upgrades:
+		var arr: Array = []
+		for uid in _faction_building_upgrades[fid]:
+			arr.append(uid)
+		building_upgrades_data[str(fid)] = arr
+	var tier_data: Dictionary = {}
+	for fid in _faction_tier:
+		tier_data[str(fid)] = _faction_tier[fid]
+	return {
+		"faction_upgrades": upgrades_data,
+		"faction_building_upgrades": building_upgrades_data,
+		"faction_tiers": tier_data,
+	}
+
+func deserialize(data: Dictionary) -> void:
+	var upgrades_data: Dictionary = data.get("faction_upgrades", {})
+	for fid_str in upgrades_data:
+		var fid: int = int(fid_str)
+		_faction_upgrades[fid] = []
+		for uid in upgrades_data[fid_str]:
+			_faction_upgrades[fid].append(int(uid))
+	var building_upgrades_data: Dictionary = data.get("faction_building_upgrades", {})
+	for fid_str in building_upgrades_data:
+		var fid: int = int(fid_str)
+		_faction_building_upgrades[fid] = []
+		for uid in building_upgrades_data[fid_str]:
+			_faction_building_upgrades[fid].append(int(uid))
+	var tier_data: Dictionary = data.get("faction_tiers", {})
+	for fid_str in tier_data:
+		var fid: int = int(fid_str)
+		_faction_tier[fid] = int(tier_data[fid_str])
 
 # === UTILITY ===
 

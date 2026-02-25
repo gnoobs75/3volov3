@@ -60,6 +60,11 @@ var _being_repaired: bool = false
 var _repair_fade: float = 0.0
 var _last_damage_time: float = 999.0
 
+# Singularity Core
+var _singularity_charge: float = 0.0  # 0 to 60
+var _singularity_cooldown: float = 0.0  # 180s after firing
+var _singularity_charging: bool = false
+
 # Visual
 var _time: float = 0.0
 var _collision_shape: CollisionShape2D = null
@@ -183,6 +188,51 @@ func set_rally_point(pos: Vector2) -> void:
 	has_rally_point = true
 	queue_redraw()
 
+# === SINGULARITY CORE ===
+
+func start_singularity_charge() -> void:
+	if building_type != BuildingStats.BuildingType.SINGULARITY_CORE:
+		return
+	if not _is_constructed or _singularity_cooldown > 0.0 or _singularity_charging:
+		return
+	_singularity_charging = true
+	_singularity_charge = 0.0
+
+func fire_singularity_pulse() -> void:
+	if building_type != BuildingStats.BuildingType.SINGULARITY_CORE:
+		return
+	if _singularity_charge < 60.0 or _singularity_cooldown > 0.0:
+		return
+	# Deal 80 damage to ALL enemy units on the map
+	for unit in get_tree().get_nodes_in_group("rts_units"):
+		if not is_instance_valid(unit):
+			continue
+		if "faction_id" in unit and unit.faction_id == faction_id:
+			continue
+		if unit.has_method("take_damage"):
+			unit.take_damage(80.0, self)
+		# Apply 40% slow for 8s
+		unit.set_meta("singularity_slow", 0.4)
+		unit.set_meta("singularity_slow_remaining", 8.0)
+	# Reset state
+	_singularity_cooldown = 180.0
+	_singularity_charge = 0.0
+	_singularity_charging = false
+	if faction_id == 0:
+		AudioManager.play_rts_attack()
+
+func get_singularity_charge() -> float:
+	return _singularity_charge
+
+func get_singularity_cooldown() -> float:
+	return _singularity_cooldown
+
+func is_singularity_charging() -> bool:
+	return _singularity_charging
+
+func is_singularity_ready() -> bool:
+	return _singularity_charge >= 60.0 and _singularity_cooldown <= 0.0
+
 # === PRODUCTION ===
 
 func queue_unit(unit_type: int) -> bool:
@@ -286,6 +336,14 @@ func _process(delta: float) -> void:
 			var unit_type: int = _production_queue.pop_front()
 			unit_produced.emit(self, unit_type)
 			_start_production()  # Start next in queue
+	# Singularity Core charge/cooldown
+	if _is_constructed and building_type == BuildingStats.BuildingType.SINGULARITY_CORE:
+		if _singularity_cooldown > 0.0:
+			_singularity_cooldown = maxf(_singularity_cooldown - delta, 0.0)
+		elif _singularity_charging and _singularity_charge < 60.0:
+			_singularity_charge = minf(_singularity_charge + delta, 60.0)
+		# Minimap pulse while charging
+		set_meta("minimap_pulse", _singularity_charging and _singularity_charge < 60.0)
 	# Tower auto-attack + smooth eye
 	if _is_constructed and attack_range > 0:
 		_tower_attack_timer = maxf(_tower_attack_timer - delta, 0.0)
@@ -352,6 +410,24 @@ func _draw() -> void:
 		for i in range(4):
 			var angle: float = TAU * float(i) / 4.0 + build_rotation
 			draw_line(Vector2.ZERO, Vector2(cos(angle), sin(angle)) * size_radius * 0.8, Color(0.5, 0.5, 0.4, 0.3 * pct), 1.0)
+		# Selection ring — show even during construction so user sees feedback
+		if is_selected and faction_id == 0:
+			var sel_r: float = size_radius + 4.0
+			var sel_color: Color = Color(0.2, 1.0, 0.3, 0.6)
+			var dash_count: int = 8
+			var dash_arc: float = TAU / float(dash_count) * 0.6
+			var gap_arc: float = TAU / float(dash_count) * 0.4
+			var ring_offset: float = _time * 1.5
+			for di in range(dash_count):
+				var start_a: float = ring_offset + float(di) * (dash_arc + gap_arc)
+				draw_arc(Vector2.ZERO, sel_r, start_a, start_a + dash_arc, 6, sel_color, 1.5)
+			# Construction percentage text
+			var font: Font = ThemeDB.fallback_font
+			var pct_text: String = "Building... %d%%" % int(pct * 100)
+			if font:
+				draw_string(font, Vector2(-35, size_radius + 18), pct_text, HORIZONTAL_ALIGNMENT_CENTER, 80, 9, Color(0.8, 0.9, 0.5, 0.8))
+		# Health bar during construction
+		_draw_health_bar()
 		return
 
 	# Salvage flash (white overlay)
@@ -392,6 +468,8 @@ func _draw() -> void:
 			_draw_nutrient_processor(mc, gc)
 		BuildingStats.BuildingType.SUPPLY_DEPOT:
 			_draw_supply_depot(mc, gc)
+		BuildingStats.BuildingType.SINGULARITY_CORE:
+			_draw_singularity_core(mc, gc)
 
 	# Health bar
 	_draw_health_bar()
@@ -530,6 +608,82 @@ func _draw_nutrient_processor(mc: Color, gc: Color) -> void:
 	if _building_upgrade_id == 2:
 		draw_arc(Vector2.ZERO, size_radius * 0.5, _time * 3.0, _time * 3.0 + PI * 1.2, 12, Color(gc.r, gc.g, gc.b, 0.25), 1.5)
 
+func _draw_singularity_core(mc: Color, gc: Color) -> void:
+	var is_cooling: bool = _singularity_cooldown > 0.0
+	var charge_pct: float = clampf(_singularity_charge / 60.0, 0.0, 1.0)
+	# Dim when cooling down
+	var dim: float = 0.3 if is_cooling else 1.0
+
+	# Outer energy field (concentric pulsing circles)
+	var pulse: float = sin(_time * 2.0) * 4.0
+	var pulse2: float = sin(_time * 3.0 + 1.5) * 3.0
+	draw_circle(Vector2.ZERO, size_radius * 1.4 + pulse, Color(gc.r * 0.3, gc.g * 0.2, gc.b * 0.6, 0.06 * dim))
+	draw_circle(Vector2.ZERO, size_radius * 1.1 + pulse2, Color(gc.r * 0.4, gc.g * 0.2, gc.b * 0.8, 0.08 * dim))
+
+	# Core orb — large pulsing center
+	var core_pulse: float = 1.0 + 0.08 * sin(_time * 2.5)
+	var core_r: float = size_radius * 0.7 * core_pulse
+	var core_intensity: float = 0.4 + charge_pct * 0.5
+	var core_color: Color = Color(0.5 * dim, 0.2 * dim, 0.9 * dim, core_intensity * dim)
+	draw_circle(Vector2.ZERO, core_r, core_color)
+	# Inner bright core
+	draw_circle(Vector2.ZERO, core_r * 0.4, Color(0.7 * dim, 0.4 * dim, 1.0 * dim, (0.5 + charge_pct * 0.4) * dim))
+	# White hot center when fully charged
+	if charge_pct >= 1.0 and not is_cooling:
+		var hot_pulse: float = 0.6 + 0.4 * sin(_time * 6.0)
+		draw_circle(Vector2.ZERO, core_r * 0.2, Color(1.0, 1.0, 1.0, hot_pulse))
+
+	# Energy tendrils radiating outward (6 wavy lines)
+	var tendril_count: int = 6
+	for i in range(tendril_count):
+		var base_angle: float = TAU * float(i) / float(tendril_count) + _time * 0.3
+		var tendril_alpha: float = (0.2 + charge_pct * 0.4) * dim
+		var tendril_color: Color = Color(0.6, 0.3, 1.0, tendril_alpha)
+		var prev_pt: Vector2 = Vector2(cos(base_angle), sin(base_angle)) * core_r * 0.5
+		var segments: int = 8
+		for j in range(1, segments + 1):
+			var t: float = float(j) / float(segments)
+			var r: float = core_r * 0.5 + t * (size_radius * 0.9)
+			var wave: float = sin(_time * 4.0 + float(i) * 1.5 + t * 6.0) * 6.0 * t
+			var angle: float = base_angle + wave * 0.02
+			var pt: Vector2 = Vector2(cos(angle), sin(angle)) * r + Vector2(0, wave * 0.3)
+			draw_line(prev_pt, pt, Color(tendril_color.r, tendril_color.g, tendril_color.b, tendril_alpha * (1.0 - t * 0.5)), 1.5 - t * 0.8)
+			prev_pt = pt
+
+	# Charge progress arc (filling ring around building)
+	if _singularity_charging and charge_pct > 0.0 and charge_pct < 1.0:
+		var arc_r: float = size_radius + 6.0
+		var arc_end: float = -PI * 0.5 + TAU * charge_pct
+		draw_arc(Vector2.ZERO, arc_r, -PI * 0.5, arc_end, 32, Color(0.7, 0.3, 1.0, 0.8), 3.0)
+		# Glow at arc tip
+		var tip_angle: float = arc_end
+		var tip_pos: Vector2 = Vector2(cos(tip_angle), sin(tip_angle)) * arc_r
+		draw_circle(tip_pos, 3.0, Color(0.8, 0.5, 1.0, 0.6))
+	elif charge_pct >= 1.0 and not is_cooling:
+		# Fully charged — complete pulsing ring
+		var ring_alpha: float = 0.5 + 0.3 * sin(_time * 5.0)
+		draw_arc(Vector2.ZERO, size_radius + 6.0, 0, TAU, 32, Color(1.0, 0.8, 0.3, ring_alpha), 3.0)
+
+	# Cooldown indicator (grey arc showing remaining cooldown)
+	if is_cooling:
+		var cd_pct: float = clampf(_singularity_cooldown / 180.0, 0.0, 1.0)
+		draw_arc(Vector2.ZERO, size_radius + 6.0, -PI * 0.5, -PI * 0.5 + TAU * cd_pct, 32, Color(0.4, 0.4, 0.4, 0.4), 2.0)
+		# Cooldown text
+		var font: Font = ThemeDB.fallback_font
+		if font and is_selected and faction_id == 0:
+			var cd_text: String = "CD: %ds" % int(_singularity_cooldown)
+			draw_string(font, Vector2(-20, size_radius + 20), cd_text, HORIZONTAL_ALIGNMENT_CENTER, 50, 9, Color(0.6, 0.6, 0.6, 0.8))
+
+	# Outer membrane ring
+	var membrane_pts := PackedVector2Array()
+	for i in range(24):
+		var angle: float = TAU * float(i) / 24.0
+		var r: float = size_radius + sin(angle * 5.0 + _time * 1.5) * 2.5
+		membrane_pts.append(Vector2(cos(angle) * r, sin(angle) * r))
+	for i in range(membrane_pts.size()):
+		var next_i: int = (i + 1) % membrane_pts.size()
+		draw_line(membrane_pts[i], membrane_pts[next_i], Color(mc.r * 0.5, mc.g * 0.3, mc.b * 0.7, 0.5 * dim), 1.5)
+
 func _draw_health_bar() -> void:
 	if health >= max_health:
 		return
@@ -597,6 +751,80 @@ func _draw_repair_sparkles() -> void:
 		draw_line(pos - Vector2(0, spark_size), pos + Vector2(0, spark_size), sparkle_color, 1.0)
 		# Small glow dot
 		draw_circle(pos, 1.5, Color(0.3, 1.0, 0.4, 0.3 * sparkle_alpha))
+
+# === SERIALIZATION ===
+
+func serialize() -> Dictionary:
+	var prod_queue_copy: Array = []
+	for ut in _production_queue:
+		prod_queue_copy.append(ut)
+	var res_queue_copy: Array = []
+	for entry in _research_queue:
+		res_queue_copy.append({"id": entry.get("id", 0), "is_building": entry.get("is_building", false)})
+	return {
+		"building_type": building_type,
+		"faction_id": faction_id,
+		"pos_x": global_position.x,
+		"pos_y": global_position.y,
+		"health": health,
+		"max_health": max_health,
+		"construction_progress": construction_progress,
+		"is_constructed": _is_constructed,
+		"build_time": build_time,
+		"build_rotation": build_rotation,
+		"production_queue": prod_queue_copy,
+		"production_timer": _production_timer,
+		"current_production_time": _current_production_time,
+		"research_queue": res_queue_copy,
+		"research_timer": _research_timer,
+		"current_research_time": _current_research_time,
+		"is_researching": _is_researching,
+		"building_upgrade_id": _building_upgrade_id,
+		"rally_x": rally_point.x,
+		"rally_y": rally_point.y,
+		"has_rally_point": has_rally_point,
+		"supply_provided": supply_provided,
+		"attack_range": attack_range,
+		"attack_damage": attack_damage,
+		"singularity_charge": _singularity_charge,
+		"singularity_cooldown": _singularity_cooldown,
+		"singularity_charging": _singularity_charging,
+	}
+
+func deserialize(data: Dictionary) -> void:
+	health = data.get("health", max_health)
+	max_health = data.get("max_health", max_health)
+	construction_progress = data.get("construction_progress", 0.0)
+	_is_constructed = data.get("is_constructed", false)
+	build_time = data.get("build_time", build_time)
+	build_rotation = data.get("build_rotation", 0.0)
+	_production_timer = data.get("production_timer", 0.0)
+	_current_production_time = data.get("current_production_time", 0.0)
+	_research_timer = data.get("research_timer", 0.0)
+	_current_research_time = data.get("current_research_time", 0.0)
+	_is_researching = data.get("is_researching", false)
+	_building_upgrade_id = data.get("building_upgrade_id", -1)
+	supply_provided = data.get("supply_provided", supply_provided)
+	attack_range = data.get("attack_range", attack_range)
+	attack_damage = data.get("attack_damage", attack_damage)
+	# Restore production queue
+	var prod_q: Array = data.get("production_queue", [])
+	_production_queue.clear()
+	for ut in prod_q:
+		_production_queue.append(int(ut))
+	# Restore research queue
+	var res_q: Array = data.get("research_queue", [])
+	_research_queue.clear()
+	for entry in res_q:
+		_research_queue.append({"id": int(entry.get("id", 0)), "is_building": entry.get("is_building", false)})
+	# Singularity Core state
+	_singularity_charge = data.get("singularity_charge", 0.0)
+	_singularity_cooldown = data.get("singularity_cooldown", 0.0)
+	_singularity_charging = data.get("singularity_charging", false)
+	# Rally point
+	if data.get("has_rally_point", false):
+		rally_point = Vector2(data.get("rally_x", 0.0), data.get("rally_y", 0.0))
+		has_rally_point = true
 
 # === RESEARCH ===
 

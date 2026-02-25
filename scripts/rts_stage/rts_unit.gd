@@ -320,6 +320,27 @@ func _process_idle(_delta: float) -> void:
 	if not _command_queue.is_empty():
 		_advance_queue()
 		return
+	# Medic auto-heal: scan for wounded allies
+	if unit_type == UnitStats.UnitType.MEDIC:
+		var stats: Dictionary = UnitStats.get_stats(unit_type)
+		var heal_range: float = stats.get("heal_range", 150.0)
+		var best_ally: Node2D = null
+		var best_dist: float = heal_range
+		for unit in get_tree().get_nodes_in_group("faction_%d" % faction_id):
+			if unit == self or not is_instance_valid(unit):
+				continue
+			if not (unit is CharacterBody2D) or not "health" in unit or not "max_health" in unit:
+				continue
+			if unit.health >= unit.max_health:
+				continue
+			var dist: float = global_position.distance_to(unit.global_position)
+			if dist < best_dist:
+				best_dist = dist
+				best_ally = unit
+		if best_ally:
+			_heal_target = best_ally
+			state = State.HEALING
+			return
 	# Auto-retaliate: find nearby enemies
 	_check_auto_retaliate()
 
@@ -331,7 +352,7 @@ func _process_move(delta: float) -> void:
 		return
 	var next_pos: Vector2 = _nav_agent.get_next_path_position()
 	var dir: Vector2 = (next_pos - global_position).normalized()
-	_nav_agent.velocity = dir * speed
+	_nav_agent.velocity = dir * _get_effective_speed()
 	_charge_moved = true
 
 func _process_attack(delta: float) -> void:
@@ -366,7 +387,7 @@ func _process_attack(delta: float) -> void:
 		_nav_agent.target_position = _attack_target.global_position
 		var next_pos: Vector2 = _nav_agent.get_next_path_position()
 		var dir: Vector2 = (next_pos - global_position).normalized()
-		_nav_agent.velocity = dir * speed
+		_nav_agent.velocity = dir * _get_effective_speed()
 		_charge_moved = true
 	else:
 		# Stutter-step kiting for ranged units
@@ -377,7 +398,7 @@ func _process_attack(delta: float) -> void:
 				var kite_pos: Vector2 = global_position + away_dir * 60.0
 				_nav_agent.target_position = kite_pos
 				var next_pos: Vector2 = _nav_agent.get_next_path_position()
-				_nav_agent.velocity = (next_pos - global_position).normalized() * speed * 0.6
+				_nav_agent.velocity = (next_pos - global_position).normalized() * _get_effective_speed() * 0.6
 				return
 		# In range — attack
 		velocity = Vector2.ZERO
@@ -410,7 +431,7 @@ func _process_gather(delta: float) -> void:
 		_nav_agent.target_position = _gather_target.global_position
 		var next_pos: Vector2 = _nav_agent.get_next_path_position()
 		var dir: Vector2 = (next_pos - global_position).normalized()
-		_nav_agent.velocity = dir * speed
+		_nav_agent.velocity = dir * _get_effective_speed()
 	else:
 		velocity = Vector2.ZERO
 		_gather_timer += delta
@@ -436,7 +457,7 @@ func _process_build(delta: float) -> void:
 		_nav_agent.target_position = _build_target.global_position
 		var next_pos: Vector2 = _nav_agent.get_next_path_position()
 		var dir: Vector2 = (next_pos - global_position).normalized()
-		_nav_agent.velocity = dir * speed
+		_nav_agent.velocity = dir * _get_effective_speed()
 	else:
 		velocity = Vector2.ZERO
 		if _build_target.has_method("add_construction"):
@@ -453,7 +474,7 @@ func _process_patrol(_delta: float) -> void:
 	else:
 		var next_pos: Vector2 = _nav_agent.get_next_path_position()
 		var dir: Vector2 = (next_pos - global_position).normalized()
-		_nav_agent.velocity = dir * speed
+		_nav_agent.velocity = dir * _get_effective_speed()
 	# Check for enemies while patrolling
 	_check_auto_retaliate()
 
@@ -489,7 +510,7 @@ func _process_return_resources(_delta: float) -> void:
 		return
 	var next_pos: Vector2 = _nav_agent.get_next_path_position()
 	var dir: Vector2 = (next_pos - global_position).normalized()
-	_nav_agent.velocity = dir * speed
+	_nav_agent.velocity = dir * _get_effective_speed()
 
 func _process_hold(_delta: float) -> void:
 	# Hold position but still attack enemies in range
@@ -534,7 +555,7 @@ func _process_flee(delta: float) -> void:
 	if not _nav_agent.is_navigation_finished():
 		var next_pos: Vector2 = _nav_agent.get_next_path_position()
 		var dir: Vector2 = (next_pos - global_position).normalized()
-		_nav_agent.velocity = dir * speed * 1.3
+		_nav_agent.velocity = dir * _get_effective_speed() * 1.3
 
 func _process_repair(delta: float) -> void:
 	if not is_instance_valid(_repair_target) or not _repair_target.is_in_group("rts_buildings"):
@@ -552,11 +573,73 @@ func _process_repair(delta: float) -> void:
 		_nav_agent.target_position = _repair_target.global_position
 		var next_pos: Vector2 = _nav_agent.get_next_path_position()
 		var dir: Vector2 = (next_pos - global_position).normalized()
-		_nav_agent.velocity = dir * speed
+		_nav_agent.velocity = dir * _get_effective_speed()
 	else:
 		velocity = Vector2.ZERO
 		if _repair_target.has_method("take_repair"):
 			_repair_target.take_repair(15.0 * delta)
+
+func _process_healing(delta: float) -> void:
+	if not is_instance_valid(_heal_target):
+		_heal_target = null
+		state = State.IDLE
+		return
+	# Check if target is fully healed
+	if "health" in _heal_target and "max_health" in _heal_target:
+		if _heal_target.health >= _heal_target.max_health:
+			_heal_target = null
+			state = State.IDLE
+			return
+	var stats: Dictionary = UnitStats.get_stats(unit_type)
+	var heal_range: float = stats.get("heal_range", 150.0)
+	var dist: float = global_position.distance_to(_heal_target.global_position)
+	if dist > heal_range:
+		# Move toward heal target
+		_nav_agent.target_position = _heal_target.global_position
+		var next_pos: Vector2 = _nav_agent.get_next_path_position()
+		var dir: Vector2 = (next_pos - global_position).normalized()
+		_nav_agent.velocity = dir * _get_effective_speed()
+	else:
+		velocity = Vector2.ZERO
+		# Check biomass cost
+		var heal_cost: float = stats.get("heal_cost_per_sec", 0.5)
+		var stage: Node = get_tree().get_first_node_in_group("rts_stage")
+		var can_afford: bool = true
+		if stage and stage.has_method("get_resource_manager"):
+			var rm: Node = stage.get_resource_manager()
+			if rm and rm.has_method("get_biomass"):
+				if rm.get_biomass(faction_id) < heal_cost * delta:
+					can_afford = false
+		if not can_afford:
+			_heal_target = null
+			state = State.IDLE
+			return
+		# Apply healing
+		var heal_rate: float = stats.get("heal_rate", 4.0)
+		_heal_target.health = minf(_heal_target.health + heal_rate * delta, _heal_target.max_health)
+		# Deduct biomass cost
+		if stage and stage.has_method("get_resource_manager"):
+			var rm: Node = stage.get_resource_manager()
+			if rm and rm.has_method("spend_biomass"):
+				rm.spend_biomass(faction_id, int(ceilf(heal_cost * delta)))
+
+func _process_deployed(delta: float) -> void:
+	# Siege Worm deployed state: stationary, can attack
+	velocity = Vector2.ZERO
+	# Check for enemies in range and auto-attack
+	if not is_instance_valid(_attack_target):
+		_check_auto_retaliate()
+	if is_instance_valid(_attack_target):
+		var dist: float = global_position.distance_to(_attack_target.global_position)
+		var stats: Dictionary = UnitStats.get_stats(unit_type)
+		var min_range: float = stats.get("min_range", 80.0)
+		if dist > attack_range:
+			_attack_target = null  # Out of range, don't chase while deployed
+		elif dist < min_range:
+			_attack_target = null  # Too close
+		elif _attack_timer <= 0:
+			_perform_attack()
+			_attack_timer = attack_cooldown
 
 func _on_velocity_computed(safe_velocity: Vector2) -> void:
 	velocity = safe_velocity
@@ -603,15 +686,22 @@ func _find_nearest_resource() -> Node2D:
 # === COMMANDS ===
 
 func command_move(target_pos: Vector2) -> void:
+	# Siege Worm: auto-undeploy if deployed
+	if _is_deployed and unit_type == UnitStats.UnitType.SIEGE_WORM:
+		_toggle_deploy()
 	state = State.MOVE
 	_target_position = target_pos
 	_nav_agent.target_position = target_pos
 	_charge_moved = false
 	_has_formation_slot = false
+	_heal_target = null
 	if faction_id == 0:
 		AudioManager.play_rts_unit_voice(unit_type, "ack")
 
 func command_attack(target: Node2D) -> void:
+	# Siege Worm must be deployed to attack; if not deployed, auto-deploy first
+	if unit_type == UnitStats.UnitType.SIEGE_WORM and not _is_deployed:
+		_toggle_deploy()
 	state = State.ATTACK
 	_attack_target = target
 	_charge_moved = false
@@ -763,19 +853,33 @@ func _perform_attack() -> void:
 	if unit_type == UnitStats.UnitType.FIGHTER and _charge_moved:
 		actual_damage *= UnitStats.get_stats(unit_type).get("charge_bonus", 1.0)
 		_charge_moved = false
+	# Neural disruption damage penalty
+	if has_meta("neural_damage_mult"):
+		actual_damage *= get_meta("neural_damage_mult")
 	# Ranged: fire projectile
-	if unit_type == UnitStats.UnitType.RANGED:
-		# Spitter min_range: flee if enemy is too close
+	if unit_type == UnitStats.UnitType.RANGED or unit_type == UnitStats.UnitType.PSI_CASTER:
+		# Spitter/Psi-Caster min_range: flee if enemy is too close
 		var dist: float = global_position.distance_to(_attack_target.global_position)
-		if dist < 40.0:
+		var min_r: float = UnitStats.get_stats(unit_type).get("min_range", 40.0)
+		if dist < min_r:
 			# Kite away from target
 			var flee_dir: Vector2 = (global_position - _attack_target.global_position).normalized()
 			var flee_pos: Vector2 = global_position + flee_dir * 80.0
 			_nav_agent.target_position = flee_pos
 			var next_pos: Vector2 = _nav_agent.get_next_path_position()
-			_nav_agent.velocity = (next_pos - global_position).normalized() * speed
+			_nav_agent.velocity = (next_pos - global_position).normalized() * _get_effective_speed()
 			return
 		_fire_projectile(_attack_target)
+	elif unit_type == UnitStats.UnitType.SIEGE_WORM:
+		# Siege Worm: fire splash projectile (must be deployed)
+		if not _is_deployed:
+			return
+		var dist: float = global_position.distance_to(_attack_target.global_position)
+		var sw_stats: Dictionary = UnitStats.get_stats(unit_type)
+		var min_r: float = sw_stats.get("min_range", 80.0)
+		if dist < min_r:
+			return
+		_fire_siege_projectile(_attack_target, actual_damage)
 	else:
 		# Melee: direct damage
 		var stage: Node = get_tree().get_first_node_in_group("rts_stage")
@@ -787,10 +891,57 @@ func _perform_attack() -> void:
 				cs.apply_damage(_attack_target, actual_damage, self)
 	AudioManager.play_rts_attack()
 
+func _get_effective_speed() -> float:
+	## Returns speed modified by neural disruption slow.
+	var s: float = speed
+	if has_meta("neural_slow"):
+		s *= get_meta("neural_slow")
+	return s
+
 func _fire_projectile(target: Node2D) -> void:
 	var proj := preload("res://scripts/rts_stage/rts_projectile.gd").new()
 	proj.setup(global_position, target, damage, faction_id)
 	get_parent().add_child(proj)
+
+func _fire_siege_projectile(target: Node2D, dmg: float) -> void:
+	## Siege Worm projectile that applies splash damage on arrival.
+	var target_pos: Vector2 = target.global_position
+	var proj := preload("res://scripts/rts_stage/rts_projectile.gd").new()
+	proj.setup(global_position, target, dmg, faction_id)
+	# Store splash metadata on projectile so it can trigger splash on impact
+	proj.set_meta("splash_damage", dmg)
+	proj.set_meta("splash_attacker", self)
+	get_parent().add_child(proj)
+
+func _toggle_deploy() -> void:
+	## Start deploy/undeploy timer for Siege Worm.
+	if _deploying:
+		return  # Already in transition
+	var stats: Dictionary = UnitStats.get_stats(unit_type)
+	_deploy_timer = stats.get("deploy_time", 1.5)
+	_deploying = true
+	velocity = Vector2.ZERO
+
+func _apply_psi_field() -> void:
+	## Psi-Caster passive: apply armor debuff to enemies within psi_field_radius.
+	var stats: Dictionary = UnitStats.get_stats(unit_type)
+	var field_radius: float = stats.get("psi_field_radius", 60.0)
+	var debuff_val: float = stats.get("psi_field_armor_debuff", 1.0)
+	# Clear stale debuffs and apply fresh ones
+	for unit in get_tree().get_nodes_in_group("rts_units"):
+		if not is_instance_valid(unit) or unit == self:
+			continue
+		if "faction_id" in unit and unit.faction_id == faction_id:
+			continue
+		var dist: float = global_position.distance_to(unit.global_position)
+		if dist <= field_radius:
+			unit.set_meta("psi_debuff_armor", debuff_val)
+			unit.set_meta("psi_debuff_source", self)
+		else:
+			# Clear debuff if we were the source and enemy moved out of range
+			if unit.has_meta("psi_debuff_source") and unit.get_meta("psi_debuff_source") == self:
+				unit.remove_meta("psi_debuff_armor")
+				unit.remove_meta("psi_debuff_source")
 
 func take_damage(amount: float, _attacker: Node2D = null) -> void:
 	# Tech tree armor + fortify bonus
@@ -803,6 +954,9 @@ func take_damage(amount: float, _attacker: Node2D = null) -> void:
 		total_armor += _tech_tree.get_hive_armor(faction_id, nearby)
 	if _is_fortified:
 		total_armor += UnitStats.get_stats(unit_type).get("ability_armor_bonus", 0.0)
+	# Psi field armor debuff (reduces effective armor)
+	if has_meta("psi_debuff_armor"):
+		total_armor = maxf(total_armor - get_meta("psi_debuff_armor"), 0.0)
 	effective_amount = maxf(amount - total_armor, 1.0)
 	health -= effective_amount
 	_hurt_flash = 1.0
@@ -1104,6 +1258,59 @@ func _draw_unit_decorations() -> void:
 				var sac_pos: Vector2 = Vector2(_cell_radius * 0.3, 0)
 				var fill: float = float(carried_biomass + carried_genes) / float(maxi(carry_capacity, 1))
 				draw_circle(sac_pos, 4.0 * fill + 2.0, Color(0.3, 0.8, 0.4, 0.5))
+		UnitStats.UnitType.MEDIC:
+			# White cross symbol
+			var cross_color: Color = Color(0.95, 0.95, 0.95, 0.85)
+			var cross_w: float = 2.5
+			var cross_len: float = _cell_radius * 0.5
+			draw_rect(Rect2(-cross_w * 0.5, -cross_len, cross_w, cross_len * 2.0), cross_color)
+			draw_rect(Rect2(-cross_len, -cross_w * 0.5, cross_len * 2.0, cross_w), cross_color)
+			# Soft healing glow
+			draw_circle(Vector2.ZERO, _cell_radius * 1.2, Color(0.3, 0.95, 0.5, 0.06 + 0.03 * sin(_time * 3.0)))
+		UnitStats.UnitType.SIEGE_WORM:
+			# Segmented worm body (3 segments)
+			var seg_color: Color = creature_template.membrane_color if creature_template else Color(0.6, 0.4, 0.2)
+			var num_segs: int = 3
+			var seg_w: float = _cell_radius * 0.5 if not _is_deployed else _cell_radius * 0.7
+			for i in range(num_segs):
+				var angle: float = PI + float(i) * 0.6 - 0.6  # Behind
+				var seg_pos: Vector2 = Vector2(cos(angle), sin(angle)) * (_cell_radius + float(i) * 5.0)
+				var seg_r: float = seg_w - float(i) * 1.5
+				draw_circle(seg_pos, maxf(seg_r, 2.0), Color(seg_color.r * 0.8, seg_color.g * 0.8, seg_color.b * 0.8, 0.7))
+			# Deploy indicator ring
+			if _is_deployed:
+				var deploy_alpha: float = 0.5 + 0.2 * sin(_time * 2.0)
+				draw_arc(Vector2.ZERO, _cell_radius + 5.0, 0, TAU, 20, Color(0.9, 0.6, 0.2, deploy_alpha), 2.5)
+			elif _deploying:
+				var prog: float = 1.0 - (_deploy_timer / UnitStats.get_stats(unit_type).get("deploy_time", 1.5))
+				draw_arc(Vector2.ZERO, _cell_radius + 5.0, -PI * 0.5, -PI * 0.5 + TAU * prog, 20, Color(0.9, 0.6, 0.2, 0.6), 2.0)
+		UnitStats.UnitType.PSI_CASTER:
+			# Purple-tinted body glow
+			draw_circle(Vector2.ZERO, _cell_radius * 1.3, Color(0.6, 0.2, 0.9, 0.08 + 0.04 * sin(_time * 2.5)))
+			# Purple eye symbol
+			var eye_r: float = _cell_radius * 0.35
+			draw_arc(Vector2.ZERO, eye_r, 0, TAU, 12, Color(0.7, 0.3, 1.0, 0.8), 1.5)
+			draw_circle(Vector2.ZERO, eye_r * 0.4, Color(0.9, 0.4, 1.0, 0.9))
+			# Psi field range indicator (when selected)
+			if is_selected:
+				var psi_r: float = UnitStats.get_stats(unit_type).get("psi_field_radius", 60.0)
+				draw_arc(Vector2.ZERO, psi_r, 0, TAU, 32, Color(0.6, 0.2, 0.9, 0.1), 1.0)
+
+	# Draw heal beam (Medic in HEALING state)
+	if unit_type == UnitStats.UnitType.MEDIC and state == State.HEALING and is_instance_valid(_heal_target):
+		var beam_end: Vector2 = _heal_target.global_position - global_position
+		var beam_color: Color = Color(0.3, 1.0, 0.5, 0.5 + 0.2 * sin(_time * 6.0))
+		draw_line(Vector2.ZERO, beam_end, beam_color, 2.0)
+		# Glow at target
+		draw_circle(beam_end, 4.0, Color(0.3, 1.0, 0.5, 0.2))
+
+	# Draw purple tether (Psi-Caster neural disruption)
+	if unit_type == UnitStats.UnitType.PSI_CASTER and _ability_active and is_instance_valid(_neural_target):
+		var tether_end: Vector2 = _neural_target.global_position - global_position
+		var tether_color: Color = Color(0.7, 0.2, 1.0, 0.4 + 0.2 * sin(_time * 5.0))
+		draw_line(Vector2.ZERO, tether_end, tether_color, 1.5)
+		# Disruption ring at target
+		draw_arc(tether_end, 8.0, 0, TAU, 12, Color(0.7, 0.2, 1.0, 0.3), 1.5)
 
 func _draw_face() -> void:
 	if not creature_template:
@@ -1341,6 +1548,12 @@ func use_ability(target_pos: Vector2) -> void:
 			_execute_acid_volley(target_pos)
 		UnitStats.UnitType.WORKER:
 			_execute_burst_gather()
+		UnitStats.UnitType.MEDIC:
+			_execute_regen_aura()
+		UnitStats.UnitType.SIEGE_WORM:
+			_execute_siege_ability(target_pos)
+		UnitStats.UnitType.PSI_CASTER:
+			_execute_neural_disruption()
 	# Apply veterancy cooldown reduction
 	var cd_mult: float = VET_CD_BONUS[_vet_level] if _vet_level < VET_CD_BONUS.size() else 1.0
 	_ability_cooldown_timer = _ability_cooldown_max * cd_mult
@@ -1466,6 +1679,74 @@ func _execute_burst_gather() -> void:
 	_ability_active = true
 	_ability_timer = stats.get("ability_duration", 5.0)
 
+func _execute_regen_aura() -> void:
+	## Medic ability: apply +2 HP/s to all allies within 80u for 10s.
+	var stats: Dictionary = UnitStats.get_stats(unit_type)
+	var radius: float = stats.get("ability_radius", 80.0)
+	var duration: float = stats.get("ability_duration", 10.0)
+	for unit in get_tree().get_nodes_in_group("faction_%d" % faction_id):
+		if not is_instance_valid(unit) or not (unit is CharacterBody2D):
+			continue
+		if global_position.distance_to(unit.global_position) <= radius:
+			unit.set_meta("regen_aura_remaining", duration)
+	_ability_active = true
+	_ability_timer = duration
+
+func _execute_siege_ability(target_pos: Vector2) -> void:
+	## Siege Worm ability: deploy/undeploy toggle or burrow bomb.
+	if not _is_deployed:
+		# If not deployed, deploy first
+		_toggle_deploy()
+	else:
+		# If already deployed, fire burrow bomb at target position
+		_execute_burrow_bomb(target_pos)
+
+func _execute_burrow_bomb(target_pos: Vector2) -> void:
+	## Spawn delayed AoE at target position (2s fuse, 40 damage, 80u radius).
+	var stats: Dictionary = UnitStats.get_stats(unit_type)
+	var bomb_dmg: float = stats.get("ability_damage", 40.0)
+	var bomb_radius: float = stats.get("ability_radius", 80.0)
+	var fuse_time: float = stats.get("ability_duration", 2.0)
+	# Create a delayed explosion via timer
+	var timer: SceneTreeTimer = get_tree().create_timer(fuse_time)
+	var attacker_ref: Node2D = self
+	timer.timeout.connect(func():
+		if not is_instance_valid(attacker_ref):
+			return
+		var stage: Node = attacker_ref.get_tree().get_first_node_in_group("rts_stage")
+		if stage and stage.has_method("get_combat_system"):
+			var cs: Node = stage.get_combat_system()
+			if cs.has_method("apply_splash_damage"):
+				cs.apply_splash_damage(target_pos, bomb_dmg, 0.0, bomb_radius * 0.5, bomb_radius, attacker_ref)
+	)
+
+func _execute_neural_disruption() -> void:
+	## Psi-Caster ability: find nearest enemy within 180u, apply 6s debuffs.
+	var stats: Dictionary = UnitStats.get_stats(unit_type)
+	var ability_range: float = stats.get("ability_range", 180.0)
+	var duration: float = stats.get("ability_duration", 6.0)
+	var slow_mult: float = stats.get("ability_slow_mult", 0.5)
+	var dmg_mult: float = stats.get("ability_damage_mult", 0.5)
+	# Find nearest enemy
+	var best_enemy: Node2D = null
+	var best_dist: float = ability_range
+	for unit in get_tree().get_nodes_in_group("rts_units"):
+		if not is_instance_valid(unit) or unit == self:
+			continue
+		if "faction_id" in unit and unit.faction_id == faction_id:
+			continue
+		var dist: float = global_position.distance_to(unit.global_position)
+		if dist < best_dist:
+			best_dist = dist
+			best_enemy = unit
+	if best_enemy:
+		best_enemy.set_meta("neural_disruption_remaining", duration)
+		best_enemy.set_meta("neural_slow", slow_mult)
+		best_enemy.set_meta("neural_damage_mult", dmg_mult)
+		_neural_target = best_enemy
+		_ability_active = true
+		_ability_timer = duration
+
 func apply_stun(duration: float) -> void:
 	## Apply stun state for the given duration.
 	_is_stunned = true
@@ -1480,7 +1761,7 @@ func _check_auto_cast() -> void:
 	## Auto-use abilities when conditions are met.
 	if not _auto_cast or _ability_cooldown_timer > 0 or _is_stunned or _ability_cooldown_max <= 0:
 		return
-	if state != State.ATTACK and state != State.IDLE and state != State.GATHER:
+	if state != State.ATTACK and state != State.IDLE and state != State.GATHER and state != State.HEALING and state != State.DEPLOYED:
 		return
 	# Gather nearby enemies for condition checks
 	var nearby_enemies: Array = []
@@ -1537,6 +1818,25 @@ func _check_auto_cast() -> void:
 			# Use burst gather if currently gathering
 			if state == State.GATHER and is_instance_valid(_gather_target):
 				use_ability(global_position)
+		UnitStats.UnitType.MEDIC:
+			# Use regen aura if 3+ wounded allies within 80u
+			var wounded_count: int = 0
+			for ally in get_tree().get_nodes_in_group("faction_%d" % faction_id):
+				if ally == self or not is_instance_valid(ally):
+					continue
+				if not (ally is CharacterBody2D) or not "health" in ally or not "max_health" in ally:
+					continue
+				if ally.health < ally.max_health and global_position.distance_to(ally.global_position) < 80.0:
+					wounded_count += 1
+			if wounded_count >= 3:
+				use_ability(global_position)
+		UnitStats.UnitType.PSI_CASTER:
+			# Use neural disruption if enemy within 180u and no active disruption
+			if not _ability_active:
+				for enemy in nearby_enemies:
+					if global_position.distance_to(enemy.global_position) < 180.0:
+						use_ability(enemy.global_position)
+						return
 
 func _try_auto_return_gather() -> void:
 	## After building completes, auto-return to last gather target if valid.
@@ -1578,6 +1878,7 @@ func serialize() -> Dictionary:
 		"patrol_b_x": _patrol_point_b.x,
 		"patrol_b_y": _patrol_point_b.y,
 		"patrol_going_to_b": _patrol_going_to_b,
+		"is_deployed": _is_deployed,
 	}
 
 func deserialize(data: Dictionary) -> void:
@@ -1603,8 +1904,9 @@ func deserialize(data: Dictionary) -> void:
 	_patrol_point_a = Vector2(data.get("patrol_a_x", 0.0), data.get("patrol_a_y", 0.0))
 	_patrol_point_b = Vector2(data.get("patrol_b_x", 0.0), data.get("patrol_b_y", 0.0))
 	_patrol_going_to_b = data.get("patrol_going_to_b", true)
+	_is_deployed = data.get("is_deployed", false)
 	# If state references targets that no longer exist, fall back to idle
-	if state == State.ATTACK or state == State.GATHER or state == State.BUILD or state == State.REPAIR:
+	if state == State.ATTACK or state == State.GATHER or state == State.BUILD or state == State.REPAIR or state == State.HEALING:
 		state = State.IDLE
 
 # === VETERANCY ===

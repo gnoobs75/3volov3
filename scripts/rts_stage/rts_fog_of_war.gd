@@ -147,3 +147,32 @@ func _draw() -> void:
 			else:
 				fog_color = Color(0.0, 0.0, 0.0, alpha)
 			draw_rect(Rect2(world_x, world_y, CELL_SIZE, CELL_SIZE), fog_color)
+
+func serialize() -> Dictionary:
+	## Serialize fog grid as a flat array of ints (0=UNEXPLORED, 1=EXPLORED, 2=VISIBLE).
+	## Only save EXPLORED cells (VISIBLE reverts to EXPLORED on load since units re-reveal).
+	var flat: Array = []
+	for x in range(_grid_size):
+		for y in range(_grid_size):
+			var s: int = _grid[x][y]
+			# Treat VISIBLE as EXPLORED for save (will be recalculated)
+			if s == FogState.VISIBLE:
+				s = FogState.EXPLORED
+			flat.append(s)
+	return {
+		"grid_size": _grid_size,
+		"grid": flat,
+	}
+
+func deserialize(data: Dictionary) -> void:
+	var saved_size: int = data.get("grid_size", 0)
+	if saved_size != _grid_size:
+		return  # Grid size mismatch, skip restoring fog
+	var flat: Array = data.get("grid", [])
+	if flat.size() != _grid_size * _grid_size:
+		return
+	var idx: int = 0
+	for x in range(_grid_size):
+		for y in range(_grid_size):
+			_grid[x][y] = int(flat[idx])
+			idx += 1

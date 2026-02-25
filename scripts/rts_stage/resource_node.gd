@@ -40,6 +40,18 @@ func harvest(amount: int) -> Dictionary:
 func is_depleted() -> bool:
 	return biomass_remaining <= 0
 
+func serialize() -> Dictionary:
+	return {
+		"pos_x": global_position.x,
+		"pos_y": global_position.y,
+		"biomass_remaining": biomass_remaining,
+		"max_biomass": max_biomass,
+	}
+
+func deserialize(data: Dictionary) -> void:
+	biomass_remaining = data.get("biomass_remaining", max_biomass)
+	max_biomass = data.get("max_biomass", 200)
+
 func _process(delta: float) -> void:
 	_time += delta
 	_update_gather_particles(delta)
