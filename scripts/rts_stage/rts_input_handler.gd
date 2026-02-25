@@ -562,7 +562,12 @@ func _unhandled_input(event: InputEvent) -> void:
 				_command_sys.enter_patrol_mode()
 				get_viewport().set_input_as_handled()
 			elif event.keycode == KEY_H:
-				_command_sys.issue_hold(_selection_mgr.selected_units)
+				if _selection_mgr.selected_units.is_empty():
+					# No selection: toggle hotkey reference card
+					if _stage and _stage.has_method("toggle_hotkey_card"):
+						_stage.toggle_hotkey_card()
+				else:
+					_command_sys.issue_hold(_selection_mgr.selected_units)
 				get_viewport().set_input_as_handled()
 			elif event.keycode == KEY_S:
 				_command_sys.issue_stop(_selection_mgr.selected_units)

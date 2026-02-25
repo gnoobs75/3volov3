@@ -26,6 +26,7 @@ var supply_provided: int = 0
 var construction_progress: float = 0.0
 var build_time: float = 10.0
 var _is_constructed: bool = false
+var _active_builders: int = 0
 
 # Production queue
 var _production_queue: Array = []  # Array of unit_type ints
@@ -111,10 +112,16 @@ func setup(p_faction_id: int, p_building_type: int, p_template: CreatureTemplate
 func is_complete() -> bool:
 	return _is_constructed
 
+func get_build_speed_multiplier() -> float:
+	## Multiple workers speed up construction: each extra worker adds 50% speed.
+	if _active_builders <= 1:
+		return 1.0
+	return 1.0 + (_active_builders - 1) * 0.5
+
 func add_construction(amount: float) -> void:
 	if _is_constructed:
 		return
-	construction_progress += amount
+	construction_progress += amount * get_build_speed_multiplier()
 	# Scale health with construction progress
 	var progress_pct: float = clampf(construction_progress / build_time, 0.0, 1.0)
 	health = max_health * (0.1 + 0.9 * progress_pct)
