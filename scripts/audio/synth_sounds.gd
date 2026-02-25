@@ -1519,7 +1519,7 @@ static func gen_queue_ping() -> PackedFloat32Array:
 	return buf
 
 ## RTS unit voice - selection acknowledgment. Different per unit type.
-static func gen_rts_unit_select(unit_type: int) -> PackedFloat32Array:
+static func gen_rts_unit_select(unit_type: int, pitch_mult: float = 1.0) -> PackedFloat32Array:
 	# 5 unit types: WORKER=0, FIGHTER=1, DEFENDER=2, SCOUT=3, RANGED=4
 	var dur: float = 0.2
 	var samples: int = int(dur * SAMPLE_RATE)
@@ -1530,41 +1530,41 @@ static func gen_rts_unit_select(unit_type: int) -> PackedFloat32Array:
 			for i in range(samples):
 				var t: float = float(i) / SAMPLE_RATE
 				var env: float = adsr(t, 0.01, 0.04, 0.3, 0.08, dur)
-				var freq: float = lerpf(500.0, 700.0, t / dur)
+				var freq: float = lerpf(500.0, 700.0, t / dur) * pitch_mult
 				var phase: float = t * freq
 				buf[i] = (sine(phase) * 0.5 + sine(phase * 2.5) * 0.2) * env * 0.4
 		1:  # Fighter - aggressive grunt
 			for i in range(samples):
 				var t: float = float(i) / SAMPLE_RATE
 				var env: float = adsr(t, 0.005, 0.06, 0.4, 0.06, dur)
-				var freq: float = lerpf(150.0, 100.0, t / dur)
+				var freq: float = lerpf(150.0, 100.0, t / dur) * pitch_mult
 				var phase: float = t * freq
 				buf[i] = (sawtooth(phase) * 0.4 + noise() * 0.15 * env) * env * 0.5
 		2:  # Defender - solid resonant thump
 			for i in range(samples):
 				var t: float = float(i) / SAMPLE_RATE
 				var env: float = exp(-t * 12.0)
-				var freq: float = 120.0 + sin(t * 20.0) * 10.0
+				var freq: float = (120.0 + sin(t * 20.0) * 10.0) * pitch_mult
 				var phase: float = t * freq
 				buf[i] = (sine(phase) * 0.6 + sine(phase * 0.5) * 0.3) * env * 0.5
 		3:  # Scout - quick ascending whistle
 			for i in range(samples):
 				var t: float = float(i) / SAMPLE_RATE
 				var env: float = adsr(t, 0.01, 0.03, 0.2, 0.1, dur)
-				var freq: float = lerpf(600.0, 1200.0, t / dur)
+				var freq: float = lerpf(600.0, 1200.0, t / dur) * pitch_mult
 				var phase: float = t * freq
 				buf[i] = sine(phase) * env * 0.35
 		4:  # Ranged - electric zap
 			for i in range(samples):
 				var t: float = float(i) / SAMPLE_RATE
 				var env: float = adsr(t, 0.005, 0.04, 0.3, 0.08, dur)
-				var freq: float = 350.0 + noise() * 50.0
+				var freq: float = (350.0 + noise() * 50.0) * pitch_mult
 				var phase: float = t * freq
 				buf[i] = (square(phase) * 0.2 + sine(phase * 1.5) * 0.3 + noise() * 0.1) * env * 0.4
 	return buf
 
 ## RTS unit voice - command acknowledgment. Different per unit type.
-static func gen_rts_unit_acknowledge(unit_type: int) -> PackedFloat32Array:
+static func gen_rts_unit_acknowledge(unit_type: int, pitch_mult: float = 1.0) -> PackedFloat32Array:
 	var dur: float = 0.2
 	var samples: int = int(dur * SAMPLE_RATE)
 	var buf := PackedFloat32Array()
@@ -1574,7 +1574,7 @@ static func gen_rts_unit_acknowledge(unit_type: int) -> PackedFloat32Array:
 			for i in range(samples):
 				var t: float = float(i) / SAMPLE_RATE
 				var env: float = adsr(t, 0.01, 0.03, 0.3, 0.06, dur)
-				var freq: float = lerpf(450.0, 650.0, t / dur)
+				var freq: float = lerpf(450.0, 650.0, t / dur) * pitch_mult
 				# Double pulse via AM
 				var am: float = 0.5 + 0.5 * sin(t * 30.0 * TAU)
 				var phase: float = t * freq
@@ -1583,7 +1583,7 @@ static func gen_rts_unit_acknowledge(unit_type: int) -> PackedFloat32Array:
 			for i in range(samples):
 				var t: float = float(i) / SAMPLE_RATE
 				var env: float = adsr(t, 0.005, 0.05, 0.35, 0.08, dur)
-				var freq: float = lerpf(130.0, 110.0, t / dur)
+				var freq: float = lerpf(130.0, 110.0, t / dur) * pitch_mult
 				var phase: float = t * freq
 				buf[i] = (sawtooth(phase) * 0.35 + sine(phase * 0.5) * 0.2 + noise() * 0.1 * env) * env * 0.45
 		2:  # Defender - resonant double-thud
@@ -1591,27 +1591,27 @@ static func gen_rts_unit_acknowledge(unit_type: int) -> PackedFloat32Array:
 				var t: float = float(i) / SAMPLE_RATE
 				var env1: float = exp(-t * 18.0)
 				var env2: float = exp(-(t - 0.08) * 18.0) if t > 0.08 else 0.0
-				var freq: float = 100.0
+				var freq: float = 100.0 * pitch_mult
 				var phase: float = t * freq
 				buf[i] = (sine(phase) * 0.5 + sine(phase * 0.5) * 0.25) * (env1 + env2 * 0.7) * 0.45
 		3:  # Scout - quick ascending chirp
 			for i in range(samples):
 				var t: float = float(i) / SAMPLE_RATE
 				var env: float = adsr(t, 0.008, 0.03, 0.25, 0.08, dur)
-				var freq: float = lerpf(700.0, 1000.0, t / dur)
+				var freq: float = lerpf(700.0, 1000.0, t / dur) * pitch_mult
 				var phase: float = t * freq
 				buf[i] = (sine(phase) * 0.6 + triangle(phase * 2.0) * 0.1) * env * 0.35
 		4:  # Ranged - quick electric snap
 			for i in range(samples):
 				var t: float = float(i) / SAMPLE_RATE
 				var env: float = adsr(t, 0.005, 0.03, 0.25, 0.1, dur)
-				var freq: float = 400.0 + noise() * 40.0
+				var freq: float = (400.0 + noise() * 40.0) * pitch_mult
 				var phase: float = t * freq
 				buf[i] = (square(phase) * 0.15 + sine(phase * 1.5) * 0.35 + noise() * 0.08) * env * 0.4
 	return buf
 
 ## RTS unit voice - attack cry. Aggressive vocalization per unit type.
-static func gen_rts_unit_attack_cry(unit_type: int) -> PackedFloat32Array:
+static func gen_rts_unit_attack_cry(unit_type: int, pitch_mult: float = 1.0) -> PackedFloat32Array:
 	var dur: float = 0.3
 	var samples: int = int(dur * SAMPLE_RATE)
 	var buf := PackedFloat32Array()
@@ -1621,14 +1621,14 @@ static func gen_rts_unit_attack_cry(unit_type: int) -> PackedFloat32Array:
 			for i in range(samples):
 				var t: float = float(i) / SAMPLE_RATE
 				var env: float = adsr(t, 0.01, 0.05, 0.4, 0.1, dur)
-				var freq: float = lerpf(600.0, 900.0, t / dur)
+				var freq: float = lerpf(600.0, 900.0, t / dur) * pitch_mult
 				var phase: float = t * freq
 				buf[i] = (sine(phase) * 0.5 + sine(phase * 3.0) * 0.25 + noise() * 0.1) * env * 0.5
 		1:  # Fighter - aggressive roar
 			for i in range(samples):
 				var t: float = float(i) / SAMPLE_RATE
 				var env: float = adsr(t, 0.005, 0.08, 0.5, 0.1, dur)
-				var freq: float = lerpf(120.0, 80.0, t / dur)
+				var freq: float = lerpf(120.0, 80.0, t / dur) * pitch_mult
 				var phase: float = t * freq
 				var distortion: float = clampf(sawtooth(phase) * 1.5, -1.0, 1.0)
 				buf[i] = (distortion * 0.4 + noise() * 0.25 * env + sine(phase * 0.5) * 0.15) * env * 0.6
@@ -1636,21 +1636,21 @@ static func gen_rts_unit_attack_cry(unit_type: int) -> PackedFloat32Array:
 			for i in range(samples):
 				var t: float = float(i) / SAMPLE_RATE
 				var env: float = adsr(t, 0.01, 0.06, 0.45, 0.12, dur)
-				var freq: float = lerpf(100.0, 70.0, t / dur)
+				var freq: float = lerpf(100.0, 70.0, t / dur) * pitch_mult
 				var phase: float = t * freq
 				buf[i] = (sine(phase) * 0.5 + sine(phase * 0.5) * 0.3 + noise() * 0.15 * env) * env * 0.55
 		3:  # Scout - sharp battle shriek
 			for i in range(samples):
 				var t: float = float(i) / SAMPLE_RATE
 				var env: float = adsr(t, 0.008, 0.04, 0.3, 0.12, dur)
-				var freq: float = lerpf(800.0, 1400.0, t / dur)
+				var freq: float = lerpf(800.0, 1400.0, t / dur) * pitch_mult
 				var phase: float = t * freq
 				buf[i] = (sine(phase) * 0.5 + triangle(phase * 2.5) * 0.2 + noise() * 0.08) * env * 0.45
 		4:  # Ranged - electric discharge
 			for i in range(samples):
 				var t: float = float(i) / SAMPLE_RATE
 				var env: float = adsr(t, 0.005, 0.05, 0.35, 0.1, dur)
-				var freq: float = 300.0 + noise() * 80.0
+				var freq: float = (300.0 + noise() * 80.0) * pitch_mult
 				var phase: float = t * freq
 				buf[i] = (square(phase) * 0.25 + sine(phase * 1.5) * 0.3 + noise() * 0.2) * env * 0.5
 	return buf
@@ -1747,4 +1747,109 @@ static func gen_rts_defeat_drone() -> PackedFloat32Array:
 		var env: float = 1.0 - progress * progress  # Quadratic fade
 		env *= clampf(t * 10.0, 0.0, 1.0)  # Quick fade-in
 		buf[i] = clampf(s * env * 0.5, -1.0, 1.0)
+	return buf
+
+## RTS Medic unit voice - soft, harmonic, gentle chirp
+static func gen_rts_voice_medic(voice_type: String, pitch_mult: float = 1.0) -> PackedFloat32Array:
+	var dur: float = 0.22
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	match voice_type:
+		"select":
+			for i in range(samples):
+				var t: float = float(i) / SAMPLE_RATE
+				var env: float = adsr(t, 0.02, 0.05, 0.35, 0.1, dur)
+				var freq: float = lerpf(440.0, 550.0, t / dur) * pitch_mult
+				var phase: float = t * freq
+				# Soft harmonics, gentle and warm
+				buf[i] = (sine(phase) * 0.5 + sine(phase * 2.0) * 0.2 + sine(phase * 3.0) * 0.08) * env * 0.35
+		"ack":
+			for i in range(samples):
+				var t: float = float(i) / SAMPLE_RATE
+				var env: float = adsr(t, 0.015, 0.04, 0.3, 0.08, dur)
+				var freq: float = lerpf(400.0, 520.0, t / dur) * pitch_mult
+				var phase: float = t * freq
+				# Double soft pulse
+				var am: float = 0.6 + 0.4 * sin(t * 20.0 * TAU)
+				buf[i] = (sine(phase) * 0.5 + sine(phase * 2.0) * 0.15) * env * am * 0.35
+		"attack":
+			for i in range(samples):
+				var t: float = float(i) / SAMPLE_RATE
+				var env: float = adsr(t, 0.01, 0.06, 0.4, 0.1, dur)
+				var freq: float = lerpf(500.0, 700.0, t / dur) * pitch_mult
+				var phase: float = t * freq
+				# Urgent but still harmonic
+				buf[i] = (sine(phase) * 0.45 + sine(phase * 2.0) * 0.25 + sine(phase * 3.0) * 0.1) * env * 0.4
+	return buf
+
+## RTS Siege Worm unit voice - deep, rumbling, heavy impact
+static func gen_rts_voice_siege(voice_type: String, pitch_mult: float = 1.0) -> PackedFloat32Array:
+	var dur: float = 0.3
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	match voice_type:
+		"select":
+			for i in range(samples):
+				var t: float = float(i) / SAMPLE_RATE
+				var env: float = adsr(t, 0.01, 0.08, 0.4, 0.1, dur)
+				var freq: float = lerpf(80.0, 60.0, t / dur) * pitch_mult
+				var phase: float = t * freq
+				# Deep rumble with sub-harmonics
+				buf[i] = (sine(phase) * 0.5 + sine(phase * 0.5) * 0.3 + noise() * 0.1 * env) * env * 0.5
+		"ack":
+			for i in range(samples):
+				var t: float = float(i) / SAMPLE_RATE
+				var env: float = adsr(t, 0.008, 0.06, 0.35, 0.12, dur)
+				var freq: float = lerpf(90.0, 70.0, t / dur) * pitch_mult
+				var phase: float = t * freq
+				# Heavy double thud
+				var env2: float = exp(-(t - 0.1) * 15.0) if t > 0.1 else 0.0
+				buf[i] = (sine(phase) * 0.5 + sawtooth(phase * 0.5) * 0.2 + noise() * 0.08) * (env + env2 * 0.5) * 0.45
+		"attack":
+			for i in range(samples):
+				var t: float = float(i) / SAMPLE_RATE
+				var env: float = adsr(t, 0.005, 0.08, 0.5, 0.1, dur)
+				var freq: float = lerpf(100.0, 55.0, t / dur) * pitch_mult
+				var phase: float = t * freq
+				# Thundering impact
+				var distortion: float = clampf(sawtooth(phase) * 1.8, -1.0, 1.0)
+				buf[i] = (distortion * 0.35 + sine(phase * 0.5) * 0.3 + noise() * 0.2 * env) * env * 0.55
+	return buf
+
+## RTS Psi-Caster unit voice - ethereal, shimmering, crystalline
+static func gen_rts_voice_psi(voice_type: String, pitch_mult: float = 1.0) -> PackedFloat32Array:
+	var dur: float = 0.25
+	var samples: int = int(dur * SAMPLE_RATE)
+	var buf := PackedFloat32Array()
+	buf.resize(samples)
+	match voice_type:
+		"select":
+			for i in range(samples):
+				var t: float = float(i) / SAMPLE_RATE
+				var env: float = adsr(t, 0.02, 0.04, 0.3, 0.12, dur)
+				var freq: float = lerpf(600.0, 900.0, t / dur) * pitch_mult
+				var phase: float = t * freq
+				# Crystalline shimmer with detuned harmonics
+				var shimmer: float = sin(t * 30.0 * TAU) * 0.3
+				buf[i] = (sine(phase) * 0.4 + sine(phase * 1.5 + shimmer) * 0.2 + triangle(phase * 2.5) * 0.1) * env * 0.35
+		"ack":
+			for i in range(samples):
+				var t: float = float(i) / SAMPLE_RATE
+				var env: float = adsr(t, 0.015, 0.04, 0.25, 0.1, dur)
+				var freq: float = lerpf(700.0, 850.0, t / dur) * pitch_mult
+				var phase: float = t * freq
+				# Ethereal glide
+				var vibrato: float = sin(t * 12.0 * TAU) * 0.02
+				buf[i] = (sine(phase + vibrato) * 0.45 + sine(phase * 2.01) * 0.15 + sine(phase * 3.02) * 0.05) * env * 0.35
+		"attack":
+			for i in range(samples):
+				var t: float = float(i) / SAMPLE_RATE
+				var env: float = adsr(t, 0.01, 0.05, 0.35, 0.1, dur)
+				var freq: float = lerpf(500.0, 1100.0, t / dur) * pitch_mult
+				var phase: float = t * freq
+				# Psychic pulse - ascending shimmer with intensity
+				var shimmer: float = sin(t * 40.0 * TAU) * 0.15
+				buf[i] = (sine(phase) * 0.35 + sine(phase * 1.5 + shimmer) * 0.25 + triangle(phase * 3.0) * 0.12 + noise() * 0.05) * env * 0.45
 	return buf

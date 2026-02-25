@@ -271,6 +271,9 @@ func _physics_process(delta: float) -> void:
 			if _is_deployed:
 				velocity = Vector2.ZERO
 				state = State.DEPLOYED
+			else:
+				# Finished undeploying — return to IDLE
+				state = State.IDLE
 
 	match state:
 		State.IDLE:
@@ -362,6 +365,9 @@ func _process_attack(delta: float) -> void:
 		if _has_formation_slot:
 			command_move(_formation_slot)
 			_has_formation_slot = true  # Re-set since command_move clears it
+		elif _is_deployed:
+			# Siege Worm: return to DEPLOYED state when target dies
+			state = State.DEPLOYED
 		else:
 			state = State.IDLE
 		return
@@ -447,24 +453,38 @@ func _process_gather(delta: float) -> void:
 				state = State.RETURN_RESOURCES
 				_navigate_to_nearest_depot()
 
+var _is_actively_building: bool = false  # True when within range and constructing
+
 func _process_build(delta: float) -> void:
 	if not is_instance_valid(_build_target):
+		_stop_building()
 		_build_target = null
 		_try_auto_return_gather()
 		return
 	var dist: float = global_position.distance_to(_build_target.global_position)
 	if dist > 40.0:
+		_stop_building()
 		_nav_agent.target_position = _build_target.global_position
 		var next_pos: Vector2 = _nav_agent.get_next_path_position()
 		var dir: Vector2 = (next_pos - global_position).normalized()
 		_nav_agent.velocity = dir * _get_effective_speed()
 	else:
 		velocity = Vector2.ZERO
+		if not _is_actively_building:
+			_is_actively_building = true
+			if "_active_builders" in _build_target:
+				_build_target._active_builders += 1
 		if _build_target.has_method("add_construction"):
 			_build_target.add_construction(build_speed * delta)
 			if _build_target.has_method("is_complete") and _build_target.is_complete():
+				_stop_building()
 				_build_target = null
 				_try_auto_return_gather()
+
+func _stop_building() -> void:
+	if _is_actively_building and is_instance_valid(_build_target) and "_active_builders" in _build_target:
+		_build_target._active_builders = maxi(_build_target._active_builders - 1, 0)
+	_is_actively_building = false
 
 func _process_patrol(_delta: float) -> void:
 	var target: Vector2 = _patrol_point_b if _patrol_going_to_b else _patrol_point_a
@@ -686,9 +706,12 @@ func _find_nearest_resource() -> Node2D:
 # === COMMANDS ===
 
 func command_move(target_pos: Vector2) -> void:
-	# Siege Worm: auto-undeploy if deployed
-	if _is_deployed and unit_type == UnitStats.UnitType.SIEGE_WORM:
-		_toggle_deploy()
+	_stop_building()
+	# Siege Worm: cancel any deploy transition and force undeploy
+	if unit_type == UnitStats.UnitType.SIEGE_WORM:
+		_deploying = false
+		_deploy_timer = 0.0
+		_is_deployed = false
 	state = State.MOVE
 	_target_position = target_pos
 	_nav_agent.target_position = target_pos
@@ -699,6 +722,8 @@ func command_move(target_pos: Vector2) -> void:
 		AudioManager.play_rts_unit_voice(unit_type, "ack")
 
 func command_attack(target: Node2D) -> void:
+	_stop_building()
+	_heal_target = null
 	# Siege Worm must be deployed to attack; if not deployed, auto-deploy first
 	if unit_type == UnitStats.UnitType.SIEGE_WORM and not _is_deployed:
 		_toggle_deploy()
@@ -711,6 +736,7 @@ func command_attack(target: Node2D) -> void:
 func command_gather(target: Node2D) -> void:
 	if carry_capacity <= 0:
 		return
+	_stop_building()
 	state = State.GATHER
 	_gather_target = target
 	_last_gather_target = target
@@ -724,6 +750,7 @@ func command_gather(target: Node2D) -> void:
 func command_build(target: Node2D) -> void:
 	if build_speed <= 0:
 		return
+	_stop_building()  # Decrement previous build target if any
 	state = State.BUILD
 	_build_target = target
 
@@ -745,6 +772,7 @@ func command_hold() -> void:
 	_anchor_position = global_position
 
 func command_flee() -> void:
+	_stop_building()
 	state = State.FLEE
 	_flee_timer = 0.0
 	_flee_recalc = 0.0
@@ -757,6 +785,7 @@ func command_flee() -> void:
 	clear_command_queue()
 
 func command_stop() -> void:
+	_stop_building()
 	state = State.IDLE
 	velocity = Vector2.ZERO
 	_attack_target = null
@@ -982,8 +1011,15 @@ func _count_nearby_allies(radius: float) -> int:
 	return count
 
 func _die() -> void:
+	_stop_building()
 	if is_instance_valid(_gather_target) and _gather_target.has_method("remove_worker"):
 		_gather_target.remove_worker()
+	# Clean up Psi-Caster debuffs on death
+	if unit_type == UnitStats.UnitType.PSI_CASTER:
+		for unit in get_tree().get_nodes_in_group("rts_units"):
+			if is_instance_valid(unit) and unit.has_meta("psi_debuff_source") and unit.get_meta("psi_debuff_source") == self:
+				unit.remove_meta("psi_debuff_armor")
+				unit.remove_meta("psi_debuff_source")
 	died.emit(self)
 	queue_free()
 
@@ -1535,6 +1571,13 @@ func can_use_ability() -> bool:
 
 func use_ability(target_pos: Vector2) -> void:
 	## Dispatch to type-specific ability execution.
+	# Siege Worm deploy toggle: no cooldown, always available unless stunned
+	if unit_type == UnitStats.UnitType.SIEGE_WORM:
+		if _is_stunned or _deploying:
+			return
+		_execute_siege_ability(target_pos)
+		AudioManager.play_rts_attack()
+		return
 	if not can_use_ability():
 		return
 	match unit_type:
@@ -1550,8 +1593,6 @@ func use_ability(target_pos: Vector2) -> void:
 			_execute_burst_gather()
 		UnitStats.UnitType.MEDIC:
 			_execute_regen_aura()
-		UnitStats.UnitType.SIEGE_WORM:
-			_execute_siege_ability(target_pos)
 		UnitStats.UnitType.PSI_CASTER:
 			_execute_neural_disruption()
 	# Apply veterancy cooldown reduction
@@ -1692,14 +1733,9 @@ func _execute_regen_aura() -> void:
 	_ability_active = true
 	_ability_timer = duration
 
-func _execute_siege_ability(target_pos: Vector2) -> void:
-	## Siege Worm ability: deploy/undeploy toggle or burrow bomb.
-	if not _is_deployed:
-		# If not deployed, deploy first
-		_toggle_deploy()
-	else:
-		# If already deployed, fire burrow bomb at target position
-		_execute_burrow_bomb(target_pos)
+func _execute_siege_ability(_target_pos: Vector2) -> void:
+	## Siege Worm ability: deploy/undeploy toggle (no cooldown).
+	_toggle_deploy()
 
 func _execute_burrow_bomb(target_pos: Vector2) -> void:
 	## Spawn delayed AoE at target position (2s fuse, 40 damage, 80u radius).

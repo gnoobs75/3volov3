@@ -1,7 +1,7 @@
 extends Control
 ## Post-tutorial contextual tips that appear when relevant situations arise.
 ## Shows brief hint pills at screen bottom that auto-dismiss after a few seconds.
-## Each tip only shows once per session.
+## Each tip only shows once per session. 12 tips covering all key RTS mechanics.
 
 var _time: float = 0.0
 var _active_tip: int = -1
@@ -14,7 +14,12 @@ var _check_timer: float = 0.0
 const TIP_DURATION: float = 6.0
 const CHECK_INTERVAL: float = 2.0
 
-enum TipID { IDLE_WORKERS, CONTROL_GROUPS, HOME_KEY, SHIFT_SELECT }
+enum TipID {
+	IDLE_WORKERS, CONTROL_GROUPS, HOME_KEY, SHIFT_SELECT,
+	REPAIR, SUPPLY_CAP, PRODUCTION_TAB, STANCES,
+	MAP_PINGS, MAP_EVENTS, VETERANCY, GAME_SPEED,
+	NEW_UNITS
+}
 
 const TIPS: Array = [
 	{
@@ -41,11 +46,75 @@ const TIPS: Array = [
 		"title": "ADD TO SELECTION",
 		"text": "Hold Shift and click to add units to your selection",
 	},
+	{
+		"id": TipID.REPAIR,
+		"key": "RMB",
+		"title": "REPAIR BUILDING",
+		"text": "Select workers and right-click a damaged building to repair",
+	},
+	{
+		"id": TipID.SUPPLY_CAP,
+		"key": "Y",
+		"title": "SUPPLY LIMIT",
+		"text": "Build a Supply Depot (Y) to increase your unit cap",
+	},
+	{
+		"id": TipID.PRODUCTION_TAB,
+		"key": "F1",
+		"title": "PRODUCTION OVERVIEW",
+		"text": "Press F1 to see all building queues at a glance",
+	},
+	{
+		"id": TipID.STANCES,
+		"key": "G",
+		"title": "UNIT STANCES",
+		"text": "Press G to cycle stances: Aggressive / Defensive / Passive",
+	},
+	{
+		"id": TipID.MAP_PINGS,
+		"key": "Alt+Click",
+		"title": "MAP PINGS",
+		"text": "Alt+Click the minimap to ping. Ctrl+Alt for danger pings.",
+	},
+	{
+		"id": TipID.MAP_EVENTS,
+		"key": "",
+		"title": "MAP EVENT",
+		"text": "Map events spawn periodically — blooms, surges, quakes, and more!",
+	},
+	{
+		"id": TipID.VETERANCY,
+		"key": "",
+		"title": "VETERAN UNIT",
+		"text": "Units gain XP from kills — veterans get stat bonuses and gold stars",
+	},
+	{
+		"id": TipID.GAME_SPEED,
+		"key": "",
+		"title": "GAME SPEED",
+		"text": "Use the speed slider in the top-right HUD to speed up or slow down",
+	},
+	{
+		"id": TipID.NEW_UNITS,
+		"key": "V",
+		"title": "SPECIAL UNITS",
+		"text": "Medics auto-heal, Siege Worms deploy for splash, Psi-Casters debuff. V for abilities!",
+	},
 ]
 
 func setup(stage: Node) -> void:
 	_stage = stage
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+# --- External notification hooks (called by stage manager) ---
+
+func notify_map_event() -> void:
+	if not _shown_tips.has(TipID.MAP_EVENTS):
+		_show_tip(TipID.MAP_EVENTS)
+
+func notify_threat_alert() -> void:
+	if not _shown_tips.has(TipID.MAP_PINGS):
+		_show_tip(TipID.MAP_PINGS)
 
 func _process(delta: float) -> void:
 	_time += delta
@@ -72,7 +141,16 @@ func _process(delta: float) -> void:
 	_check_situations()
 
 func _check_situations() -> void:
-	# Tip 0: Idle workers — trigger when 2+ workers are idle
+	# --- SUPPLY CAP: player at or near supply limit ---
+	if not _shown_tips.has(TipID.SUPPLY_CAP):
+		if _stage and "_faction_manager" in _stage:
+			var fm: Node = _stage._faction_manager
+			if fm.has_method("can_afford_supply"):
+				if not fm.can_afford_supply(0, UnitStats.UnitType.WORKER):
+					_show_tip(TipID.SUPPLY_CAP)
+					return
+
+	# --- IDLE WORKERS: 2+ workers sitting idle ---
 	if not _shown_tips.has(TipID.IDLE_WORKERS):
 		var idle_count: int = 0
 		for unit in get_tree().get_nodes_in_group("rts_units"):
@@ -84,7 +162,16 @@ func _check_situations() -> void:
 			_show_tip(TipID.IDLE_WORKERS)
 			return
 
-	# Tip 1: Control groups — trigger when player has 6+ selected units
+	# --- REPAIR: player building below 70% HP ---
+	if not _shown_tips.has(TipID.REPAIR):
+		for building in get_tree().get_nodes_in_group("rts_buildings"):
+			if is_instance_valid(building) and "faction_id" in building and building.faction_id == 0:
+				if "health" in building and "max_health" in building:
+					if building.max_health > 0 and building.health < building.max_health * 0.7:
+						_show_tip(TipID.REPAIR)
+						return
+
+	# --- CONTROL GROUPS: 6+ units selected (army needs organizing) ---
 	if not _shown_tips.has(TipID.CONTROL_GROUPS):
 		if _stage and "_selection_manager" in _stage:
 			var sel: Node = _stage._selection_manager
@@ -92,21 +179,11 @@ func _check_situations() -> void:
 				_show_tip(TipID.CONTROL_GROUPS)
 				return
 
-	# Tip 2: HOME key — trigger when camera is far from base (>2000 units)
-	if not _shown_tips.has(TipID.HOME_KEY):
-		var camera: Camera2D = get_viewport().get_camera_2d()
-		if camera:
-			var base_pos: Vector2 = _get_player_base_pos()
-			if base_pos != Vector2.ZERO and camera.global_position.distance_to(base_pos) > 2000.0:
-				_show_tip(TipID.HOME_KEY)
-				return
-
-	# Tip 3: Shift select — trigger first time player deselects to select a different unit
+	# --- SHIFT SELECT: 1 unit selected with 3+ friendly nearby ---
 	if not _shown_tips.has(TipID.SHIFT_SELECT):
 		if _stage and "_selection_manager" in _stage:
 			var sel: Node = _stage._selection_manager
 			if "selected_units" in sel and sel.selected_units.size() == 1:
-				# They've selected exactly one unit — they might want to add more
 				var nearby_count: int = 0
 				var selected_unit: Node2D = sel.selected_units[0]
 				if is_instance_valid(selected_unit):
@@ -118,7 +195,65 @@ func _check_situations() -> void:
 						_show_tip(TipID.SHIFT_SELECT)
 						return
 
+	# --- HOME KEY: camera far from base ---
+	if not _shown_tips.has(TipID.HOME_KEY):
+		var camera: Camera2D = get_viewport().get_camera_2d()
+		if camera:
+			var base_pos: Vector2 = _get_player_base_pos()
+			if base_pos != Vector2.ZERO and camera.global_position.distance_to(base_pos) > 2000.0:
+				_show_tip(TipID.HOME_KEY)
+				return
+
+	# --- PRODUCTION TAB: 3+ player production buildings ---
+	if not _shown_tips.has(TipID.PRODUCTION_TAB):
+		var prod_count: int = 0
+		for building in get_tree().get_nodes_in_group("rts_buildings"):
+			if is_instance_valid(building) and "faction_id" in building and building.faction_id == 0:
+				if "is_production" in building and building.is_production:
+					prod_count += 1
+		if prod_count >= 3:
+			_show_tip(TipID.PRODUCTION_TAB)
+			return
+
+	# --- STANCES: 4+ military units in ATTACK state ---
+	if not _shown_tips.has(TipID.STANCES):
+		var fighting_count: int = 0
+		for unit in get_tree().get_nodes_in_group("rts_units"):
+			if is_instance_valid(unit) and "faction_id" in unit and unit.faction_id == 0:
+				if "unit_type" in unit and unit.unit_type != UnitStats.UnitType.WORKER:
+					if "state" in unit and unit.state == 2:  # ATTACK
+						fighting_count += 1
+		if fighting_count >= 4:
+			_show_tip(TipID.STANCES)
+			return
+
+	# --- VETERANCY: any player unit with vet_level >= 1 ---
+	if not _shown_tips.has(TipID.VETERANCY):
+		for unit in get_tree().get_nodes_in_group("rts_units"):
+			if is_instance_valid(unit) and "faction_id" in unit and unit.faction_id == 0:
+				if "_vet_level" in unit and unit._vet_level >= 1:
+					_show_tip(TipID.VETERANCY)
+					return
+
+	# --- GAME SPEED: after 5 minutes ---
+	if not _shown_tips.has(TipID.GAME_SPEED):
+		if _time > 300.0:
+			_show_tip(TipID.GAME_SPEED)
+			return
+
+	# --- NEW UNITS: player has a Medic, Siege Worm, or Psi-Caster ---
+	if not _shown_tips.has(TipID.NEW_UNITS):
+		for unit in get_tree().get_nodes_in_group("rts_units"):
+			if is_instance_valid(unit) and "faction_id" in unit and unit.faction_id == 0:
+				if "unit_type" in unit and unit.unit_type >= 5:  # MEDIC=5, SIEGE_WORM=6, PSI_CASTER=7
+					_show_tip(TipID.NEW_UNITS)
+					return
+
+	# MAP_PINGS and MAP_EVENTS are triggered externally via notify methods
+
 func _show_tip(tip_id: int) -> void:
+	if _active_tip >= 0:
+		return  # Don't interrupt an active tip
 	_shown_tips[tip_id] = true
 	_active_tip = tip_id
 	_tip_timer = 0.0
@@ -142,16 +277,16 @@ func _draw() -> void:
 	var font := UIConstants.get_display_font()
 
 	var cx: float = vp.x * 0.5
-	var cy: float = vp.y * 0.88  # Very bottom of screen
+	var cy: float = vp.y * 0.88
 
 	# Background pill
-	var pill_w: float = 420.0
+	var pill_w: float = 460.0
 	var pill_h: float = 50.0
 	var pill_x: float = cx - pill_w * 0.5
 	var pill_y: float = cy - pill_h * 0.5
 	draw_rect(Rect2(pill_x, pill_y, pill_w, pill_h), Color(0.06, 0.08, 0.14, 0.55 * _tip_alpha))
 
-	# Accent lines — gold/amber for tips vs blue for tutorial
+	# Accent lines — gold/amber for tips
 	var accent := Color(0.9, 0.7, 0.3, 0.4 * _tip_alpha)
 	draw_rect(Rect2(pill_x, pill_y, pill_w, 1), accent)
 	draw_rect(Rect2(pill_x, pill_y + pill_h - 1, pill_w, 1), accent)
@@ -159,18 +294,20 @@ func _draw() -> void:
 	# "TIP" label
 	draw_string(font, Vector2(pill_x + 10, cy - 2), "TIP", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.9, 0.7, 0.3, 0.6 * _tip_alpha))
 
-	# Key badge
+	# Key badge (if key exists)
+	var text_start_x: float = pill_x + 42.0
 	var key_text: String = tip_data.key
-	var key_fs: int = 18
-	var key_size := font.get_string_size(key_text, HORIZONTAL_ALIGNMENT_LEFT, -1, key_fs)
-	var badge_w: float = key_size.x + 16.0
-	var badge_h: float = 26.0
-	var badge_x: float = pill_x + 42.0
-	var badge_y: float = cy - badge_h * 0.5
-	draw_rect(Rect2(badge_x, badge_y, badge_w, badge_h), Color(0.15, 0.20, 0.35, 0.75 * _tip_alpha))
-	draw_rect(Rect2(badge_x, badge_y, badge_w, badge_h), Color(0.9, 0.7, 0.3, 0.3 * _tip_alpha), false, 1.0)
-	draw_string(font, Vector2(badge_x + 8, badge_y + 18), key_text, HORIZONTAL_ALIGNMENT_LEFT, -1, key_fs, Color(0.9, 0.85, 0.7, _tip_alpha))
+	if key_text != "":
+		var key_fs: int = 18
+		var key_size := font.get_string_size(key_text, HORIZONTAL_ALIGNMENT_LEFT, -1, key_fs)
+		var badge_w: float = key_size.x + 16.0
+		var badge_h: float = 26.0
+		var badge_x: float = pill_x + 42.0
+		var badge_y: float = cy - badge_h * 0.5
+		draw_rect(Rect2(badge_x, badge_y, badge_w, badge_h), Color(0.15, 0.20, 0.35, 0.75 * _tip_alpha))
+		draw_rect(Rect2(badge_x, badge_y, badge_w, badge_h), Color(0.9, 0.7, 0.3, 0.3 * _tip_alpha), false, 1.0)
+		draw_string(font, Vector2(badge_x + 8, badge_y + 18), key_text, HORIZONTAL_ALIGNMENT_LEFT, -1, key_fs, Color(0.9, 0.85, 0.7, _tip_alpha))
+		text_start_x = badge_x + badge_w + 12.0
 
 	# Tip text
-	var text_x: float = badge_x + badge_w + 12.0
-	draw_string(font, Vector2(text_x, cy + 5), tip_data.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.8, 0.85, 0.85 * _tip_alpha))
+	draw_string(font, Vector2(text_start_x, cy + 5), tip_data.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.8, 0.85, 0.85 * _tip_alpha))

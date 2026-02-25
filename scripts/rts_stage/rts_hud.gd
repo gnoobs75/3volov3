@@ -67,6 +67,9 @@ const PING_COLORS: Array = [
 var _surrender_confirm: bool = false
 var _surrender_blink: float = 0.0
 
+# --- Hotkey reference card ---
+var _show_hotkey_card: bool = false
+
 # --- Victory manager ref (for surrender) ---
 var _victory_manager: Node = null
 
@@ -687,6 +690,10 @@ func _draw() -> void:
 
 	# === UNIT STACK COUNTS (world-space badges) ===
 	_draw_unit_stack_counts(vp, font)
+
+	# === HOTKEY REFERENCE CARD ===
+	if _show_hotkey_card:
+		_draw_hotkey_card(vp, font)
 
 	# === TOOLTIP (always last - on top of everything) ===
 	if _tooltip_text.length() > 0:
@@ -1337,3 +1344,62 @@ func _draw_sparkline(data: Array, x: float, y: float, w: float, h: float, color:
 		prev_point = point
 	# End dot
 	draw_circle(prev_point, 1.5, color)
+
+# === HOTKEY REFERENCE CARD ===
+
+func toggle_hotkey_card() -> void:
+	_show_hotkey_card = not _show_hotkey_card
+	queue_redraw()
+
+func _draw_hotkey_card(vp: Vector2, font: Font) -> void:
+	var mono: Font = UIConstants.get_mono_font()
+	var card_w: float = 310.0
+	var card_h: float = 340.0
+	var card_x: float = vp.x - card_w - 10.0
+	var card_y: float = 50.0
+	var pad: float = 12.0
+
+	# Background panel with organic membrane border
+	draw_rect(Rect2(card_x, card_y, card_w, card_h), Color(0.03, 0.06, 0.1, 0.9))
+	_draw_membrane_border(Rect2(card_x, card_y, card_w, card_h), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.4), 1.5, 12.0)
+
+	# Header
+	var header: String = "HOTKEY REFERENCE (H to close)"
+	var hdr_color: Color = Color(0.6, 0.9, 1.0)
+	draw_string(font, Vector2(card_x + pad, card_y + 20), header, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_CAPTION, hdr_color)
+	draw_line(Vector2(card_x + pad, card_y + 26), Vector2(card_x + card_w - pad, card_y + 26), Color(UIConstants.ACCENT_DIM.r, UIConstants.ACCENT_DIM.g, UIConstants.ACCENT_DIM.b, 0.3), 1.0)
+
+	# Hotkey sections
+	var sections: Array = [
+		["CAMERA", "WASD/Arrow/Edge, Scroll=Zoom, HOME=Base"],
+		["SELECT", "LMB=Select, Shift=Add, Ctrl+A=Military"],
+		["", ".=Idle Worker, ,=Idle Military, Dbl=Type"],
+		["COMMANDS", "RMB=Context, A=Attack Move, P=Patrol"],
+		["", "S=Stop, H=Hold Position"],
+		["UNITS", "G=Stance, V=Ability, F=Formation"],
+		["", "R=Repair (workers)"],
+		["BUILD", "Q/W/E/R/T/Y/U=Buildings, Shift=Free place"],
+		["GROUPS", "Ctrl+1-9=Assign, 1-9=Select, Shift=Add"],
+		["", "Alt+1-9=Steal group"],
+		["PRODUCTION", "F1=Production tab, X=Cancel queue"],
+		["OTHER", "TAB=Intel, F5=Save, F9=Load"],
+		["", "F10=Surrender, ESC=Pause/Cancel"],
+		["", "Del=Salvage building"],
+	]
+
+	var line_y: float = card_y + 38
+	var label_color: Color = Color(0.5, 0.8, 1.0, 0.9)
+	var text_color: Color = Color(0.7, 0.75, 0.8, 0.85)
+	var line_h: float = 18.0
+	var label_w: float = 85.0
+
+	for sec in sections:
+		var section_label: String = sec[0]
+		var section_text: String = sec[1]
+		if section_label.length() > 0:
+			# Section header with label
+			draw_string(mono, Vector2(card_x + pad, line_y + 12), section_label, HORIZONTAL_ALIGNMENT_LEFT, -1, UIConstants.FONT_TINY, label_color)
+		# Content text
+		var text_x: float = card_x + pad + label_w if section_label.length() > 0 else card_x + pad + label_w
+		draw_string(mono, Vector2(text_x, line_y + 12), section_text, HORIZONTAL_ALIGNMENT_LEFT, int(card_w - pad - label_w - pad), UIConstants.FONT_TINY, text_color)
+		line_y += line_h

@@ -48,6 +48,19 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 func _hit() -> void:
+	# Check for splash damage metadata (Siege Worm projectiles)
+	if has_meta("splash_damage"):
+		var splash_dmg: float = get_meta("splash_damage")
+		var splash_attacker: Node2D = get_meta("splash_attacker") if has_meta("splash_attacker") else null
+		var stage: Node = get_tree().get_first_node_in_group("rts_stage")
+		if stage and stage.has_method("get_combat_system"):
+			var cs: Node = stage.get_combat_system()
+			if cs.has_method("apply_splash_damage"):
+				# Full damage at 0u, half at 40u, zero at 80u
+				cs.apply_splash_damage(global_position, splash_dmg, 0.0, 40.0, 80.0, splash_attacker if is_instance_valid(splash_attacker) else self)
+		_spawn_impact()
+		queue_free()
+		return
 	if is_instance_valid(_target) and _target.has_method("take_damage"):
 		var stage: Node = get_tree().get_first_node_in_group("rts_stage")
 		if stage and stage.has_method("get_combat_system"):

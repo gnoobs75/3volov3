@@ -156,11 +156,13 @@ var _buf_map_ping: PackedFloat32Array
 var _buf_rts_victory: PackedFloat32Array
 var _buf_rts_defeat: PackedFloat32Array
 
-# RTS unit voice buffers (indexed by unit_type 0-4)
-var _buf_rts_voice_select: Array = []  # Array of PackedFloat32Array
+# RTS unit voice buffers (indexed by unit_type 0-7: WORKER, FIGHTER, DEFENDER, SCOUT, RANGED, MEDIC, SIEGE_WORM, PSI_CASTER)
+# Each entry is an Array of 3 pitch variants (0.85, 1.0, 1.15)
+var _buf_rts_voice_select: Array = []  # Array of Array[PackedFloat32Array]
 var _buf_rts_voice_ack: Array = []
 var _buf_rts_voice_attack: Array = []
 var _rts_voice_cooldown: float = 0.0
+const RTS_VOICE_PITCH_VARIANTS: Array = [0.85, 1.0, 1.15]
 
 # Cell stage ambient
 var _cell_ambient_player: AudioStreamPlayer = null
@@ -309,14 +311,43 @@ func _ready() -> void:
 	_buf_rts_victory = SynthSounds.gen_rts_victory_fanfare()
 	_buf_rts_defeat = SynthSounds.gen_rts_defeat_drone()
 
-	# Pre-generate RTS unit voice buffers (5 types x 3 categories)
-	_buf_rts_voice_select.resize(5)
-	_buf_rts_voice_ack.resize(5)
-	_buf_rts_voice_attack.resize(5)
+	# Pre-generate RTS unit voice buffers (8 types x 3 categories x 3 pitch variants)
+	_buf_rts_voice_select.resize(8)
+	_buf_rts_voice_ack.resize(8)
+	_buf_rts_voice_attack.resize(8)
 	for i in range(5):
-		_buf_rts_voice_select[i] = SynthSounds.gen_rts_unit_select(i)
-		_buf_rts_voice_ack[i] = SynthSounds.gen_rts_unit_acknowledge(i)
-		_buf_rts_voice_attack[i] = SynthSounds.gen_rts_unit_attack_cry(i)
+		var sel_variants: Array = []
+		var ack_variants: Array = []
+		var atk_variants: Array = []
+		for pm in RTS_VOICE_PITCH_VARIANTS:
+			sel_variants.append(SynthSounds.gen_rts_unit_select(i, pm))
+			ack_variants.append(SynthSounds.gen_rts_unit_acknowledge(i, pm))
+			atk_variants.append(SynthSounds.gen_rts_unit_attack_cry(i, pm))
+		_buf_rts_voice_select[i] = sel_variants
+		_buf_rts_voice_ack[i] = ack_variants
+		_buf_rts_voice_attack[i] = atk_variants
+	# Medic (5), Siege Worm (6), Psi-Caster (7)
+	for unit_idx in [5, 6, 7]:
+		var sel_v: Array = []
+		var ack_v: Array = []
+		var atk_v: Array = []
+		for pm in RTS_VOICE_PITCH_VARIANTS:
+			match unit_idx:
+				5:
+					sel_v.append(SynthSounds.gen_rts_voice_medic("select", pm))
+					ack_v.append(SynthSounds.gen_rts_voice_medic("ack", pm))
+					atk_v.append(SynthSounds.gen_rts_voice_medic("attack", pm))
+				6:
+					sel_v.append(SynthSounds.gen_rts_voice_siege("select", pm))
+					ack_v.append(SynthSounds.gen_rts_voice_siege("ack", pm))
+					atk_v.append(SynthSounds.gen_rts_voice_siege("attack", pm))
+				7:
+					sel_v.append(SynthSounds.gen_rts_voice_psi("select", pm))
+					ack_v.append(SynthSounds.gen_rts_voice_psi("ack", pm))
+					atk_v.append(SynthSounds.gen_rts_voice_psi("attack", pm))
+		_buf_rts_voice_select[unit_idx] = sel_v
+		_buf_rts_voice_ack[unit_idx] = ack_v
+		_buf_rts_voice_attack[unit_idx] = atk_v
 
 	# Setup music players for file-based music
 	_setup_music_players()
@@ -962,20 +993,22 @@ func play_formation_click() -> void:
 func play_queue_ping() -> void:
 	_play_buffer(_buf_queue_ping, -6.0)
 
-## RTS unit voice with cooldown to prevent audio spam
+## RTS unit voice with cooldown to prevent audio spam. Picks a random pitch variant.
 func play_rts_unit_voice(unit_type: int, voice_type: String) -> void:
 	if _rts_voice_cooldown > 0.0:
 		return
+	var variant: int = randi() % 3
+	var idx: int = clampi(unit_type, 0, 7)
 	var buf: PackedFloat32Array
 	match voice_type:
-		"select": buf = _buf_rts_voice_select[clampi(unit_type, 0, 4)]
-		"ack": buf = _buf_rts_voice_ack[clampi(unit_type, 0, 4)]
-		"attack": buf = _buf_rts_voice_attack[clampi(unit_type, 0, 4)]
+		"select": buf = _buf_rts_voice_select[idx][variant]
+		"ack": buf = _buf_rts_voice_ack[idx][variant]
+		"attack": buf = _buf_rts_voice_attack[idx][variant]
 		_: return
 	_play_buffer(buf, -5.0)
 	_rts_voice_cooldown = 0.3
 
-## Play a single voice for a group selection (picks one random unit)
+## Play a single voice for a group selection (picks one random unit and pitch variant)
 func play_rts_group_voice(units: Array) -> void:
 	if units.is_empty():
 		return
@@ -984,7 +1017,8 @@ func play_rts_group_voice(units: Array) -> void:
 	var unit: Node2D = units[randi() % units.size()]
 	if not is_instance_valid(unit) or not "unit_type" in unit:
 		return
-	var buf: PackedFloat32Array = _buf_rts_voice_select[clampi(unit.unit_type, 0, 4)]
+	var variant: int = randi() % 3
+	var buf: PackedFloat32Array = _buf_rts_voice_select[clampi(unit.unit_type, 0, 7)][variant]
 	_play_buffer(buf, -5.0)
 	_rts_voice_cooldown = 0.3
 

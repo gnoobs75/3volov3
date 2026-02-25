@@ -775,6 +775,8 @@ func _get_state_name(state_val: int) -> String:
 		7: return "Fleeing"
 		8: return "Holding"
 		9: return "Repairing"
+		10: return "Healing"
+		11: return "Deployed"
 		_: return "Unknown"
 
 func _get_state_color(state_val: int) -> Color:
@@ -789,6 +791,8 @@ func _get_state_color(state_val: int) -> Color:
 		7: return Color(1.0, 0.6, 0.2, 0.8)  # Flee - orange
 		8: return Color(0.7, 0.7, 0.3, 0.8)  # Hold - dark yellow
 		9: return Color(0.4, 0.8, 0.9, 0.8)  # Repair - cyan
+		10: return Color(0.4, 1.0, 0.5, 0.8)  # Healing - bright green
+		11: return Color(0.9, 0.6, 0.2, 0.8)  # Deployed - amber
 		_: return UIConstants.TEXT_DIM
 
 func _draw_star(center: Vector2, radius: float, points: int, color: Color) -> void:
